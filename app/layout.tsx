@@ -7,7 +7,7 @@ const geist = Geist({ subsets: ['latin'], variable: '--font-geist' })
 
 export const metadata: Metadata = {
   title: 'Kanaan Hub',
-  description: 'Kanaan Guest Farm — Bookings & Payroll',
+  description: 'Kanaan Guest Farm — Bookings, Payroll & AI Assistant',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
