@@ -38,19 +38,31 @@ function parseDate(val: string): string | null {
 }
 
 function parseCSV(content: string): Record<string, string>[] {
-  const lines = content.split('\n').filter(l => l.trim())
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
-  return lines.slice(1).map(line => {
-    // Handle commas inside quoted fields
+  // Split into logical lines respecting quoted multi-line fields
+  const logicalLines: string[] = []
+  let cur = ''; let inQuote = false
+  for (const ch of content.replace(/\r/g, '')) {
+    if (ch === '"') { inQuote = !inQuote; cur += ch }
+    else if (ch === '\n' && !inQuote) { logicalLines.push(cur); cur = '' }
+    else { cur += ch }
+  }
+  if (cur.trim()) logicalLines.push(cur)
+
+  const nonEmpty = logicalLines.filter(l => l.trim())
+  const headers  = nonEmpty[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
+
+  return nonEmpty.slice(1).map(line => {
     const fields: string[] = []
-    let cur = ''; let inQuote = false
+    let f = ''; let q = false
     for (const ch of line) {
-      if (ch === '"') { inQuote = !inQuote }
-      else if (ch === ',' && !inQuote) { fields.push(cur.trim()); cur = '' }
-      else { cur += ch }
+      if (ch === '"') { q = !q }
+      else if (ch === ',' && !q) { fields.push(f); f = '' }
+      else { f += ch }
     }
-    fields.push(cur.trim())
-    return Object.fromEntries(headers.map((h, i) => [h, (fields[i] ?? '').replace(/^"|"$/g, '')]))
+    fields.push(f)
+    return Object.fromEntries(
+      headers.map((h, i) => [h, (fields[i] ?? '').replace(/^"|"$/g, '').replace(/\n/g, ' ').trim()])
+    )
   })
 }
 
@@ -104,7 +116,8 @@ async function main() {
       })
       inserted++
     } catch (err: any) {
-      console.warn(`  Skip "${guestName}" ${checkIn}: ${err.message?.slice(0, 80)}`)
+      console.warn(`  SKIP row — Guest: "${guestName}", Room: "${row['Room']}", Check-in: ${checkIn}, CheckOut: ${checkOut}, Adults: ${adults}, Total: ${total}, Balance: ${balance}`)
+      console.warn(`    Reason: ${err.message}`)
       skipped++
     }
   }
