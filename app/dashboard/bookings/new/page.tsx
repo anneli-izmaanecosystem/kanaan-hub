@@ -6,6 +6,18 @@ import { Sparkles } from 'lucide-react'
 
 type Room = { id: number; name: string; type: string; ratePp: string; rateSolo: string | null; capacity: number }
 
+const STATUS_OPTIONS = [
+  { value: 'confirmed',       label: 'Confirmed' },
+  { value: 'fully_paid',      label: 'Fully Paid' },
+  { value: 'partially_paid',  label: 'Partially Paid' },
+  { value: 'unpaid',          label: 'Unpaid' },
+  { value: 'quote_sent',      label: 'Quote Sent' },
+  { value: 'pending',         label: 'Pending' },
+  { value: 'cancelled',       label: 'Cancelled' },
+  { value: 'checked_in',      label: 'Checked In' },
+  { value: 'checked_out',     label: 'Checked Out' },
+]
+
 export default function NewBookingPage() {
   const router = useRouter()
   const [rooms, setRooms] = useState<Room[]>([])
@@ -17,7 +29,9 @@ export default function NewBookingPage() {
   const [form, setForm] = useState({
     roomId: '', guestName: '', contact: '', idNumber: '',
     checkIn: '', checkOut: '', adults: '1', children: '0',
-    totalAmount: '', depositPaid: '0', specialRequests: '', source: '', notes: '',
+    totalAmount: '', depositPaid: '0',
+    status: 'confirmed', source: '', paymentMethod: '', invoiceNumber: '', payDate: '',
+    specialRequests: '', notes: '',
   })
 
   useEffect(() => {
@@ -112,6 +126,7 @@ export default function NewBookingPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Room + Adults */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={label}>Room *</label>
@@ -126,6 +141,7 @@ export default function NewBookingPage() {
           </div>
         </div>
 
+        {/* Dates */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={label}>Check-in *</label>
@@ -137,18 +153,64 @@ export default function NewBookingPage() {
           </div>
         </div>
 
+        {/* Guest */}
         <div>
           <label className={label}>Guest Name *</label>
           <input className={input} value={form.guestName} onChange={e => set('guestName', e.target.value)} required />
         </div>
         <div>
-          <label className={label}>Contact *</label>
+          <label className={label}>Contact (phone / email) *</label>
           <input className={input} value={form.contact} onChange={e => set('contact', e.target.value)} required />
         </div>
 
+        {/* Status + Source */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={label}>Total Amount (R)</label>
+            <label className={label}>Status</label>
+            <select className={input} value={form.status} onChange={e => set('status', e.target.value)}>
+              {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={label}>Source</label>
+            <select className={input} value={form.source} onChange={e => set('source', e.target.value)}>
+              <option value="">— Select —</option>
+              <option value="Walk-in">Walk-in</option>
+              <option value="Online">Online</option>
+              <option value="Booking Site">Booking Site</option>
+              <option value="Direct">Direct</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Phone">Phone</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Payment */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className={label}>Payment Method</label>
+            <select className={input} value={form.paymentMethod} onChange={e => set('paymentMethod', e.target.value)}>
+              <option value="">— Select —</option>
+              <option value="Card">Card</option>
+              <option value="Cash">Cash</option>
+              <option value="EFT">EFT</option>
+              <option value="Online">Online</option>
+            </select>
+          </div>
+          <div>
+            <label className={label}>Payment Date</label>
+            <input type="date" className={input} value={form.payDate} onChange={e => set('payDate', e.target.value)} />
+          </div>
+        </div>
+
+        {/* Invoice + Amounts */}
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className={label}>Invoice #</label>
+            <input className={input} value={form.invoiceNumber} onChange={e => set('invoiceNumber', e.target.value)} />
+          </div>
+          <div>
+            <label className={label}>Total Amount (R) *</label>
             <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} required />
           </div>
           <div>
@@ -157,9 +219,14 @@ export default function NewBookingPage() {
           </div>
         </div>
 
+        {/* Notes */}
         <div>
           <label className={label}>Special Requests</label>
           <textarea className={input} rows={2} value={form.specialRequests} onChange={e => set('specialRequests', e.target.value)} />
+        </div>
+        <div>
+          <label className={label}>Internal Notes</label>
+          <textarea className={input} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}

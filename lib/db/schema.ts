@@ -3,7 +3,7 @@ import { pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEn
 export const payTypeEnum    = pgEnum('pay_type',    ['fixed_salary', 'hourly'])
 export const hoursTypeEnum  = pgEnum('hours_type',  ['fixed_monthly', 'variable'])
 export const roomTypeEnum   = pgEnum('room_type',   ['premium', 'budget', 'dorm', 'camping'])
-export const bookingStatus  = pgEnum('booking_status', ['confirmed', 'pending', 'cancelled', 'checked_in', 'checked_out'])
+export const bookingStatus  = pgEnum('booking_status', ['confirmed', 'pending', 'cancelled', 'checked_in', 'checked_out', 'fully_paid', 'partially_paid', 'quote_sent', 'unpaid'])
 export const payrollStatus  = pgEnum('payroll_status', ['draft', 'finalised'])
 
 export const rooms = pgTable('rooms', {
@@ -33,6 +33,9 @@ export const bookings = pgTable('bookings', {
   specialRequests: text('special_requests'),
   status:          bookingStatus('status').notNull().default('confirmed'),
   source:          text('source'),
+  paymentMethod:   text('payment_method'),
+  invoiceNumber:   text('invoice_number'),
+  payDate:         date('pay_date'),
   notes:           text('notes'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),

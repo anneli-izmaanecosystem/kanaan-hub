@@ -8,6 +8,13 @@
       "when": 1778432933843,
       "tag": "0000_outgoing_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778483725175,
+      "tag": "0001_right_kinsey_walden",
+      "breakpoints": true
     }
   ]
 }

@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { roomId, guestName, contact, idNumber, checkIn, checkOut, adults, children,
-            totalAmount, depositPaid, specialRequests, source, notes } = body
+            totalAmount, depositPaid, specialRequests, status, source,
+            paymentMethod, invoiceNumber, payDate, notes } = body
 
     if (!roomId || !guestName || !contact || !checkIn || !checkOut)
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -71,6 +72,10 @@ export async function POST(req: NextRequest) {
       depositPaid:  String(deposit),
       balanceDue:   String(total - deposit),
       specialRequests, source, notes,
+      status:        status ?? 'confirmed',
+      paymentMethod: paymentMethod ?? null,
+      invoiceNumber: invoiceNumber ?? null,
+      payDate:       payDate ?? null,
     }).returning()
 
     return NextResponse.json(booking, { status: 201 })

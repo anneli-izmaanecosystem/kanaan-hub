@@ -21,6 +21,12 @@ const roomSeed = [
   ...['A', 'B', 'C'].map(letter => ({
     name: `Camping ${letter}`, type: 'camping' as const, capacity: 6, ratePp: '250', rateSolo: null,
   })),
+  // Additional rooms 19–21
+  { name: 'Room 19', type: 'premium' as const, capacity: 2, ratePp: '350', rateSolo: '450' },
+  { name: 'Room 20', type: 'premium' as const, capacity: 2, ratePp: '350', rateSolo: '450' },
+  { name: 'Room 21', type: 'budget' as const, capacity: 2, ratePp: '250', rateSolo: '350' },
+  // Combined room
+  { name: 'Room 10/13', type: 'premium' as const, capacity: 4, ratePp: '350', rateSolo: '450' },
 ]
 
 async function seed() {
