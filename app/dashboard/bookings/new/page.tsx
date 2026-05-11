@@ -44,12 +44,22 @@ export default function NewBookingPage() {
 
   async function parseWithAI() {
     if (!aiText.trim()) return
-    setParsing(true)
+    setParsing(true); setError('')
     try {
       const res  = await fetch('/api/ai/parse-booking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: aiText }) })
       const data = await res.json()
+      if (!res.ok) { setError(data.error ?? 'AI parsing failed'); setParsing(false); return }
+
+      let roomId = form.roomId
+      if (data.roomPreference) {
+        const pref = data.roomPreference.toLowerCase()
+        const match = rooms.find(r => r.name.toLowerCase().includes(pref) || pref.includes(r.name.toLowerCase().replace('room ', '')))
+        if (match) roomId = String(match.id)
+      }
+
       setForm(f => ({
         ...f,
+        roomId,
         guestName:       data.guestName       ?? f.guestName,
         contact:         data.contact         ?? f.contact,
         checkIn:         data.checkIn         ?? f.checkIn,
@@ -59,7 +69,7 @@ export default function NewBookingPage() {
         specialRequests: data.specialRequests ?? f.specialRequests,
         totalAmount:     data.estimatedTotal  ? String(data.estimatedTotal) : f.totalAmount,
       }))
-    } catch { /* ignore */ }
+    } catch { setError('Network error — could not reach AI') }
     setParsing(false)
   }
 
