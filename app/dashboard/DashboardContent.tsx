@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
 import { bookings, payrollRuns, employees, rooms } from '@/lib/db/schema'
-import { eq, gte, lte, and, count, sum, sql, ne } from 'drizzle-orm'
+import { eq, gte, lte, and, count, ne } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import Link from 'next/link'
 import { CalendarDays, Users, TrendingUp, Home, BarChart3 } from 'lucide-react'
@@ -50,10 +50,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       guestName: bookings.guestName,
       checkIn:   bookings.checkIn,
       checkOut:  bookings.checkOut,
-      roomId:    bookings.roomId,
+      roomName:  rooms.name,
       status:    bookings.status,
     })
       .from(bookings)
+      .innerJoin(rooms, eq(bookings.roomId, rooms.id))
       .where(and(
         gte(bookings.checkIn, today),
         ne(bookings.status, 'cancelled'),
@@ -199,7 +200,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
                     <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot[b.status] ?? 'bg-gray-300'}`} />
                     <div>
                       <p className="text-sm font-medium text-gray-900">{b.guestName}</p>
-                      <p className="text-xs text-gray-500">Room {b.roomId} · {b.checkIn} → {b.checkOut}</p>
+                      <p className="text-xs text-gray-500">{b.roomName} · {b.checkIn} → {b.checkOut}</p>
                     </div>
                   </div>
                   <span className="text-xs text-gray-400 shrink-0 ml-2">{b.checkIn}</span>

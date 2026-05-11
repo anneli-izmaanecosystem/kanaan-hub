@@ -25,13 +25,19 @@ export async function POST(req: NextRequest) {
     if (payType === 'fixed_salary' && !monthlySalary)
       return NextResponse.json({ error: 'Monthly salary required for salaried employees' }, { status: 400 })
 
+    const { overtimeHourlyRate, transportAllowance, housingAllowance, otherAllowance } = body
     const [emp] = await db.insert(employees).values({
-      name, idNumber, bankAccount, bankName,
+      name, idNumber: idNumber || null, bankAccount: bankAccount || null, bankName: bankName || null,
       payType, hoursType,
-      monthlySalary: monthlySalary ? String(monthlySalary) : null,
-      hourlyRate:    hourlyRate    ? String(hourlyRate)    : null,
-      fixedHours:    fixedHours    ? String(fixedHours)    : null,
-      department, position, startDate,
+      monthlySalary:      monthlySalary      ? String(monthlySalary)      : null,
+      hourlyRate:         hourlyRate         ? String(hourlyRate)         : null,
+      fixedHours:         fixedHours         ? String(fixedHours)         : null,
+      overtimeHourlyRate: overtimeHourlyRate ? String(overtimeHourlyRate) : null,
+      transportAllowance: transportAllowance ? String(transportAllowance) : null,
+      housingAllowance:   housingAllowance   ? String(housingAllowance)   : null,
+      otherAllowance:     otherAllowance     ? String(otherAllowance)     : null,
+      department: department || null, position: position || null,
+      startDate: startDate || null,
     }).returning()
 
     return NextResponse.json(emp, { status: 201 })

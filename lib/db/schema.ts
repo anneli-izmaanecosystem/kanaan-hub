@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum } from 'drizzle-orm/pg-core'
+import { pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum, unique } from 'drizzle-orm/pg-core'
 
 export const payTypeEnum    = pgEnum('pay_type',    ['fixed_salary', 'hourly'])
 export const hoursTypeEnum  = pgEnum('hours_type',  ['fixed_monthly', 'variable'])
@@ -14,7 +14,7 @@ export const rooms = pgTable('rooms', {
   ratePp:    numeric('rate_pp', { precision: 10, scale: 2 }).notNull(),
   rateSolo:  numeric('rate_solo', { precision: 10, scale: 2 }),
   active:    boolean('active').notNull().default(true),
-})
+}, t => [unique().on(t.name)])
 
 export const bookings = pgTable('bookings', {
   id:              serial('id').primaryKey(),
@@ -51,7 +51,11 @@ export const employees = pgTable('employees', {
   hoursType:      hoursTypeEnum('hours_type').notNull(),
   monthlySalary:  numeric('monthly_salary', { precision: 10, scale: 2 }),
   hourlyRate:     numeric('hourly_rate', { precision: 10, scale: 2 }),
-  fixedHours:     numeric('fixed_hours', { precision: 6, scale: 2 }),
+  fixedHours:         numeric('fixed_hours',          { precision: 6,  scale: 2 }),
+  overtimeHourlyRate: numeric('overtime_hourly_rate', { precision: 10, scale: 2 }),
+  transportAllowance: numeric('transport_allowance',  { precision: 10, scale: 2 }),
+  housingAllowance:   numeric('housing_allowance',    { precision: 10, scale: 2 }),
+  otherAllowance:     numeric('other_allowance',      { precision: 10, scale: 2 }),
   department:     text('department'),
   position:       text('position'),
   startDate:      date('start_date'),
