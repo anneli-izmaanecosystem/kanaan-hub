@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 
 type Room = { id: number; name: string; type: string }
@@ -227,46 +227,140 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
   )
 }
 
+type SortKey = 'guestName' | 'roomName' | 'checkIn' | 'checkOut' | 'status' | 'totalAmount' | 'balanceDue'
+type SortDir = 'asc' | 'desc'
+
+function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: SortDir } }) {
+  if (sort.key !== col) return <ChevronsUpDown size={12} className="inline ml-1 opacity-30" />
+  return sort.dir === 'asc'
+    ? <ChevronUp size={12} className="inline ml-1 text-gray-900" />
+    : <ChevronDown size={12} className="inline ml-1 text-gray-900" />
+}
+
 function BookingList({ bookings }: { bookings: Booking[] }) {
-  if (bookings.length === 0) return <p className="text-sm text-gray-400">No bookings for this period.</p>
+  const [sort, setSort]         = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
+  const [search, setSearch]     = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+
+  function toggleSort(key: SortKey) {
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
+  }
+
+  const allStatuses = Array.from(new Set(bookings.map(b => b.booking.status))).sort()
+
+  const filtered = bookings
+    .filter(({ booking, room }) => {
+      if (statusFilter !== 'all' && booking.status !== statusFilter) return false
+      if (search) {
+        const q = search.toLowerCase()
+        return (
+          booking.guestName.toLowerCase().includes(q) ||
+          room.name.toLowerCase().includes(q) ||
+          (booking.source ?? '').toLowerCase().includes(q)
+        )
+      }
+      return true
+    })
+    .sort((a, b) => {
+      const dir = sort.dir === 'asc' ? 1 : -1
+      switch (sort.key) {
+        case 'guestName':   return dir * a.booking.guestName.localeCompare(b.booking.guestName)
+        case 'roomName':    return dir * a.room.name.localeCompare(b.room.name, undefined, { numeric: true })
+        case 'checkIn':     return dir * a.booking.checkIn.localeCompare(b.booking.checkIn)
+        case 'checkOut':    return dir * a.booking.checkOut.localeCompare(b.booking.checkOut)
+        case 'status':      return dir * a.booking.status.localeCompare(b.booking.status)
+        case 'totalAmount': return dir * (parseFloat(a.booking.totalAmount) - parseFloat(b.booking.totalAmount))
+        case 'balanceDue':  return dir * (parseFloat(a.booking.balanceDue) - parseFloat(b.booking.balanceDue))
+        default: return 0
+      }
+    })
+
+  const th = (label: string, key: SortKey, align = 'left') => (
+    <th
+      onClick={() => toggleSort(key)}
+      className={cn(
+        'px-4 py-3 cursor-pointer select-none whitespace-nowrap hover:bg-gray-100 transition-colors',
+        `text-${align}`,
+        sort.key === key ? 'text-gray-900 font-semibold' : 'text-gray-500 font-medium'
+      )}
+    >
+      {label}<SortIcon col={key} sort={sort} />
+    </th>
+  )
+
   return (
-    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 text-xs text-gray-500">
-          <tr>
-            <th className="px-4 py-3 text-left">Guest</th>
-            <th className="px-4 py-3 text-left">Room</th>
-            <th className="px-4 py-3 text-left">Check-in</th>
-            <th className="px-4 py-3 text-left">Check-out</th>
-            <th className="px-4 py-3 text-left">Status</th>
-            <th className="px-4 py-3 text-left">Source</th>
-            <th className="px-4 py-3 text-right">Total</th>
-            <th className="px-4 py-3 text-right">Balance</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {bookings.map(({ booking, room }) => (
-            <tr key={booking.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3 font-medium text-gray-900">
-                <Link href={`/dashboard/bookings/${booking.id}`} className="hover:underline">{booking.guestName}</Link>
-              </td>
-              <td className="px-4 py-3 text-gray-600">{room.name}</td>
-              <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkIn)}</td>
-              <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkOut)}</td>
-              <td className="px-4 py-3">
-                <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_COLORS[booking.status] ?? 'bg-gray-100')}>
-                  {STATUS_LABEL[booking.status] ?? booking.status}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-gray-500 text-xs">{booking.source ?? '—'}</td>
-              <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
-              <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
-                R {parseFloat(booking.balanceDue).toFixed(0)}
-              </td>
-            </tr>
+    <div>
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search guest, room, source…"
+            className="pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-gray-300"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300"
+        >
+          <option value="all">All Statuses</option>
+          {allStatuses.map(s => (
+            <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
           ))}
-        </tbody>
-      </table>
+        </select>
+        <span className="text-xs text-gray-400 ml-auto">{filtered.length} of {bookings.length}</span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-sm text-gray-400 py-6 text-center">No bookings match your filters.</p>
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs border-b border-gray-200">
+              <tr>
+                {th('Guest', 'guestName')}
+                {th('Room', 'roomName')}
+                {th('Check-in', 'checkIn')}
+                {th('Check-out', 'checkOut')}
+                {th('Status', 'status')}
+                <th className="px-4 py-3 text-left text-gray-500 font-medium">Source</th>
+                {th('Total', 'totalAmount', 'right')}
+                {th('Balance', 'balanceDue', 'right')}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.map(({ booking, room }) => (
+                <tr key={booking.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    <Link href={`/dashboard/bookings/${booking.id}`} className="hover:underline">{booking.guestName}</Link>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{room.name}</td>
+                  <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkIn)}</td>
+                  <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkOut)}</td>
+                  <td className="px-4 py-3">
+                    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_COLORS[booking.status] ?? 'bg-gray-100')}>
+                      {STATUS_LABEL[booking.status] ?? booking.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.source ?? '—'}</td>
+                  <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
+                  <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
+                    R {parseFloat(booking.balanceDue).toFixed(0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
