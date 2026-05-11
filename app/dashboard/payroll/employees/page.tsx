@@ -2,13 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { fmt } from '@/lib/utils'
-import { Plus, X } from 'lucide-react'
+import { Plus, X, Pencil } from 'lucide-react'
 
 type Employee = {
   id: number; name: string; idNumber: string | null; department: string | null
   position: string | null; payType: string; hoursType: string
   monthlySalary: string | null; hourlyRate: string | null; fixedHours: string | null
-  bankName: string | null; bankAccount: string | null; active: boolean
+  bankName: string | null; bankAccount: string | null; active: boolean; startDate: string | null
 }
 
 const blank = {
@@ -21,6 +21,7 @@ const blank = {
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [showForm, setShowForm]   = useState(false)
+  const [editId, setEditId]       = useState<number | null>(null)
   const [form, setForm]           = useState({ ...blank })
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
@@ -31,14 +32,39 @@ export default function EmployeesPage() {
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })) }
 
+  function openAdd() {
+    setEditId(null); setForm({ ...blank }); setError(''); setShowForm(true)
+  }
+
+  function openEdit(emp: Employee) {
+    setEditId(emp.id)
+    setForm({
+      name:          emp.name,
+      idNumber:      emp.idNumber      ?? '',
+      bankAccount:   emp.bankAccount   ?? '',
+      bankName:      emp.bankName      ?? '',
+      payType:       emp.payType,
+      hoursType:     emp.hoursType,
+      monthlySalary: emp.monthlySalary ?? '',
+      hourlyRate:    emp.hourlyRate    ?? '',
+      fixedHours:    emp.fixedHours    ?? '',
+      department:    emp.department    ?? '',
+      position:      emp.position      ?? '',
+      startDate:     emp.startDate     ?? '',
+    })
+    setError(''); setShowForm(true)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('')
-    const res = await fetch('/api/employees', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
+    const url    = editId ? `/api/employees/${editId}` : '/api/employees'
+    const method = editId ? 'PATCH' : 'POST'
+    const res = await fetch(url, {
+      method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
     })
     if (!res.ok) { const d = await res.json(); setError(d.error); setSaving(false); return }
     const emp = await res.json()
-    setEmployees(prev => [...prev, emp])
+    setEmployees(prev => editId ? prev.map(e => e.id === editId ? emp : e) : [...prev, emp])
     setShowForm(false); setForm({ ...blank }); setSaving(false)
   }
 
@@ -59,7 +85,7 @@ export default function EmployeesPage() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Employees</h1>
-        <button onClick={() => setShowForm(true)} className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
+        <button onClick={openAdd} className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
           <Plus size={15} /> Add Employee
         </button>
       </div>
@@ -73,11 +99,12 @@ export default function EmployeesPage() {
               <th className="px-4 py-3 text-left">Pay Type</th>
               <th className="px-4 py-3 text-right">Rate / Salary</th>
               <th className="px-4 py-3 text-center">Active</th>
+              <th className="px-4 py-3 text-center">Edit</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {employees.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-400">No employees yet. Add your first employee.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-400">No employees yet. Add your first employee.</td></tr>
             )}
             {employees.map(emp => (
               <tr key={emp.id} className="hover:bg-gray-50">
@@ -106,18 +133,22 @@ export default function EmployeesPage() {
                     {emp.active ? 'Active' : 'Inactive'}
                   </button>
                 </td>
+                <td className="px-4 py-3 text-center">
+                  <button onClick={() => openEdit(emp)} className="rounded p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+                    <Pencil size={14} />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Add employee modal */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-lg rounded-2xl bg-white p-8 shadow-xl overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold">Add Employee</h2>
+              <h2 className="text-lg font-semibold">{editId ? 'Edit Employee' : 'Add Employee'}</h2>
               <button onClick={() => setShowForm(false)}><X size={20} /></button>
             </div>
 
@@ -204,7 +235,7 @@ export default function EmployeesPage() {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowForm(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving} className="rounded-lg bg-gray-900 px-6 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">
-                  {saving ? 'Saving…' : 'Add Employee'}
+                  {saving ? 'Saving…' : editId ? 'Save Changes' : 'Add Employee'}
                 </button>
               </div>
             </form>
