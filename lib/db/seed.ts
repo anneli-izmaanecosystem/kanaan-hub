@@ -1,3 +1,5 @@
+import { config } from 'dotenv'
+config({ path: '.env.local' })
 import { db, rooms } from './index'
 
 const roomSeed = [
