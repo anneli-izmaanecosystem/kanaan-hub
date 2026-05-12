@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 
 type Room = { id: number; name: string; type: string }
@@ -334,14 +334,13 @@ function BookingList({ bookings }: { bookings: Booking[] }) {
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Source</th>
                 {th('Total', 'totalAmount', 'right')}
                 {th('Balance', 'balanceDue', 'right')}
+                <th className="px-3 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map(({ booking, room }) => (
                 <tr key={booking.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">
-                    <Link href={`/dashboard/bookings/${booking.id}`} className="hover:underline">{booking.guestName}</Link>
-                  </td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{booking.guestName}</td>
                   <td className="px-4 py-3 text-gray-600">{room.name}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkIn)}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkOut)}</td>
@@ -354,6 +353,12 @@ function BookingList({ bookings }: { bookings: Booking[] }) {
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}
+                  </td>
+                  <td className="px-3 py-3">
+                    <Link href={`/dashboard/bookings/${booking.id}`}
+                      className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 whitespace-nowrap">
+                      <Pencil size={11} /> Edit
+                    </Link>
                   </td>
                 </tr>
               ))}
