@@ -129,8 +129,8 @@ export default function NewBookingPage() {
         {/* Room + Adults */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={label}>Room *</label>
-            <select className={input} value={form.roomId} onChange={e => set('roomId', e.target.value)} required>
+            <label className={label}>Room</label>
+            <select className={input} value={form.roomId} onChange={e => set('roomId', e.target.value)}>
               <option value="">Select room</option>
               {rooms.map(r => <option key={r.id} value={r.id}>{r.name} — {r.type}</option>)}
             </select>
@@ -148,8 +148,8 @@ export default function NewBookingPage() {
             <input type="date" className={input} value={form.checkIn} onChange={e => set('checkIn', e.target.value)} required />
           </div>
           <div>
-            <label className={label}>Check-out *</label>
-            <input type="date" className={input} value={form.checkOut} onChange={e => set('checkOut', e.target.value)} required />
+            <label className={label}>Check-out</label>
+            <input type="date" className={input} value={form.checkOut} onChange={e => set('checkOut', e.target.value)} />
           </div>
         </div>
 
@@ -159,8 +159,8 @@ export default function NewBookingPage() {
           <input className={input} value={form.guestName} onChange={e => set('guestName', e.target.value)} required />
         </div>
         <div>
-          <label className={label}>Contact (phone / email) *</label>
-          <input className={input} value={form.contact} onChange={e => set('contact', e.target.value)} required />
+          <label className={label}>Contact (phone / email)</label>
+          <input className={input} value={form.contact} onChange={e => set('contact', e.target.value)} />
         </div>
 
         {/* Status + Source */}
@@ -211,7 +211,7 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className={label}>Total Amount (R) *</label>
-            <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} required />
+            <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} />
           </div>
           <div>
             <label className={label}>Deposit Paid (R)</label>

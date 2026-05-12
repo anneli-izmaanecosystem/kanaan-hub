@@ -40,11 +40,11 @@ export async function POST(req: NextRequest) {
             totalAmount, depositPaid, specialRequests, status, source,
             paymentMethod, invoiceNumber, payDate, notes } = body
 
-    if (!roomId || !guestName || !contact || !checkIn || !checkOut)
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    if (!guestName || !checkIn)
+      return NextResponse.json({ error: 'Guest name and check-in date are required' }, { status: 400 })
 
-    // Conflict check
-    const conflict = await db
+    // Conflict check (only if room + checkout provided)
+    const conflict = roomId && checkOut ? await db
       .select({ id: bookings.id })
       .from(bookings)
       .where(and(
@@ -53,18 +53,22 @@ export async function POST(req: NextRequest) {
         gte(bookings.checkOut, checkIn),
         sql`${bookings.status} != 'cancelled'`,
       ))
-      .limit(1)
+      .limit(1) : []
 
     if (conflict.length > 0)
       return NextResponse.json({ error: 'Room is not available for those dates' }, { status: 409 })
 
-    const nights = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86_400_000)
+    const nights  = checkOut ? Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86_400_000) : 0
     const deposit = parseFloat(depositPaid ?? '0')
-    const total   = parseFloat(totalAmount)
+    const total   = parseFloat(totalAmount ?? '0')
 
     const [booking] = await db.insert(bookings).values({
-      roomId, guestName, contact, idNumber,
-      checkIn, checkOut,
+      roomId:   roomId ?? null,
+      guestName,
+      contact:  contact || guestName,
+      idNumber: idNumber ?? null,
+      checkIn,
+      checkOut: checkOut ?? checkIn,
       adults:   parseInt(adults ?? '1'),
       children: parseInt(children ?? '0'),
       nights,
