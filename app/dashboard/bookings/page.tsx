@@ -190,7 +190,6 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
                 const isWeekend = dow === 0 || dow === 6
 
                 if (booking) {
-                  const isStart = booking.checkIn === dateStr
                   return (
                     <td key={d}
                       className={cn(
@@ -199,13 +198,11 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
                         isToday && 'outline outline-2 outline-blue-400 outline-offset-[-2px]'
                       )}
                     >
-                      {isStart && (
-                        <Link href={`/dashboard/bookings/${booking.id}`}
-                          className="block truncate hover:underline font-medium text-[10px] leading-tight"
-                          title={`${booking.guestName} · ${STATUS_LABEL[booking.status] ?? booking.status}`}>
-                          {booking.guestName.split(' ')[0]}
-                        </Link>
-                      )}
+                      <Link href={`/dashboard/bookings/${booking.id}`}
+                        className="block truncate hover:underline font-medium text-[10px] leading-tight"
+                        title={`${booking.guestName} · ${STATUS_LABEL[booking.status] ?? booking.status}`}>
+                        {booking.guestName.split(' ')[0]}
+                      </Link>
                     </td>
                   )
                 }
