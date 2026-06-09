@@ -45,7 +45,7 @@ interface PayslipData {
   employee: { name: string; idNumber: string | null; department: string | null; position: string | null; bankName: string | null; bankAccount: string | null }
   entry: {
     ordinaryHours: string; overtimeHours: string; sundayPhHours: string
-    basicPay: string; overtimePay: string; bonus: string; otherAdditions: string
+    basicPay: string; overtimePay: string; sundayPhPay: string; bonus: string; otherAdditions: string
     grossPay: string; uifEmployee: string; uifEmployer: string; leaveDeduction: string; otherDeductions: string
     netPay: string; leaveDaysTaken: string
   }
@@ -61,7 +61,7 @@ function PayslipDocument({ data }: { data: PayslipData }) {
   const earnings = [
     { label: `Basic Pay (${entry.ordinaryHours} hrs)`,                    value: entry.basicPay },
     parseFloat(entry.overtimePay) > 0   && { label: `Overtime (${entry.overtimeHours} hrs × 1.5)`, value: entry.overtimePay },
-    parseFloat(entry.sundayPhHours) > 0 && { label: `Sunday/PH (${entry.sundayPhHours} hrs × 2)`,  value: String(parseFloat(entry.overtimePay)) },
+    parseFloat(entry.sundayPhHours) > 0 && { label: `Sunday/PH (${entry.sundayPhHours} hrs × 2)`,  value: entry.sundayPhPay  },
     parseFloat(entry.bonus) > 0         && { label: 'Bonus',                                         value: entry.bonus },
     parseFloat(entry.otherAdditions) > 0 && { label: 'Other Additions',                              value: entry.otherAdditions },
   ].filter(Boolean) as { label: string; value: string }[]

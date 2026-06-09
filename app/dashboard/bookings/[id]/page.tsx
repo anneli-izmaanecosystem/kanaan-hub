@@ -114,6 +114,7 @@ export default function BookingDetailPage() {
         }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed to save'); setSaving(false); return }
+      router.refresh()
       router.push('/dashboard/bookings')
     } catch { setError('Network error'); setSaving(false) }
   }
@@ -122,6 +123,7 @@ export default function BookingDetailPage() {
     if (!confirm('Mark this booking as cancelled?')) return
     setDeleting(true)
     await fetch(`/api/bookings/${id}`, { method: 'DELETE' })
+    router.refresh()
     router.push('/dashboard/bookings')
   }
 

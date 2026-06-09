@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, payrollRuns, payrollEntries, leaveBalances } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { userId } = await auth()
@@ -22,7 +22,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ ru
       const [existing] = await db
         .select()
         .from(leaveBalances)
-        .where(eq(leaveBalances.employeeId, entry.employeeId))
+        .where(and(eq(leaveBalances.employeeId, entry.employeeId), eq(leaveBalances.year, year)))
 
       if (existing) {
         await db

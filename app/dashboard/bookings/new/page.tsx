@@ -97,6 +97,7 @@ export default function NewBookingPage() {
         body: JSON.stringify({ ...form, roomId: parseInt(form.roomId) }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed'); setSaving(false); return }
+      router.refresh()
       router.push('/dashboard/bookings')
     } catch { setError('Network error'); setSaving(false) }
   }
@@ -132,7 +133,19 @@ export default function NewBookingPage() {
             <label className={label}>Room</label>
             <select className={input} value={form.roomId} onChange={e => set('roomId', e.target.value)}>
               <option value="">Select room</option>
-              {rooms.map(r => <option key={r.id} value={r.id}>{r.name} — {r.type}</option>)}
+              {[
+                { label: 'Lodge',       filter: (r: Room) => r.type === 'premium' || r.type === 'budget' },
+                { label: 'Backpackers', filter: (r: Room) => r.type === 'dorm' },
+                { label: 'Camping',     filter: (r: Room) => r.type === 'camping' },
+              ].map(({ label, filter }) => {
+                const group = rooms.filter(filter)
+                if (group.length === 0) return null
+                return (
+                  <optgroup key={label} label={label}>
+                    {group.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </optgroup>
+                )
+              })}
             </select>
           </div>
           <div>

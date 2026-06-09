@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
+import { todaySA, currentMonthSA } from '@/lib/date-sa'
 
 type Room = { id: number; name: string; type: string }
 type Booking = {
@@ -46,12 +47,20 @@ const GRID_CELL: Record<string, string> = {
   cancelled:      'bg-red-50 text-red-400',
 }
 
+type AccomTab = 'lodge' | 'backpackers' | 'camping'
+const ACCOM_TABS: { key: AccomTab; label: string }[] = [
+  { key: 'lodge',       label: 'Lodge' },
+  { key: 'backpackers', label: 'Backpackers' },
+  { key: 'camping',     label: 'Camping' },
+]
+
 export default function BookingsPage() {
   const [view, setView]         = useState<'grid' | 'list'>('grid')
+  const [tab, setTab]           = useState<AccomTab>('lodge')
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms]       = useState<Room[]>([])
   const [loading, setLoading]   = useState(true)
-  const [month, setMonth]       = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth]       = useState(() => currentMonthSA())
 
   useEffect(() => {
     setLoading(true)
@@ -66,15 +75,23 @@ export default function BookingsPage() {
   }, [month])
 
   function prevMonth() {
-    const d = new Date(month + '-01'); d.setMonth(d.getMonth() - 1)
-    setMonth(d.toISOString().slice(0, 7))
+    const [y, m] = month.split('-').map(Number)
+    setMonth(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`)
   }
   function nextMonth() {
-    const d = new Date(month + '-01'); d.setMonth(d.getMonth() + 1)
-    setMonth(d.toISOString().slice(0, 7))
+    const [y, m] = month.split('-').map(Number)
+    setMonth(m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`)
   }
 
-  const monthLabel = new Date(month + '-01').toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+  const [_ly, _lm] = month.split('-').map(Number)
+  const monthLabel = new Date(_ly, _lm - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+
+  const tabRooms = rooms.filter(r => {
+    if (tab === 'lodge')       return r.type === 'premium' || r.type === 'budget'
+    if (tab === 'backpackers') return r.type === 'dorm'
+    if (tab === 'camping')     return r.type === 'camping'
+    return true
+  })
 
   return (
     <div className="p-6">
@@ -97,6 +114,23 @@ export default function BookingsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Accommodation tabs (grid view only) */}
+      {view === 'grid' && (
+        <div className="flex border-b border-gray-200 mb-4">
+          {ACCOM_TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={cn(
+                'px-4 py-2 text-sm font-medium border-b-2 -mb-px',
+                tab === t.key
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              )}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Month navigator */}
       <div className="flex items-center gap-3 mb-4">
@@ -121,9 +155,20 @@ export default function BookingsPage() {
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : view === 'grid' ? (
-        <RoomGrid bookings={bookings} rooms={rooms} month={month} />
+        <RoomGrid bookings={bookings} rooms={tabRooms} month={month} />
       ) : (
-        <BookingList bookings={bookings} />
+        <BookingList bookings={bookings} onMarkPaid={async (id, totalAmount) => {
+          await fetch(`/api/bookings/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'fully_paid', depositPaid: totalAmount, balanceDue: '0' }),
+          })
+          setBookings(prev => prev.map(b =>
+            b.booking.id === id
+              ? { ...b, booking: { ...b.booking, status: 'fully_paid', balanceDue: '0' } }
+              : b
+          ))
+        }} />
       )}
     </div>
   )
@@ -132,7 +177,7 @@ export default function BookingsPage() {
 function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room[]; month: string }) {
   const [selYear, selMon] = month.split('-').map(Number)
   const daysInMonth = new Date(selYear, selMon, 0).getDate()
-  const today = new Date().toISOString().split('T')[0]
+  const today = todaySA()
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa']
 
@@ -159,7 +204,7 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
             </th>
             {days.map(d => {
               const dateStr = `${month}-${String(d).padStart(2, '0')}`
-              const dow = new Date(dateStr).getDay()
+              const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay()
               const isToday = dateStr === today
               const isWeekend = dow === 0 || dow === 6
               return (
@@ -186,7 +231,7 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
                 const dateStr = `${month}-${String(d).padStart(2, '0')}`
                 const booking = cellMap.get(`${room.id}-${dateStr}`)
                 const isToday = dateStr === today
-                const dow = new Date(dateStr).getDay()
+                const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay()
                 const isWeekend = dow === 0 || dow === 6
 
                 if (booking) {
@@ -234,10 +279,11 @@ function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: Sort
     : <ChevronDown size={12} className="inline ml-1 text-gray-900" />
 }
 
-function BookingList({ bookings }: { bookings: Booking[] }) {
+function BookingList({ bookings, onMarkPaid }: { bookings: Booking[]; onMarkPaid: (id: number, totalAmount: string) => Promise<void> }) {
   const [sort, setSort]         = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
   const [search, setSearch]     = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [paying, setPaying]     = useState<number | null>(null)
 
   function toggleSort(key: SortKey) {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
@@ -331,6 +377,7 @@ function BookingList({ bookings }: { bookings: Booking[] }) {
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Source</th>
                 {th('Total', 'totalAmount', 'right')}
                 {th('Balance', 'balanceDue', 'right')}
+                <th className="px-3 py-3 text-center text-gray-500 font-medium text-xs">Paid</th>
                 <th className="px-3 py-3" />
               </tr>
             </thead>
@@ -350,6 +397,29 @@ function BookingList({ bookings }: { bookings: Booking[] }) {
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    {(() => {
+                      const isPaid = parseFloat(booking.balanceDue) === 0
+                      return (
+                        <button
+                          onClick={async () => {
+                            if (isPaid) return
+                            setPaying(booking.id)
+                            await onMarkPaid(booking.id, booking.totalAmount)
+                            setPaying(null)
+                          }}
+                          disabled={paying === booking.id}
+                          title={isPaid ? 'Fully paid' : 'Mark as fully paid'}
+                          className="disabled:opacity-50"
+                        >
+                          {isPaid
+                            ? <CheckCircle size={18} className="text-green-500" />
+                            : <Circle size={18} className="text-gray-300 hover:text-green-400 transition-colors" />
+                          }
+                        </button>
+                      )
+                    })()}
                   </td>
                   <td className="px-3 py-3">
                     <Link href={`/dashboard/bookings/${booking.id}`}
