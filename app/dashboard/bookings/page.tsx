@@ -61,18 +61,20 @@ export default function BookingsPage() {
   const [rooms, setRooms]       = useState<Room[]>([])
   const [loading, setLoading]   = useState(true)
   const [month, setMonth]       = useState(() => currentMonthSA())
+  const [showAll, setShowAll]   = useState(false)
 
   useEffect(() => {
     setLoading(true)
+    const url = showAll ? '/api/bookings' : `/api/bookings?month=${month}`
     Promise.all([
-      fetch(`/api/bookings?month=${month}`, { cache: 'no-store' }).then(r => r.json()),
+      fetch(url, { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/rooms', { cache: 'no-store' }).then(r => r.json()),
     ]).then(([b, r]) => {
       setBookings(Array.isArray(b) ? b : [])
       setRooms(Array.isArray(r) ? r : [])
       setLoading(false)
     }).catch(() => setLoading(false))
-  }, [month])
+  }, [month, showAll])
 
   function prevMonth() {
     const [y, m] = month.split('-').map(Number)
@@ -134,9 +136,24 @@ export default function BookingsPage() {
 
       {/* Month navigator */}
       <div className="flex items-center gap-3 mb-4">
-        <button onClick={prevMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronLeft size={18} /></button>
-        <span className="text-sm font-medium text-gray-700 w-40 text-center">{monthLabel}</span>
-        <button onClick={nextMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronRight size={18} /></button>
+        {!showAll && (
+          <>
+            <button onClick={prevMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronLeft size={18} /></button>
+            <span className="text-sm font-medium text-gray-700 w-40 text-center">{monthLabel}</span>
+            <button onClick={nextMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronRight size={18} /></button>
+          </>
+        )}
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className={cn(
+            'rounded-lg border px-3 py-1 text-xs font-medium transition-colors',
+            showAll
+              ? 'border-gray-900 bg-gray-900 text-white'
+              : 'border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
+          )}
+        >
+          All bookings
+        </button>
       </div>
 
       {/* Legend */}
