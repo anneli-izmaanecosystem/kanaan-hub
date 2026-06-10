@@ -97,7 +97,6 @@ export default function NewBookingPage() {
         body: JSON.stringify({ ...form, roomId: parseInt(form.roomId) }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed'); setSaving(false); return }
-      router.refresh()
       router.push('/dashboard/bookings')
     } catch { setError('Network error'); setSaving(false) }
   }

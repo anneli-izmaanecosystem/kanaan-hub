@@ -55,7 +55,7 @@ const ACCOM_TABS: { key: AccomTab; label: string }[] = [
 ]
 
 export default function BookingsPage() {
-  const [view, setView]         = useState<'grid' | 'list'>('grid')
+  const [view, setView]         = useState<'grid' | 'list'>('list')
   const [tab, setTab]           = useState<AccomTab>('lodge')
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms]       = useState<Room[]>([])
@@ -65,8 +65,8 @@ export default function BookingsPage() {
   useEffect(() => {
     setLoading(true)
     Promise.all([
-      fetch(`/api/bookings?month=${month}`).then(r => r.json()),
-      fetch('/api/rooms').then(r => r.json()),
+      fetch(`/api/bookings?month=${month}`, { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/rooms', { cache: 'no-store' }).then(r => r.json()),
     ]).then(([b, r]) => {
       setBookings(Array.isArray(b) ? b : [])
       setRooms(Array.isArray(r) ? r : [])
@@ -157,15 +157,18 @@ export default function BookingsPage() {
       ) : view === 'grid' ? (
         <RoomGrid bookings={bookings} rooms={tabRooms} month={month} />
       ) : (
-        <BookingList bookings={bookings} onMarkPaid={async (id, totalAmount) => {
+        <BookingList bookings={bookings} onTogglePaid={async (id, totalAmount, currentlyPaid) => {
+          const patch = currentlyPaid
+            ? { status: 'confirmed', depositPaid: '0', balanceDue: totalAmount }
+            : { status: 'fully_paid', depositPaid: totalAmount, balanceDue: '0' }
           await fetch(`/api/bookings/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'fully_paid', depositPaid: totalAmount, balanceDue: '0' }),
+            body: JSON.stringify(patch),
           })
           setBookings(prev => prev.map(b =>
             b.booking.id === id
-              ? { ...b, booking: { ...b.booking, status: 'fully_paid', balanceDue: '0' } }
+              ? { ...b, booking: { ...b.booking, ...patch } }
               : b
           ))
         }} />
@@ -279,7 +282,7 @@ function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: Sort
     : <ChevronDown size={12} className="inline ml-1 text-gray-900" />
 }
 
-function BookingList({ bookings, onMarkPaid }: { bookings: Booking[]; onMarkPaid: (id: number, totalAmount: string) => Promise<void> }) {
+function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onTogglePaid: (id: number, totalAmount: string, currentlyPaid: boolean) => Promise<void> }) {
   const [sort, setSort]         = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
   const [search, setSearch]     = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -404,17 +407,16 @@ function BookingList({ bookings, onMarkPaid }: { bookings: Booking[]; onMarkPaid
                       return (
                         <button
                           onClick={async () => {
-                            if (isPaid) return
                             setPaying(booking.id)
-                            await onMarkPaid(booking.id, booking.totalAmount)
+                            await onTogglePaid(booking.id, booking.totalAmount, isPaid)
                             setPaying(null)
                           }}
                           disabled={paying === booking.id}
-                          title={isPaid ? 'Fully paid' : 'Mark as fully paid'}
+                          title={isPaid ? 'Click to unmark paid' : 'Mark as fully paid'}
                           className="disabled:opacity-50"
                         >
                           {isPaid
-                            ? <CheckCircle size={18} className="text-green-500" />
+                            ? <CheckCircle size={18} className="text-green-500 hover:text-green-700 transition-colors" />
                             : <Circle size={18} className="text-gray-300 hover:text-green-400 transition-colors" />
                           }
                         </button>
