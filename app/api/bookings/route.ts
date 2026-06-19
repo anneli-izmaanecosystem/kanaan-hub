@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, bookings, rooms } from '@/lib/db'
-import { eq, and, gte, lte, sql } from 'drizzle-orm'
+import { eq, and, gt, gte, lte, sql } from 'drizzle-orm'
 import { ratelimit } from '@/lib/ratelimit'
+import { monthEndDate } from '@/lib/date-sa'
 
 export async function GET(req: NextRequest) {
   const { userId } = await auth()
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
 
   if (month) {
     const start = `${month}-01`
-    const end   = new Date(parseInt(month.split('-')[0]), parseInt(month.split('-')[1]), 0).toISOString().split('T')[0]
+    const end   = monthEndDate(month)
     query = query.where(and(
       lte(bookings.checkIn, end),
       gte(bookings.checkOut, start),
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
       .where(and(
         eq(bookings.roomId, roomId),
         lte(bookings.checkIn, checkOut),
-        gte(bookings.checkOut, checkIn),
+        gt(bookings.checkOut, checkIn),
         sql`${bookings.status} != 'cancelled'`,
       ))
       .limit(1) : []

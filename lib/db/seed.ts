@@ -1,5 +1,6 @@
 import { config } from 'dotenv'
 config({ path: '.env.local' })
+import { inArray } from 'drizzle-orm'
 import { db, rooms } from './index'
 
 const roomSeed = [
@@ -27,12 +28,30 @@ const roomSeed = [
   { name: 'Room 21', type: 'budget' as const, capacity: 2, ratePp: '250', rateSolo: '350' },
   // Combined room
   { name: 'Room 10/13', type: 'premium' as const, capacity: 4, ratePp: '350', rateSolo: '450' },
+  // Backpackers — Dorm A (3 beds)
+  ...Array.from({ length: 3 }, (_, i) => ({
+    name: `Dorm A - Bed ${i + 1}`, type: 'dorm' as const, capacity: 1, ratePp: '200', rateSolo: null,
+  })),
+  // Backpackers — Dorm B (5 beds)
+  ...Array.from({ length: 5 }, (_, i) => ({
+    name: `Dorm B - Bed ${i + 1}`, type: 'dorm' as const, capacity: 1, ratePp: '200', rateSolo: null,
+  })),
+  // Camp sites 1–5
+  ...Array.from({ length: 5 }, (_, i) => ({
+    name: `Camp Site ${i + 1}`, type: 'camping' as const, capacity: 6, ratePp: '250', rateSolo: null,
+  })),
 ]
 
 async function seed() {
   console.log('Seeding rooms…')
   await db.insert(rooms).values(roomSeed).onConflictDoNothing()
-  console.log(`Inserted ${roomSeed.length} rooms.`)
+
+  // Deactivate old placeholder dorm/camping rooms superseded by the new ones
+  await db.update(rooms).set({ active: false }).where(
+    inArray(rooms.name, ['Room 15 (Dorm)', 'Camping A', 'Camping B', 'Camping C'])
+  )
+
+  console.log(`Inserted/updated ${roomSeed.length} rooms.`)
   process.exit(0)
 }
 

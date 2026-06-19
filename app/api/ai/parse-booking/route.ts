@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { ratelimit } from '@/lib/ratelimit'
+import { todaySA } from '@/lib/date-sa'
 
 const client = new Anthropic()
 
-const SYSTEM = `You are a booking assistant for Kanaan Guest Farm in South Africa.
+const SYSTEM_TEMPLATE = `You are a booking assistant for Kanaan Guest Farm in South Africa.
 Extract booking details from the user's message and return a JSON object.
-Today's date is ${new Date().toISOString().split('T')[0]}.
+Today's date is {TODAY}.
 
 Rooms:
 - Rooms 1-7, 16-18: Premium, R350/person/night, R450 solo
@@ -39,10 +40,11 @@ export async function POST(req: NextRequest) {
   if (!text?.trim()) return NextResponse.json({ error: 'No text provided' }, { status: 400 })
 
   try {
+    const system = SYSTEM_TEMPLATE.replace('{TODAY}', todaySA())
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: SYSTEM,
+      system,
       messages: [{ role: 'user', content: text }],
     })
 

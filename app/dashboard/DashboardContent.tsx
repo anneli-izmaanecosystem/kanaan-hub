@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { bookings, payrollRuns, employees, rooms } from '@/lib/db/schema'
 import { eq, gte, lte, and, count, ne } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
+import { todaySA } from '@/lib/date-sa'
 import Link from 'next/link'
 import { CalendarDays, Users, TrendingUp, Home, BarChart3 } from 'lucide-react'
 
@@ -28,7 +29,7 @@ function surroundingMonths(current: string, n = 6): string[] {
 
 export default async function DashboardContent({ searchParamsPromise }: { searchParamsPromise: Promise<{ month?: string }> }) {
   const searchParams = await searchParamsPromise
-  const today = new Date().toISOString().split('T')[0]
+  const today = todaySA()
   const currentYM = today.slice(0, 7)
   const selectedMonth = searchParams.month ?? currentYM
 
