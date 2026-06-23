@@ -84,16 +84,24 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   ])
 
   // KPI calculations
-  const bookingCount  = monthBookings.length
-  const totalRevenue  = monthBookings.reduce((s, b) => s + parseFloat(b.totalAmount || '0'), 0)
+  // Exclude quote_sent — unconfirmed quotes should not count as revenue
+  const confirmedBookings = monthBookings.filter(b => b.status !== 'quote_sent')
+  const bookingCount = confirmedBookings.length
 
-  // Occupied room-nights = sum of (min(checkout, monthEnd+1) - max(checkin, monthStart)) in days per booking
+  // Pro-rate revenue and occupancy by nights within the month.
+  // A booking spanning a month boundary (e.g. Jun 28 → Jul 5) contributes only its
+  // in-month fraction to this month's revenue, avoiding double-counting.
+  let totalRevenue = 0
   let occupiedRoomNights = 0
-  for (const b of monthBookings) {
-    const s = new Date(Math.max(new Date(b.checkIn).getTime(), new Date(monthStart).getTime()))
-    const e = new Date(Math.min(new Date(b.checkOut).getTime(), new Date(monthEnd).getTime() + 86_400_000))
-    const nights = Math.max(0, (e.getTime() - s.getTime()) / 86_400_000)
-    occupiedRoomNights += nights
+  for (const b of confirmedBookings) {
+    const checkInMs  = new Date(b.checkIn).getTime()
+    const checkOutMs = new Date(b.checkOut).getTime()
+    const s = Math.max(checkInMs, new Date(monthStart).getTime())
+    const e = Math.min(checkOutMs, new Date(monthEnd).getTime() + 86_400_000)
+    const nightsInMonth = Math.max(0, (e - s) / 86_400_000)
+    const totalNights   = Math.max(1, (checkOutMs - checkInMs) / 86_400_000)
+    occupiedRoomNights += nightsInMonth
+    totalRevenue       += parseFloat(b.totalAmount || '0') * (nightsInMonth / totalNights)
   }
   const totalRoomNights = totalRooms * daysInMonth
   const occupancyRate  = totalRoomNights > 0 ? (occupiedRoomNights / totalRoomNights) * 100 : 0
