@@ -165,7 +165,7 @@ export default function BookingDetailPage() {
             <label className={lbl}>Room</label>
             <select className={inp} value={form.roomId} onChange={e => set('roomId', e.target.value)}>
               <option value="">— Select room —</option>
-              {rooms.map(r => <option key={r.id} value={r.id}>{r.name} — {r.type}</option>)}
+              {rooms.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-2">

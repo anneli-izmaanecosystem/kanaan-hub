@@ -206,8 +206,9 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
   for (const { booking, room } of bookings) {
     if (booking.status === 'cancelled') continue
     const start = new Date(Math.max(new Date(booking.checkIn).getTime(), new Date(month + '-01').getTime()))
-    const end   = new Date(booking.checkOut) // exclusive
-    for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+    // Use inclusive end when checkIn === checkOut (no checkout specified → API defaults to checkIn)
+    const endMs = new Date(booking.checkOut).getTime() + (booking.checkIn === booking.checkOut ? 86_400_000 : 0)
+    for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
       const dateStr = d.toISOString().split('T')[0]
       if (dateStr.slice(0, 7) !== month) continue
       cellMap.set(`${room.id}-${dateStr}`, { ...booking, roomName: room.name })
