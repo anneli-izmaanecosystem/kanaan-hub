@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, bookings, rooms } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { eq, like, desc, isNotNull } from 'drizzle-orm'
 import { renderToBuffer, Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import React from 'react'
 
@@ -10,8 +10,6 @@ const COMPANY = {
   address: 'PTN 4 Farm Glencairn 8, Hazyview, Mpumalanga 1242',
   phone:   '+27 63 794 3880',
   email:   'bookings@kanaanguestfarm.com',
-  bank:    'Capitec Business',
-  account: '1054489262',
 }
 
 const OLIVE = '#6b7c45'
@@ -19,7 +17,6 @@ const LIGHT_OLIVE = '#f0f4e8'
 
 const s = StyleSheet.create({
   page:        { fontFamily: 'Helvetica', fontSize: 9, color: '#222', padding: 40, backgroundColor: '#fff' },
-  row:         { flexDirection: 'row' },
   col:         { flexDirection: 'column' },
   bold:        { fontFamily: 'Helvetica-Bold' },
   company:     { fontSize: 11, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
@@ -38,8 +35,6 @@ const s = StyleSheet.create({
   totalsValue: { fontSize: 9, width: 70, textAlign: 'right' },
   balLabel:    { fontSize: 11, fontFamily: 'Helvetica-Bold', width: 100, textAlign: 'right', paddingRight: 12 },
   balValue:    { fontSize: 11, fontFamily: 'Helvetica-Bold', width: 70, textAlign: 'right' },
-  banking:     { marginTop: 20, fontSize: 8, color: '#555' },
-  bankingTitle:{ fontSize: 8, color: '#888', marginBottom: 3 },
 })
 
 function fmtDate(d: string) {
@@ -59,6 +54,35 @@ function roomLabel(type: string) {
   return 'Accommodation'
 }
 
+async function assignInvoiceNumber(bookingId: number): Promise<string> {
+  const year = new Date().getFullYear()
+  const prefix = `CI-${year}-`
+
+  // Find the highest existing number for this year
+  const existing = await db
+    .select({ invoiceNumber: bookings.invoiceNumber })
+    .from(bookings)
+    .where(like(bookings.invoiceNumber, `${prefix}%`))
+    .orderBy(desc(bookings.invoiceNumber))
+    .limit(1)
+
+  let next = 1
+  if (existing.length > 0 && existing[0].invoiceNumber) {
+    const parts = existing[0].invoiceNumber.split('-')
+    const last = parseInt(parts[parts.length - 1])
+    if (!isNaN(last)) next = last + 1
+  }
+
+  const invNo = `${prefix}${String(next).padStart(4, '0')}`
+
+  await db
+    .update(bookings)
+    .set({ invoiceNumber: invNo, updatedAt: new Date() })
+    .where(eq(bookings.id, bookingId))
+
+  return invNo
+}
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
@@ -73,7 +97,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { booking, room } = row
-  const invNo   = booking.invoiceNumber ?? `${booking.id}`
+
+  // Assign a sequential invoice number if not yet set
+  const invNo = booking.invoiceNumber ?? await assignInvoiceNumber(booking.id)
+
   const invDate = fmtDate(booking.checkIn)
   const nights  = booking.nights
   const rate    = (parseFloat(booking.totalAmount) / nights).toFixed(2)
@@ -94,10 +121,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       React.createElement(Text, { style: s.heading }, 'Cash Invoice'),
 
       // Bill to + meta
-      React.createElement(View, { style: { ...s.row, justifyContent: 'space-between', marginBottom: 10 } },
+      React.createElement(View, { style: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 } },
         React.createElement(View, { style: s.col },
-          React.createElement(Text, { style: { ...s.subtext, color: '#aaa', marginBottom: 3 } }, 'BILL TO'),
-          React.createElement(Text, { style: { ...s.bold, fontSize: 10 } }, booking.guestName),
+          React.createElement(Text, { style: { fontSize: 8, color: '#aaa', marginBottom: 3 } }, 'BILL TO'),
+          React.createElement(Text, { style: { fontFamily: 'Helvetica-Bold', fontSize: 10 } }, booking.guestName),
         ),
         React.createElement(View, { style: s.col },
           React.createElement(View, { style: s.metaRow },
@@ -110,11 +137,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           ),
           React.createElement(View, { style: s.metaRow },
             React.createElement(Text, { style: s.metaLabel }, 'TERMS'),
-            React.createElement(Text, { style: s.metaValue }, 'Due on receipt'),
-          ),
-          React.createElement(View, { style: s.metaRow },
-            React.createElement(Text, { style: s.metaLabel }, 'DUE DATE'),
-            React.createElement(Text, { style: s.metaValue }, invDate),
+            React.createElement(Text, { style: s.metaValue }, 'Cash'),
           ),
         ),
       ),
@@ -149,12 +172,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       React.createElement(View, { style: { ...s.totalsRow, marginTop: 4 } },
         React.createElement(Text, { style: s.balLabel }, 'BALANCE DUE'),
         React.createElement(Text, { style: s.balValue }, fmt(balance)),
-      ),
-
-      // Banking details
-      React.createElement(View, { style: s.banking },
-        React.createElement(Text, { style: s.bankingTitle }, 'PAYMENT DETAILS'),
-        React.createElement(Text, {}, `${COMPANY.bank}  ·  Account # ${COMPANY.account}  ·  Ref: INV ${invNo}`),
       ),
     )
   )

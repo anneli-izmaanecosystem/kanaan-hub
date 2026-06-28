@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
 import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
+import BulkUploadPanel from './BulkUploadPanel'
 
 type Worker = {
   id: number; name: string; workerType: string; payStructure: string
@@ -34,7 +35,7 @@ export default function PayrollRunPage() {
   const [loading, setLoading] = useState(true)
   const [finalising, setFinalising] = useState(false)
 
-  useEffect(() => {
+  function load() {
     fetch(`/api/payroll/${runId}`)
       .then(r => r.json())
       .then(d => {
@@ -43,7 +44,9 @@ export default function PayrollRunPage() {
         setEntries(d.entries ?? [])
         setLoading(false)
       })
-  }, [runId])
+  }
+
+  useEffect(() => { load() }, [runId])
 
   async function deleteRun() {
     if (!confirm('Delete this draft payroll run? This cannot be undone.')) return
@@ -122,6 +125,9 @@ export default function PayrollRunPage() {
           )}
         </div>
       </div>
+
+      {/* Bulk timesheet upload */}
+      {!isLocked && <BulkUploadPanel runId={runId} onDone={load} />}
 
       {/* Summary strip */}
       <div className="grid grid-cols-3 gap-4 mb-8">

@@ -79,6 +79,7 @@ export default function AttendancePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading,      setUploading]      = useState(false)
   const [uploadPreview,  setUploadPreview]  = useState<{ date: string; present: boolean; hours: number | null; absent_reason: string | null; note: string | null }[] | null>(null)
+  const [uploadShopDeds, setUploadShopDeds] = useState<{ date: string; amount: number; note: string | null }[]>([])
   const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
   const [uploadError,    setUploadError]    = useState('')
   const [importingSel,   setImportingSel]   = useState<Set<number>>(new Set())
@@ -157,6 +158,7 @@ export default function AttendancePage() {
     const data = await res.json()
     if (!res.ok) { setUploadError(data.error ?? 'Upload failed'); setUploading(false); return }
     setUploadPreview(data.days ?? [])
+    setUploadShopDeds(data.shop_deductions ?? [])
     setUploadWarnings(data.warnings ?? [])
     setImportingSel(new Set((data.days ?? []).map((_: any, i: number) => i)))
     setUploading(false)
@@ -176,8 +178,23 @@ export default function AttendancePage() {
         note:          parsed.note ?? null,
       })
     }
+    // Import any shop deductions found on the timesheet
+    for (const ded of uploadShopDeds) {
+      await fetch(`/api/payroll/${runId}/advances/${workerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: ded.date,
+          amount: String(ded.amount),
+          advanceType: 'shop_deduction',
+          note: ded.note ?? 'from timesheet',
+        }),
+      })
+    }
     setUploadPreview(null)
+    setUploadShopDeds([])
     setUploadWarnings([])
+    load()
   }
 
   if (loading) return <div className="p-8 text-sm text-gray-400">Loading…</div>
@@ -236,7 +253,7 @@ export default function AttendancePage() {
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-semibold text-blue-900">Timesheet parsed — {uploadPreview.length} days found</p>
-                <button onClick={() => setUploadPreview(null)} className="text-blue-400 hover:text-blue-700"><X size={16} /></button>
+                <button onClick={() => { setUploadPreview(null); setUploadShopDeds([]) }} className="text-blue-400 hover:text-blue-700"><X size={16} /></button>
               </div>
 
               {uploadWarnings.length > 0 && (
@@ -264,10 +281,21 @@ export default function AttendancePage() {
                 ))}
               </div>
 
+              {uploadShopDeds.length > 0 && (
+                <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2">
+                  <p className="text-xs font-semibold text-orange-800 mb-1">Shop deductions found on timesheet</p>
+                  {uploadShopDeds.map((d, i) => (
+                    <p key={i} className="text-xs text-orange-700">
+                      {fmtDate(d.date)} · R{d.amount.toFixed(2)}{d.note ? ` — ${d.note}` : ''}
+                    </p>
+                  ))}
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <button onClick={confirmImport}
                   className="flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
-                  <Check size={14} /> Import {importingSel.size} days
+                  <Check size={14} /> Import {importingSel.size} days{uploadShopDeds.length > 0 ? ` + ${uploadShopDeds.length} deduction${uploadShopDeds.length > 1 ? 's' : ''}` : ''}
                 </button>
                 <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
                   className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
