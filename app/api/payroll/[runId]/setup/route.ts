@@ -101,7 +101,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
           : null
 
         await db.insert(attendanceDays).values({
-          runId, workerId: cfg.workerId, date, dayType,
+          runId, workerId: cfg.workerId, date, dayType: dayType as 'weekday' | 'saturday' | 'sunday' | 'public_holiday',
           hoursWorked: hours,
           absent: false,
           source: 'manual',
@@ -139,9 +139,9 @@ function countWeekdays(start: string, end: string): number {
   const d = new Date(start)
   const e = new Date(end)
   while (d <= e) {
-    const dow = d.getDay()
+    const dow = d.getUTCDay()
     if (dow !== 0 && dow !== 6) count++
-    d.setDate(d.getDate() + 1)
+    d.setUTCDate(d.getUTCDate() + 1)
   }
   return count
 }
@@ -152,13 +152,13 @@ function buildPeriodDays(start: string, end: string, phSet: Set<string>) {
   const e = new Date(end)
   while (d <= e) {
     const iso = d.toISOString().split('T')[0]
-    const dow = d.getDay()
+    const dow = d.getUTCDay()
     const dayType = phSet.has(iso) ? 'public_holiday'
       : dow === 0 ? 'sunday'
       : dow === 6 ? 'saturday'
       : 'weekday'
     days.push({ date: iso, dayType })
-    d.setDate(d.getDate() + 1)
+    d.setUTCDate(d.getUTCDate() + 1)
   }
   return days
 }

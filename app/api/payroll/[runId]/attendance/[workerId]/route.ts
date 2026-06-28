@@ -41,9 +41,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const start = new Date(run.periodStart)
   const end   = new Date(run.periodEnd)
 
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0]
-    const dow     = d.getDay() // 0=Sun,6=Sat
+    const dow     = d.getUTCDay() // 0=Sun,6=Sat — use UTC to avoid server TZ skew
 
     const dayType = holidayDates.has(dateStr) ? 'public_holiday'
       : dow === 0 ? 'sunday'

@@ -32,9 +32,9 @@ export async function GET(req: NextRequest) {
   const days = []
   const start = new Date(run.periodStart)
   const end   = new Date(run.periodEnd)
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const iso = d.toISOString().split('T')[0]
-    const dow = d.getDay() // 0=Sun, 6=Sat
+    const dow = d.getUTCDay() // 0=Sun, 6=Sat — UTC to avoid server TZ skew
     const dayType = phSet.has(iso) ? 'public_holiday' : dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday'
     const saved_ = savedMap.get(iso)
     days.push({

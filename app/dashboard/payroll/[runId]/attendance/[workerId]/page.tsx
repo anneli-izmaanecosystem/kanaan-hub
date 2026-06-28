@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Plus, Trash2, AlertTriangle, Sun, Star } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X } from 'lucide-react'
 import { round2 } from '@/lib/payroll'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -75,6 +75,14 @@ export default function AttendancePage() {
   const [advances, setAdvances] = useState<Advance[]>([])
   const [loading,  setLoading]  = useState(true)
 
+  // Timesheet upload
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploading,      setUploading]      = useState(false)
+  const [uploadPreview,  setUploadPreview]  = useState<{ date: string; present: boolean; hours: number | null; absent_reason: string | null; note: string | null }[] | null>(null)
+  const [uploadWarnings, setUploadWarnings] = useState<string[]>([])
+  const [uploadError,    setUploadError]    = useState('')
+  const [importingSel,   setImportingSel]   = useState<Set<number>>(new Set())
+
   // Advance form
   const [showAdvForm, setShowAdvForm] = useState(false)
   const [advForm, setAdvForm] = useState({ date: '', amount: '', advanceType: 'cash_advance', note: '' })
@@ -136,6 +144,42 @@ export default function AttendancePage() {
     if (res.ok) setAdvances(prev => prev.filter(a => a.id !== id))
   }
 
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !run || !worker) return
+    setUploading(true); setUploadError(''); setUploadPreview(null); setUploadWarnings([])
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('periodStart', run.periodStart)
+    fd.append('periodEnd',   run.periodEnd)
+    fd.append('workerName',  worker.name)
+    const res = await fetch(`/api/payroll/${runId}/attendance/${workerId}/upload`, { method: 'POST', body: fd })
+    const data = await res.json()
+    if (!res.ok) { setUploadError(data.error ?? 'Upload failed'); setUploading(false); return }
+    setUploadPreview(data.days ?? [])
+    setUploadWarnings(data.warnings ?? [])
+    setImportingSel(new Set((data.days ?? []).map((_: any, i: number) => i)))
+    setUploading(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  async function confirmImport() {
+    if (!uploadPreview) return
+    for (const [i, parsed] of uploadPreview.entries()) {
+      if (!importingSel.has(i)) continue
+      const existing = days.find(d => d.date === parsed.date)
+      if (!existing) continue
+      await saveDay(existing, {
+        absent:        !parsed.present,
+        absenceReason: parsed.absent_reason ?? null,
+        hoursWorked:   parsed.hours != null ? String(parsed.hours) : existing.hoursWorked,
+        note:          parsed.note ?? null,
+      })
+    }
+    setUploadPreview(null)
+    setUploadWarnings([])
+  }
+
   if (loading) return <div className="p-8 text-sm text-gray-400">Loading…</div>
   if (!worker || !run) return <div className="p-8 text-sm text-red-500">Not found.</div>
 
@@ -173,6 +217,67 @@ export default function AttendancePage() {
           : worker.payStructure === 'daily' ? `R${worker.dailyRate}/day`
           : `R${worker.floorSalary} floor + R${worker.saturdayRate}/on-site Sat`}
       </p>
+
+      {/* Timesheet upload */}
+      {!isLocked && (
+        <div className="mb-6">
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+          {!uploadPreview && (
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+              className="flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-4 py-2.5 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+              <Upload size={15} />
+              {uploading ? 'Reading timesheet…' : 'Upload timesheet photo (OCR)'}
+            </button>
+          )}
+          {uploadError && <p className="mt-2 text-sm text-red-600">{uploadError}</p>}
+
+          {/* OCR preview */}
+          {uploadPreview && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-blue-900">Timesheet parsed — {uploadPreview.length} days found</p>
+                <button onClick={() => setUploadPreview(null)} className="text-blue-400 hover:text-blue-700"><X size={16} /></button>
+              </div>
+
+              {uploadWarnings.length > 0 && (
+                <div className="mb-3 rounded-lg bg-amber-100 px-3 py-2 text-xs text-amber-800">
+                  {uploadWarnings.map((w, i) => <p key={i}>⚠ {w}</p>)}
+                </div>
+              )}
+
+              <div className="space-y-1 mb-4 max-h-60 overflow-y-auto">
+                {uploadPreview.map((p, i) => (
+                  <label key={i} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm cursor-pointer hover:bg-blue-50">
+                    <input type="checkbox" checked={importingSel.has(i)}
+                      onChange={e => setImportingSel(prev => {
+                        const n = new Set(prev)
+                        e.target.checked ? n.add(i) : n.delete(i)
+                        return n
+                      })} />
+                    <span className="font-medium text-gray-700 w-24">{fmtDate(p.date)}</span>
+                    {p.present
+                      ? <span className="text-green-700">Present{p.hours != null ? ` · ${p.hours}h` : ''}</span>
+                      : <span className="text-red-600">Absent{p.absent_reason ? ` (${p.absent_reason.replace('_', ' ')})` : ''}</span>
+                    }
+                    {p.note && <span className="text-gray-400 text-xs">— {p.note}</span>}
+                  </label>
+                ))}
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={confirmImport}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
+                  <Check size={14} /> Import {importingSel.size} days
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                  Upload different photo
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* PH confirmation banner */}
       {pendingPH.length > 0 && (
