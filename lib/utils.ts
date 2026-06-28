@@ -11,5 +11,7 @@ export function fmt(n: number | string) {
 
 export function fmtDate(d: string | null | undefined) {
   if (!d) return ''
-  return new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+  // Parse as local date to avoid UTC-to-local timezone shift
+  const [y, m, day] = d.split('T')[0].split('-').map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 }

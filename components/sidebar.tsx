@@ -3,14 +3,15 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
-import { LayoutDashboard, CalendarDays, Users, DollarSign, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
-  { href: '/dashboard',           label: 'Overview',   icon: LayoutDashboard, exact: true },
-  { href: '/dashboard/bookings',  label: 'Bookings',   icon: CalendarDays },
-  { href: '/dashboard/payroll',   label: 'Payroll',    icon: DollarSign },
-  { href: '/dashboard/ai',        label: 'AI Assistant', icon: MessageSquare },
+  { href: '/dashboard',          label: 'Overview',     icon: LayoutDashboard, exact: true },
+  { href: '/dashboard/bookings', label: 'Bookings',     icon: CalendarDays },
+  { href: '/dashboard/payroll',  label: 'Payroll',      icon: DollarSign },
+  { href: '/dashboard/fuel',     label: 'Fuel Log',     icon: Fuel },
+  { href: '/dashboard/ai',       label: 'AI Assistant', icon: MessageSquare },
 ]
 
 export function Sidebar() {

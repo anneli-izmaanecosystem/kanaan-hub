@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
-import { bookings, payrollRuns, employees, rooms } from '@/lib/db/schema'
+import { bookings, payrollRuns, workers, rooms } from '@/lib/db/schema'
 import { eq, gte, lte, and, count, ne } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
@@ -45,7 +45,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     draftRuns,
     monthBookings,
   ] = await Promise.all([
-    db.select({ count: count() }).from(employees).where(eq(employees.active, true)),
+    db.select({ count: count() }).from(workers).where(eq(workers.active, true)),
     db.select({
       id:        bookings.id,
       guestName: bookings.guestName,

@@ -224,7 +224,7 @@ export const payrollEntries = pgTable('payroll_entries', {
   defaultsApplied:   boolean('defaults_applied').notNull().default(false),
 
   notes: text('notes'),
-})
+}, t => [unique('payroll_entries_run_worker_unique').on(t.runId, t.workerId)])
 
 // ── Fuel logs (legacy stub — superseded by fuelFills below) ──────────────────
 export const fuelLogs = pgTable('fuel_logs', {

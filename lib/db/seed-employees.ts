@@ -15,7 +15,7 @@ async function seed() {
     },
     { name: 'Plant Hire', tradingName: 'Kanaan Plant Hire', entityType: 'plant_hire' as const },
     { name: 'Investment Project', tradingName: 'Investment Project', entityType: 'investment_project' as const },
-  ]).returning()
+  ]).onConflictDoNothing().returning()
 
   const kanaan    = entityRows[0]
   const plantHire = entityRows[1]

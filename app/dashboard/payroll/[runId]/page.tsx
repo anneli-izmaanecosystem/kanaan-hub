@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2 } from 'lucide-react'
+import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2, Trash2 } from 'lucide-react'
 
 type Worker = {
   id: number; name: string; workerType: string; payStructure: string
@@ -26,6 +26,7 @@ const ENTITY_TAG: Record<string, string> = {
 
 export default function PayrollRunPage() {
   const { runId } = useParams<{ runId: string }>()
+  const router    = useRouter()
 
   const [run,     setRun]     = useState<Run | null>(null)
   const [entity,  setEntity]  = useState<Entity | null>(null)
@@ -43,6 +44,12 @@ export default function PayrollRunPage() {
         setLoading(false)
       })
   }, [runId])
+
+  async function deleteRun() {
+    if (!confirm('Delete this draft payroll run? This cannot be undone.')) return
+    const res = await fetch(`/api/payroll/${runId}`, { method: 'DELETE' })
+    if (res.ok) router.push('/dashboard/payroll')
+  }
 
   async function finalise() {
     if (!confirm('Finalise this payroll run? This cannot be undone.')) return
@@ -92,6 +99,12 @@ export default function PayrollRunPage() {
               className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
               <Settings2 size={14} /> Setup
             </Link>
+          )}
+          {!isLocked && (
+            <button onClick={deleteRun}
+              className="flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+              <Trash2 size={14} /> Delete
+            </button>
           )}
           <Link href={`/dashboard/payroll/${runId}/staff-log`}
             className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">

@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 import { todaySA, currentMonthSA } from '@/lib/date-sa'
 
@@ -55,7 +55,7 @@ const ACCOM_TABS: { key: AccomTab; label: string }[] = [
 ]
 
 export default function BookingsPage() {
-  const [view, setView]         = useState<'grid' | 'list'>('list')
+  const [view, setView]         = useState<'grid' | 'list'>('grid')
   const [tab, setTab]           = useState<AccomTab>('lodge')
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms]       = useState<Room[]>([])
@@ -200,6 +200,19 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
   const today = todaySA()
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa']
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const todayColRef = useRef<HTMLTableCellElement>(null)
+
+  useEffect(() => {
+    if (todayColRef.current && scrollRef.current) {
+      const col = todayColRef.current
+      const container = scrollRef.current
+      const colLeft = col.offsetLeft
+      const colWidth = col.offsetWidth
+      const containerWidth = container.clientWidth
+      container.scrollLeft = colLeft - 90 // offset by sticky room-name column width
+    }
+  }, [month])
 
   // Build a map: roomId → date → booking
   const cellMap = new Map<string, Booking['booking'] & { roomName: string }>()
@@ -216,7 +229,7 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div ref={scrollRef} className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
       <table className="border-collapse text-xs" style={{ minWidth: `${90 + daysInMonth * 36}px` }}>
         <thead>
           <tr>
@@ -230,6 +243,7 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
               const isWeekend = dow === 0 || dow === 6
               return (
                 <th key={d}
+                  ref={isToday ? todayColRef : undefined}
                   className={cn(
                     'text-center py-1 font-normal border-l border-gray-200 w-9',
                     isToday ? 'bg-blue-700 text-white' : isWeekend ? 'bg-gray-700 text-gray-200' : 'bg-gray-800 text-gray-300'
@@ -441,7 +455,16 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                       )
                     })()}
                   </td>
-                  <td className="px-3 py-3">
+                  <td className="px-3 py-3 flex items-center gap-1.5">
+                    <a
+                      href={`/api/bookings/${booking.id}/invoice`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 whitespace-nowrap"
+                      title="Download cash invoice"
+                    >
+                      <FileText size={11} /> Invoice
+                    </a>
                     <Link href={`/dashboard/bookings/${booking.id}`}
                       className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 whitespace-nowrap">
                       <Pencil size={11} /> Edit

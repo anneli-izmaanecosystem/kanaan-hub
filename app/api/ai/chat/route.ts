@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { db, bookings, rooms, employees } from '@/lib/db'
+import { db, bookings, rooms, workers } from '@/lib/db'
 import { eq, gte, and } from 'drizzle-orm'
 import { ratelimit } from '@/lib/ratelimit'
 
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       .orderBy(bookings.checkIn)
       .limit(20),
     db.select().from(rooms).where(eq(rooms.active, true)),
-    db.select({ id: employees.id, name: employees.name, department: employees.department }).from(employees).where(eq(employees.active, true)),
+    db.select({ id: workers.id, name: workers.name, department: workers.department }).from(workers).where(eq(workers.active, true)),
   ])
 
   const system = `You are a helpful assistant for Kanaan Guest Farm management.
@@ -38,7 +38,7 @@ Active rooms: ${activeRooms.map(r => `${r.name} (${r.type}, R${r.ratePp}/pp/nigh
 Upcoming confirmed bookings (next 20):
 ${upcomingBookings.map(b => `- Booking #${b.id}: ${b.guestName}, Room ${b.roomId}, ${b.checkIn}→${b.checkOut}`).join('\n')}
 
-Active staff: ${activeStaff.map(e => `${e.name} (${e.department || 'Staff'})`).join(', ')}
+Active staff: ${activeStaff.map(w => `${w.name} (${w.department || 'Staff'})`).join(', ')}
 
 Be concise and helpful. For booking creation suggest they use the Bookings page.`
 
