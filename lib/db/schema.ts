@@ -220,7 +220,7 @@ export const payrollEntries = pgTable('payroll_entries', {
   notes: text('notes'),
 })
 
-// ── Fuel logs ─────────────────────────────────────────────────────────────────
+// ── Fuel logs (legacy stub — superseded by fuelFills below) ──────────────────
 export const fuelLogs = pgTable('fuel_logs', {
   id:        serial('id').primaryKey(),
   logDate:   date('log_date').notNull(),
@@ -234,21 +234,134 @@ export const fuelLogs = pgTable('fuel_logs', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 
+// ── Fuel Log v2 ───────────────────────────────────────────────────────────────
+
+export const fuelFillStatusEnum = pgEnum('fuel_fill_status', ['draft', 'final'])
+export const fuelFillFlagEnum   = pgEnum('fuel_fill_flag',   ['ok', 'estimated', 'delivery', 'shortage'])
+export const fuelAllocTypeEnum  = pgEnum('fuel_alloc_type',  ['onsite', 'offsite'])
+export const alpheusDayTypeEnum = pgEnum('alpheus_day_type', ['onsite', 'offsite', 'partial'])
+export const invoiceStatusEnum  = pgEnum('invoice_status',   ['unpaid', 'paid_cash', 'paid_eft', 'overdue'])
+
+// Active R/litre rate is derived from the most recent fuel_purchases row.
+// A fill's cost = fill.litres * fill.rate_per_litre (snapshotted at capture time).
+
+export const fuelFills = pgTable('fuel_fills', {
+  id:            serial('id').primaryKey(),
+  fillDate:      date('fill_date').notNull(),
+  driverId:      integer('driver_id').references(() => workers.id),   // nullable — allow unknown driver
+  driverName:    text('driver_name').notNull(),                        // denormalised for quick display
+  vehicle:       text('vehicle').notNull(),                            // 'TLB/JCB' | 'Pickup' | 'Bakkie' | 'Other'
+  openReading:   numeric('open_reading',  { precision: 10, scale: 2 }),
+  closeReading:  numeric('close_reading', { precision: 10, scale: 2 }),
+  litres:        numeric('litres',        { precision: 8,  scale: 2 }).notNull(),
+  isEstimated:   boolean('is_estimated').notNull().default(false),
+  ratePerLitre:  numeric('rate_per_litre', { precision: 8, scale: 2 }).notNull(),
+  photoUrl:      text('photo_url'),
+  notes:         text('notes'),
+  status:        fuelFillStatusEnum('status').notNull().default('draft'),
+  flag:          fuelFillFlagEnum('flag').notNull().default('ok'),
+  createdBy:     text('created_by'),
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+  updatedAt:     timestamp('updated_at').notNull().defaultNow(),
+})
+
+// One fill can be split across multiple allocations (on-site + off-site same day).
+// litres across all allocations for a fill must sum to fill.litres.
+// day_id links to alpheus_days when the match is confirmed (auto-match by date+driver).
+export const fuelAllocations = pgTable('fuel_allocations', {
+  id:          serial('id').primaryKey(),
+  fillId:      integer('fill_id').notNull().references(() => fuelFills.id, { onDelete: 'cascade' }),
+  dayId:       integer('day_id').references(() => alpheusDays.id),    // null until matched
+  allocType:   fuelAllocTypeEnum('alloc_type').notNull(),
+  clientName:  text('client_name'),    // required when offsite
+  billingInfo: text('billing_info'),
+  hoursWorked: numeric('hours_worked', { precision: 5, scale: 2 }),
+  litres:      numeric('litres',       { precision: 8, scale: 2 }).notNull(),
+  cost:        numeric('cost',         { precision: 10, scale: 2 }).notNull(), // litres * rate snapshotted
+  notes:       text('notes'),
+})
+
+// Alpheus's working days — captured by manager.
+// Matched to fuel fills by fillDate = alpheusDays.dayDate + driverName = 'Alpheus'.
+export const alpheusDays = pgTable('alpheus_days', {
+  id:        serial('id').primaryKey(),
+  dayDate:   date('day_date').notNull(),
+  dayType:   alpheusDayTypeEnum('day_type').notNull(),
+  notes:     text('notes'),
+  status:    fuelFillStatusEnum('status').notNull().default('draft'),  // reuse draft/final
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+})
+
+// Per-client blocks within an Alpheus day (a partial day can have multiple clients).
+export const alpheusDayClients = pgTable('alpheus_day_clients', {
+  id:          serial('id').primaryKey(),
+  dayId:       integer('day_id').notNull().references(() => alpheusDays.id, { onDelete: 'cascade' }),
+  clientName:  text('client_name').notNull(),
+  billingInfo: text('billing_info'),
+  hoursWorked: numeric('hours_worked', { precision: 5, scale: 2 }).notNull(),
+})
+
+// Bulk diesel deliveries — saving a row updates the active R/litre rate.
+export const fuelPurchases = pgTable('fuel_purchases', {
+  id:            serial('id').primaryKey(),
+  purchaseDate:  date('purchase_date').notNull(),
+  supplier:      text('supplier').notNull().default('Bosbok Gas Nelspruit'),
+  invoiceNo:     text('invoice_no'),
+  docketNo:      text('docket_no'),
+  litres:        numeric('litres',          { precision: 10, scale: 2 }).notNull(),
+  pricePerLitre: numeric('price_per_litre', { precision: 8,  scale: 2 }).notNull(),
+  totalExclVat:  numeric('total_excl_vat',  { precision: 12, scale: 2 }).notNull(),
+  vatRate:       numeric('vat_rate',        { precision: 5,  scale: 2 }).notNull().default('0'),
+  totalInclVat:  numeric('total_incl_vat',  { precision: 12, scale: 2 }).notNull(),
+  notes:         text('notes'),
+  createdBy:     text('created_by'),
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+})
+
+// Client invoices generated from off-site summary.
+// Not synced to QBO — used for reference and payment tracking only.
+export const fuelInvoices = pgTable('fuel_invoices', {
+  id:             serial('id').primaryKey(),
+  invoiceNumber:  text('invoice_number').notNull().unique(),  // auto: INV-YYYY-NNNN
+  clientName:     text('client_name').notNull(),
+  billingInfo:    text('billing_info'),
+  periodStart:    date('period_start').notNull(),
+  periodEnd:      date('period_end').notNull(),
+  hours:          numeric('hours',          { precision: 6, scale: 2 }).notNull(),
+  tlbRate:        numeric('tlb_rate',       { precision: 8, scale: 2 }).notNull(),
+  labourExclVat:  numeric('labour_excl_vat',{ precision: 12, scale: 2 }).notNull(),
+  dieselLitres:   numeric('diesel_litres',  { precision: 8, scale: 2 }).notNull(),
+  dieselRate:     numeric('diesel_rate',    { precision: 8, scale: 2 }).notNull(),
+  dieselCost:     numeric('diesel_cost',    { precision: 12, scale: 2 }).notNull(),
+  vatRate:        numeric('vat_rate',       { precision: 5, scale: 2 }).notNull().default('15'), // 0 for cash
+  vatAmount:      numeric('vat_amount',     { precision: 12, scale: 2 }).notNull(),
+  totalDue:       numeric('total_due',      { precision: 12, scale: 2 }).notNull(),
+  paymentStatus:  invoiceStatusEnum('payment_status').notNull().default('unpaid'),
+  paidAt:         timestamp('paid_at'),
+  paymentMethod:  text('payment_method'),   // 'cash' | 'eft'
+  notes:          text('notes'),
+  createdBy:      text('created_by'),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+})
+
 // ── Staff log (mobile freetext entries for payroll prep) ──────────────────────
 export const staffLogTypeEnum = pgEnum('staff_log_type', [
   'hours', 'advance', 'shop_purchase', 'note',
 ])
 
 export const staffLogEntries = pgTable('staff_log_entries', {
-  id:        serial('id').primaryKey(),
-  workerId:  integer('worker_id').references(() => workers.id),
-  workerName: text('worker_name').notNull(), // denormalised for quick entry
-  logType:   staffLogTypeEnum('log_type').notNull().default('note'),
-  logDate:   date('log_date').notNull(),
-  message:   text('message').notNull(),
-  amount:    numeric('amount', { precision: 10, scale: 2 }),
-  createdBy: text('created_by'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
+  id:          serial('id').primaryKey(),
+  workerId:    integer('worker_id').references(() => workers.id),
+  workerName:  text('worker_name').notNull(),
+  logType:     staffLogTypeEnum('log_type').notNull().default('note'),
+  logDate:     date('log_date').notNull(),
+  message:     text('message').notNull(),
+  amount:      numeric('amount', { precision: 10, scale: 2 }),
+  createdBy:   text('created_by'),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  processedAt: timestamp('processed_at'),
 })
 
 // ── Leave balances (employees only) ──────────────────────────────────────────

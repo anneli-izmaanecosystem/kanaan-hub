@@ -36,6 +36,13 @@
       "when": 1782637179587,
       "tag": "0004_woozy_cargill",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782700000000,
+      "tag": "0005_fuel_log_v2",
+      "breakpoints": true
     }
   ]
 }
