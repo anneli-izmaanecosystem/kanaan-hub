@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2, Trash2 } from 'lucide-react'
+import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
 
 type Worker = {
   id: number; name: string; workerType: string; payStructure: string
@@ -109,6 +109,10 @@ export default function PayrollRunPage() {
           <Link href={`/dashboard/payroll/${runId}/staff-log`}
             className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
             <MessageSquare size={14} /> Staff Log
+          </Link>
+          <Link href={`/dashboard/payroll/${runId}/uif-schedule`}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            <FileSpreadsheet size={14} /> UIF Schedule
           </Link>
           {!isLocked && (
             <button onClick={finalise} disabled={finalising}
