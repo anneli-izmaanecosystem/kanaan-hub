@@ -3,13 +3,14 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
-import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel } from 'lucide-react'
+import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
   { href: '/dashboard',          label: 'Overview',     icon: LayoutDashboard, exact: true },
   { href: '/dashboard/bookings', label: 'Bookings',     icon: CalendarDays },
   { href: '/dashboard/payroll',  label: 'Payroll',      icon: DollarSign },
+  { href: '/dashboard/staff',    label: 'Staff',        icon: Users },
   { href: '/dashboard/fuel',     label: 'Fuel Log',     icon: Fuel },
   { href: '/dashboard/ai',       label: 'AI Assistant', icon: MessageSquare },
 ]
