@@ -515,7 +515,7 @@ export default function AttendancePage() {
                   const amount = parseFloat(day.calculatedAmount ?? '0')
 
                   return (
-                    <tr key={day.date} className={rowCls}>
+                    <tr key={`${day.date}-${day.hoursWorked ?? 'null'}-${day.id ?? 0}`} className={rowCls}>
                       <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
                         {fmtDate(day.date)}
                         {isPH && (
