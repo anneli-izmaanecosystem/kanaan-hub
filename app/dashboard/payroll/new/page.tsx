@@ -43,7 +43,7 @@ export default function NewPayrollRunPage() {
     })
     if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Error'); setSaving(false); return }
     const run = await res.json()
-    router.push(`/dashboard/payroll/${run.id}`)
+    router.push(`/dashboard/payroll/${run.id}/setup`)
   }
 
   const inp = 'w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300'

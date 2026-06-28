@@ -217,6 +217,12 @@ export const payrollEntries = pgTable('payroll_entries', {
   // PAYE monitoring (Plant Hire / Alpheus)
   payeTaxableAmount: numeric('paye_taxable_amount', { precision: 10, scale: 2 }),
 
+  // Setup: timesheet vs default hours
+  usesTimesheet:     boolean('uses_timesheet').notNull().default(true),
+  defaultHoursPerDay:  numeric('default_hours_per_day',  { precision: 4, scale: 2 }),
+  defaultDaysInPeriod: integer('default_days_in_period'),
+  defaultsApplied:   boolean('defaults_applied').notNull().default(false),
+
   notes: text('notes'),
 })
 
