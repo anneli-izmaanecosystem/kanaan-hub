@@ -50,10 +50,11 @@ The pay period is ${run.periodStart} to ${run.periodEnd}.
 CRITICAL: A single image may contain data for ONE worker OR MULTIPLE workers. Look carefully for section breaks, separate name headers, or grouped rows that belong to different people. Return one entry per worker found.
 
 RULES:
-1. Timesheet columns: Date/Day | Name | IN | LUNCH OUT | LUNCH IN | OUT | SIGN
+1. Each row has up to 4 time values: START | LUNCH-OUT | LUNCH-IN | END. Column headers may say "IN | OUT | LUNCH | OUT" or "IN | LUNCH OUT | LUNCH IN | OUT" — ignore the labels, just read 4 time values left to right.
 2. Times are 24h — "07.30", "0730", "07:30" all mean 07:30
-3. Calculate hours: (LUNCH OUT − IN) + (OUT − LUNCH IN). E.g. 07:30→12:00 + 12:30→16:00 = 8h
-4. SIGN column letters F/E are signatures — ignore them, not absence codes
+3. ALWAYS calculate hours: (LUNCH-OUT − START) + (END − LUNCH-IN). E.g. 07:30→12:00 + 12:30→16:00 = 4.5+3.5 = 8.0h. Return a numeric value — never null if 4 times are present.
+4. If only 2 time values (IN and OUT, no lunch), calculate as OUT − IN.
+5. SIGN column letters F/E are signatures — ignore them, not absence codes
 5. Dates: day number + abbreviation — "1Mon"=1st, "8Mon"=8th; handwritten "8" may look like "2"
 6. Month/year from pay period: ${run.periodStart} to ${run.periodEnd}
 7. Rows with no IN/OUT = absent

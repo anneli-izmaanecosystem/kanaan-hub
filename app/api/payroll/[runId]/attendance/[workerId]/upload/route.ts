@@ -28,14 +28,14 @@ export async function POST(req: NextRequest, { params }: Params) {
 The pay period is ${periodStart} to ${periodEnd}.
 
 IMPORTANT RULES FOR READING THIS SHEET:
-1. The sheet has columns: Date/Day | Name | IN | LUNCH OUT | LUNCH IN | OUT | SIGN (or similar layout)
-2. Times are written in 24-hour format, sometimes as "07.30", "0730", "07:30" — all mean 07:30
-3. Calculate hours worked as: (LUNCH OUT - IN) + (OUT - LUNCH IN). E.g. 07:30→12:00 + 12:30→16:00 = 4.5 + 3.5 = 8h
-4. The SIGN column contains letters like F (employee signed) or E (employer signed) — these are NOT absence codes, ignore them
-5. Dates are written as day-of-month + day abbreviation, e.g. "1Mon"=1st, "8Mon"=8th, "22Mon"=22nd — read carefully, a handwritten "8" may look like "2" or "3"
-6. The month and year come from the pay period: ${periodStart} to ${periodEnd}
-7. If a row has no IN/OUT times, the worker was absent that day
-8. Look for any separate section listing shop deductions, groceries, or store purchases — extract those too
+1. Each row has up to 4 time values: START | LUNCH-OUT | LUNCH-IN | END. The column headers may say "IN | OUT | LUNCH | OUT" or "IN | LUNCH OUT | LUNCH IN | OUT" or similar — ignore the labels, just read the 4 time values left to right.
+2. Times are written in 24-hour format: "07.30", "0730", "07:30" all mean 07:30
+3. ALWAYS calculate hours: (LUNCH-OUT − START) + (END − LUNCH-IN). Example: 07:30 → 12:00 + 12:30 → 16:00 = 4.5 + 3.5 = 8.0h. You MUST return a numeric hours value — never return null if 4 times are present.
+4. If only 2 time values appear (IN and OUT, no lunch), calculate hours as OUT − IN.
+5. The SIGN column contains letters like F or E — these are signatures, NOT absence codes. Ignore them.
+6. Dates: day-of-month + abbreviation, e.g. "1Mon"=1st, "8Mon"=8th. A handwritten "8" may look like "2" or "3". Month/year from pay period: ${periodStart} to ${periodEnd}.
+7. If a row has no time values, the worker was absent that day.
+8. Look for any section listing shop deductions, groceries, or store purchases — extract those too.
 
 Extract every day's attendance record AND any shop deductions.
 
