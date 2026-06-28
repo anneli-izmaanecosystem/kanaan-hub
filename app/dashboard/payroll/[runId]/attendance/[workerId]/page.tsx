@@ -152,55 +152,15 @@ export default function AttendancePage() {
     }
   }
 
-  // ── Fix 1: Sync payroll entry after attendance changes ───────────────────────
-  function syncEntry(currentDays: Day[], currentAdvances?: Advance[]) {
-    const w = worker!
-    const advList = currentAdvances ?? advances
-
-    // Derive EntryInput fields from days
-    let ordinaryHours = 0, saturdayHours = 0, phHours = 0
-    let daysWorked = 0, saturdayDays = 0, unpaidLeaveDays = 0
-    let annualLeaveDaysTaken = 0, sickLeaveDaysTaken = 0
-
-    for (const d of currentDays) {
-      if (d.absent) {
-        if (d.absenceReason === 'unpaid') unpaidLeaveDays += 1
-        if (d.absenceReason === 'annual_leave') annualLeaveDaysTaken += 1
-        if (d.absenceReason === 'sick') sickLeaveDaysTaken += 1
-        continue
-      }
-      if (w.payStructure === 'hourly') {
-        const hrs = parseFloat(d.hoursWorked ?? w.stdHoursPerDay ?? '0')
-        if (d.dayType === 'saturday') saturdayHours += hrs
-        else if (d.dayType === 'public_holiday') phHours += hrs
-        else ordinaryHours += hrs
-      } else if (w.payStructure === 'daily') {
-        if (d.dayType === 'saturday') saturdayDays += 1
-        else daysWorked += 1
-      } else if (w.payStructure === 'floor') {
-        if (d.dayType === 'saturday') saturdayDays += 1
-        else if (d.dayType === 'weekday') daysWorked += 1
-      }
-    }
-
-    const salaryAdvance = advList
-      .filter(a => a.advanceType === 'cash_advance')
-      .reduce((s, a) => s + parseFloat(a.amount), 0)
-    const shopDeductions = advList
-      .filter(a => a.advanceType === 'shop_deduction')
-      .reduce((s, a) => s + parseFloat(a.amount), 0)
-
-    fetch(`/api/payroll/${runId}/entries/${workerId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ordinaryHours, saturdayHours, phHours,
-        daysWorked, saturdayDays, unpaidLeaveDays,
-        salaryAdvance, shopDeductions,
-        annualLeaveDaysTaken, sickLeaveDaysTaken,
-      }),
-    })
+  // ── Sync payroll entry — calls server-side recalculation from saved DB data ──
+  function syncEntry(_currentDays?: Day[], _currentAdvances?: Advance[]) {
+    // The /sync route reads attendance + advances from DB and recalculates.
+    // This avoids the stale entryId bug (entries route uses entryId, not workerId).
+    fetch(`/api/payroll/${runId}/attendance/${workerId}/sync`, {
+      method: 'POST',
+    }).catch(() => {/* fire and forget */})
   }
+
 
   // ── Advance add ──────────────────────────────────────────────────────────────
   async function addAdvance(e: React.FormEvent) {
