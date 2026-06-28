@@ -5,11 +5,12 @@ import { eq, and, between } from 'drizzle-orm'
 import { defaultEntry, calculatePayroll } from '@/lib/payroll'
 
 // GET — run + all entries with worker info
-export async function GET(_req: NextRequest, { params }: { params: { runId: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const runId = parseInt(params.runId)
+  const { runId: runIdStr } = await params
+  const runId = parseInt(runIdStr)
   const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, runId))
   if (!run) return NextResponse.json({ error: 'Run not found' }, { status: 404 })
 
@@ -30,11 +31,12 @@ export async function GET(_req: NextRequest, { params }: { params: { runId: stri
 }
 
 // POST — apply setup: update entry settings + generate default attendance
-export async function POST(req: NextRequest, { params }: { params: { runId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const runId = parseInt(params.runId)
+  const { runId: runIdStr } = await params
+  const runId = parseInt(runIdStr)
   const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, runId))
   if (!run) return NextResponse.json({ error: 'Run not found' }, { status: 404 })
 

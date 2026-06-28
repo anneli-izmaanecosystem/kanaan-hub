@@ -4,11 +4,12 @@ import { db, staffLogEntries, workers, advances, attendanceDays, payrollRuns, wo
 import { eq, and, isNull } from 'drizzle-orm'
 
 // GET — unprocessed staff log entries, with fuzzy worker matching via aliases
-export async function GET(_req: NextRequest, { params }: { params: { runId: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const runId = parseInt(params.runId)
+  const { runId: runIdStr } = await params
+  const runId = parseInt(runIdStr)
   const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, runId))
   if (!run) return NextResponse.json({ error: 'Run not found' }, { status: 404 })
 
@@ -45,11 +46,12 @@ export async function GET(_req: NextRequest, { params }: { params: { runId: stri
 }
 
 // POST — process one entry: write to attendanceDays or advances, mark processed
-export async function POST(req: NextRequest, { params }: { params: { runId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const runId = parseInt(params.runId)
+  const { runId: runIdStr } = await params
+  const runId = parseInt(runIdStr)
   const body = await req.json()
   const { entryId, workerId, action } = body
   // action: 'attendance' | 'advance' | 'shop' | 'skip'
