@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, workers, entities } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 
 export async function GET(req: NextRequest) {
   const { userId } = await auth()
@@ -39,6 +39,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
 
     const n = (v: any) => (v != null && v !== '' ? String(v) : null)
+
+    // Guard against duplicates — return existing worker if same name+entity
+    const [existing] = await db.select().from(workers)
+      .where(and(eq(workers.entityId, parseInt(entityId)), eq(workers.name, name)))
+    if (existing) return NextResponse.json(existing, { status: 200 })
 
     const [worker] = await db.insert(workers).values({
       entityId:       parseInt(entityId),
