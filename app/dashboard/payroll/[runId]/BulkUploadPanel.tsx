@@ -150,7 +150,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
             hoursWorked:   workerIsHourly && day.present && day.hours != null
                              ? String(day.hours)
                              : workerIsHourly && day.present
-                             ? (worker?.stdHoursPerDay ?? null)
+                             ? '0'
                              : null,
             note:          day.note ?? null,
             source:        'timesheet_photo',

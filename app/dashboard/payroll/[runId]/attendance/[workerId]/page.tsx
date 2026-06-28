@@ -86,6 +86,10 @@ export default function AttendancePage() {
   const [uploadError,    setUploadError]    = useState('')
   const [importingSel,   setImportingSel]   = useState<Set<number>>(new Set())
 
+  // Import from Fuel Log (Alpheus / floor workers)
+  const [importingFuel, setImportingFuel] = useState(false)
+  const [importFuelMsg, setImportFuelMsg] = useState('')
+
   // Advance form
   const [showAdvForm, setShowAdvForm] = useState(false)
   const [advForm, setAdvForm] = useState({ date: '', amount: '', advanceType: 'cash_advance', note: '' })
@@ -230,6 +234,19 @@ export default function AttendancePage() {
     }
   }
 
+  async function importFromFuelLog() {
+    setImportingFuel(true); setImportFuelMsg('')
+    const res = await fetch(`/api/payroll/${runId}/attendance/${workerId}/import-alpheus`, { method: 'POST' })
+    const data = await res.json()
+    if (res.ok) {
+      setImportFuelMsg(`Imported ${data.imported} day${data.imported !== 1 ? 's' : ''} from Fuel Log`)
+      load()
+    } else {
+      setImportFuelMsg(data.error ?? 'Import failed')
+    }
+    setImportingFuel(false)
+  }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !run || !worker) return
@@ -262,7 +279,7 @@ export default function AttendancePage() {
           return saveDay(existing, {
             absent:        !parsed.present,
             absenceReason: parsed.absent_reason ?? null,
-            hoursWorked:   parsed.hours != null ? String(parsed.hours) : existing.hoursWorked,
+            hoursWorked:   parsed.hours != null ? String(parsed.hours) : (parsed.present ? '0' : null),
             note:          parsed.note ?? null,
           })
         })
@@ -355,6 +372,17 @@ export default function AttendancePage() {
           : worker.payStructure === 'daily' ? `R${worker.dailyRate}/day`
           : `R${worker.floorSalary} floor + R${worker.saturdayRate}/on-site Sat`}
       </p>
+
+      {/* Import from Fuel Log — floor workers only */}
+      {!isLocked && worker.payStructure === 'floor' && (
+        <div className="mb-4 flex items-center gap-3">
+          <button onClick={importFromFuelLog} disabled={importingFuel}
+            className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-2.5 text-sm text-green-800 font-medium hover:bg-green-100 disabled:opacity-50 transition-colors">
+            {importingFuel ? 'Importing…' : '↓ Import from Fuel Log'}
+          </button>
+          {importFuelMsg && <p className="text-sm text-gray-500">{importFuelMsg}</p>}
+        </div>
+      )}
 
       {/* Timesheet upload */}
       {!isLocked && (
