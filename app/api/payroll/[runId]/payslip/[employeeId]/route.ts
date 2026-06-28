@@ -1,36 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, payrollRuns, payrollEntries, employees } from '@/lib/db'
+import { db, payrollRuns, payrollEntries, workers, entities } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ runId: string; employeeId: string }> }) {
+// Route keeps [employeeId] segment name for URL compat — it now means workerId
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ runId: string; employeeId: string }> },
+) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const { runId, employeeId } = await params
 
-  const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, parseInt(runId)))
+  const [run] = await db
+    .select({ run: payrollRuns, entity: entities })
+    .from(payrollRuns)
+    .innerJoin(entities, eq(payrollRuns.entityId, entities.id))
+    .where(eq(payrollRuns.id, parseInt(runId)))
+
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const [row] = await db
-    .select({ entry: payrollEntries, employee: employees })
+    .select({ entry: payrollEntries, worker: workers })
     .from(payrollEntries)
-    .innerJoin(employees, eq(payrollEntries.employeeId, employees.id))
+    .innerJoin(workers, eq(payrollEntries.workerId, workers.id))
     .where(and(
-      eq(payrollEntries.runId, parseInt(runId)),
-      eq(payrollEntries.employeeId, parseInt(employeeId)),
+      eq(payrollEntries.runId,    parseInt(runId)),
+      eq(payrollEntries.workerId, parseInt(employeeId)),
     ))
 
   if (!row) return NextResponse.json({ error: 'Entry not found' }, { status: 404 })
 
-  const emp = row.employee
-  const STD_MONTHLY_HOURS = 173.33
-  const otRate = emp.overtimeHourlyRate
-    ? parseFloat(emp.overtimeHourlyRate)
-    : emp.payType === 'fixed_salary'
-      ? parseFloat(emp.monthlySalary ?? '0') / STD_MONTHLY_HOURS
-      : parseFloat(emp.hourlyRate ?? '0')
-  const sundayPhPay = String(Math.round(parseFloat(row.entry.sundayPhHours) * otRate * 2 * 100) / 100)
-
-  return NextResponse.json({ run, employee: row.employee, entry: { ...row.entry, sundayPhPay } })
+  return NextResponse.json({
+    run:    run.run,
+    entity: run.entity,
+    worker: row.worker,
+    entry:  row.entry,
+  })
 }

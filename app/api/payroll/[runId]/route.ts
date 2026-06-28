@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, payrollRuns, payrollEntries, employees } from '@/lib/db'
+import { db, payrollRuns, payrollEntries, workers } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ runId: string }> },
+) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
@@ -14,9 +17,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ run
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const entries = await db
-    .select({ entry: payrollEntries, employee: employees })
+    .select({ entry: payrollEntries, worker: workers })
     .from(payrollEntries)
-    .innerJoin(employees, eq(payrollEntries.employeeId, employees.id))
+    .innerJoin(workers, eq(payrollEntries.workerId, workers.id))
     .where(eq(payrollEntries.runId, id))
 
   return NextResponse.json({ run, entries })
