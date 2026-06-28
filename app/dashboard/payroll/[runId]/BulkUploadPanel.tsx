@@ -13,7 +13,7 @@ type WorkerResult = {
   filename: string; workerName: string; workerId: number | null; matched: boolean
   days: ParsedDay[]; shop_deductions: ParsedDed[]; warnings: string[]; error?: string
 }
-type AllWorker = { id: number; name: string; stdHoursPerDay: string | null }
+type AllWorker = { id: number; name: string; payStructure: string; stdHoursPerDay: string | null }
 type ExistingDay = { date: string; hoursWorked: string | null; absent: boolean; source: string }
 type ExistingMap = Record<number, ExistingDay[]> // workerId → existing non-default days
 
@@ -135,6 +135,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
       if (!wid) continue
 
       const worker = allWorkers.find(w => w.id === wid)
+      const workerIsHourly = !worker || worker.payStructure === 'hourly'
 
       // Save attendance days in parallel
       await Promise.all(result.days.map(day =>
@@ -145,8 +146,12 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
             date:          day.date,
             absent:        !day.present,
             absenceReason: day.absent_reason ?? null,
-            hoursWorked:   day.hours != null ? String(day.hours)
-                           : (!day.present ? null : (worker?.stdHoursPerDay ?? null)),
+            // Only save hours for hourly workers — daily/floor workers get presence only
+            hoursWorked:   workerIsHourly && day.present && day.hours != null
+                             ? String(day.hours)
+                             : workerIsHourly && day.present
+                             ? (worker?.stdHoursPerDay ?? null)
+                             : null,
             note:          day.note ?? null,
             source:        'timesheet_photo',
           }),
@@ -302,6 +307,8 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
               const deds       = r.shop_deductions.filter(d => d.amount > 0)
               const existing   = wid ? existingMap[wid] : undefined
               const hasExisting = existing && existing.length > 0
+              const workerMeta = allWorkers.find(w => w.id === wid)
+              const isHourly   = !workerMeta || workerMeta.payStructure === 'hourly'
 
               return (
                 <div key={r.filename} className={`rounded-lg bg-white border overflow-hidden ${hasExisting ? 'border-amber-300' : 'border-gray-200'}`}>
@@ -390,13 +397,16 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                                   className="accent-green-600 w-3.5 h-3.5 flex-shrink-0" />
                                 {/* Date */}
                                 <span className="text-xs text-gray-500 w-22 flex-shrink-0">{fmtDate(d.date)}</span>
-                                {/* Hours */}
-                                {d.present && (
+                                {/* Hours — only for hourly workers */}
+                                {d.present && isHourly && (
                                   <input type="number" step="0.5" min="0" max="24"
                                     value={d.hours ?? ''}
                                     placeholder="hrs"
                                     onChange={e => updateDay(r.filename, i, { hours: e.target.value ? parseFloat(e.target.value) : null })}
                                     className={`${inp} w-16 text-center`} />
+                                )}
+                                {d.present && !isHourly && (
+                                  <span className="text-xs text-gray-400 w-16 text-center">daily</span>
                                 )}
                                 {!d.present && (
                                   <select value={d.absent_reason ?? 'unpaid'}

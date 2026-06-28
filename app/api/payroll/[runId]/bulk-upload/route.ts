@@ -145,5 +145,11 @@ Return ONLY valid JSON, no explanation:
     }
   }
 
-  return NextResponse.json({ ok: true, runWorkers: allWorkers, results })
+  // Only expose the fields the client needs (including payStructure for UI decisions)
+  const runWorkers = allWorkers.map(w => ({
+    id: w.id, name: w.name,
+    payStructure: w.payStructure,
+    stdHoursPerDay: w.stdHoursPerDay,
+  }))
+  return NextResponse.json({ ok: true, runWorkers, results })
 }
