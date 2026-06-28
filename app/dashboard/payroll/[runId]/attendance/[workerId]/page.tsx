@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { round2 } from '@/lib/payroll'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ type Worker = {
   department: string | null; position: string | null
 }
 type Run = { id: number; periodStart: string; periodEnd: string; status: string }
+type RunWorker = { id: number; name: string }
 type Day = {
   date: string; dayType: string; holidayName: string | null
   id: number | null; hoursWorked: string | null; absent: boolean
@@ -69,11 +70,12 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
 export default function AttendancePage() {
   const { runId, workerId } = useParams<{ runId: string; workerId: string }>()
 
-  const [run,      setRun]      = useState<Run | null>(null)
-  const [worker,   setWorker]   = useState<Worker | null>(null)
-  const [days,     setDays]     = useState<Day[]>([])
-  const [advances, setAdvances] = useState<Advance[]>([])
-  const [loading,  setLoading]  = useState(true)
+  const [run,        setRun]        = useState<Run | null>(null)
+  const [worker,     setWorker]     = useState<Worker | null>(null)
+  const [days,       setDays]       = useState<Day[]>([])
+  const [advances,   setAdvances]   = useState<Advance[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [runWorkers, setRunWorkers] = useState<RunWorker[]>([])
 
   // Timesheet upload
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -93,16 +95,35 @@ export default function AttendancePage() {
     Promise.all([
       fetch(`/api/payroll/${runId}/attendance/${workerId}`).then(r => r.json()),
       fetch(`/api/payroll/${runId}/advances/${workerId}`).then(r => r.json()),
-    ]).then(([att, adv]) => {
+      fetch(`/api/payroll/${runId}`).then(r => r.json()),
+    ]).then(([att, adv, run]) => {
       setRun(att.run)
       setWorker(att.worker)
       setDays(att.days ?? [])
       setAdvances(Array.isArray(adv) ? adv : [])
+      // Fix 5: sort workers alphabetically
+      setRunWorkers(
+        (run.entries ?? [])
+          .map((e: any) => ({ id: e.worker.id, name: e.worker.name }))
+          .sort((a: any, b: any) => a.name.localeCompare(b.name))
+      )
       setLoading(false)
     })
   }, [runId, workerId])
 
   useEffect(() => { load() }, [load])
+
+  // Recalculate amounts for days imported via bulk upload (calculatedAmount is null)
+  useEffect(() => {
+    if (!worker || days.length === 0) return
+    const nullDays = days.filter(d => !d.absent && d.calculatedAmount === null && d.id !== null)
+    if (nullDays.length === 0) return
+    nullDays.forEach(day => {
+      const amount = calcAmount(worker, day, day.phDoubleConfirmed === true)
+      if (amount > 0) saveDay(day, {})  // re-save to trigger amount calculation
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worker, days.length])
 
   const isLocked = run?.status === 'finalised'
 
@@ -119,8 +140,62 @@ export default function AttendancePage() {
     })
     if (res.ok) {
       const saved = await res.json()
-      setDays(prev => prev.map(d => d.date === day.date ? { ...d, ...merged, id: saved.id, calculatedAmount: String(amount) } : d))
+      setDays(prev => {
+        const next = prev.map(d => d.date === day.date ? { ...d, ...merged, id: saved.id, calculatedAmount: String(amount) } : d)
+        syncEntry(next)
+        return next
+      })
     }
+  }
+
+  // ── Fix 1: Sync payroll entry after attendance changes ───────────────────────
+  function syncEntry(currentDays: Day[], currentAdvances?: Advance[]) {
+    const w = worker!
+    const advList = currentAdvances ?? advances
+
+    // Derive EntryInput fields from days
+    let ordinaryHours = 0, saturdayHours = 0, phHours = 0
+    let daysWorked = 0, saturdayDays = 0, unpaidLeaveDays = 0
+    let annualLeaveDaysTaken = 0, sickLeaveDaysTaken = 0
+
+    for (const d of currentDays) {
+      if (d.absent) {
+        if (d.absenceReason === 'unpaid') unpaidLeaveDays += 1
+        if (d.absenceReason === 'annual_leave') annualLeaveDaysTaken += 1
+        if (d.absenceReason === 'sick') sickLeaveDaysTaken += 1
+        continue
+      }
+      if (w.payStructure === 'hourly') {
+        const hrs = parseFloat(d.hoursWorked ?? w.stdHoursPerDay ?? '0')
+        if (d.dayType === 'saturday') saturdayHours += hrs
+        else if (d.dayType === 'public_holiday') phHours += hrs
+        else ordinaryHours += hrs
+      } else if (w.payStructure === 'daily') {
+        if (d.dayType === 'saturday') saturdayDays += 1
+        else daysWorked += 1
+      } else if (w.payStructure === 'floor') {
+        if (d.dayType === 'saturday') saturdayDays += 1
+        else if (d.dayType === 'weekday') daysWorked += 1
+      }
+    }
+
+    const salaryAdvance = advList
+      .filter(a => a.advanceType === 'cash_advance')
+      .reduce((s, a) => s + parseFloat(a.amount), 0)
+    const shopDeductions = advList
+      .filter(a => a.advanceType === 'shop_deduction')
+      .reduce((s, a) => s + parseFloat(a.amount), 0)
+
+    fetch(`/api/payroll/${runId}/entries/${workerId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ordinaryHours, saturdayHours, phHours,
+        daysWorked, saturdayDays, unpaidLeaveDays,
+        salaryAdvance, shopDeductions,
+        annualLeaveDaysTaken, sickLeaveDaysTaken,
+      }),
+    })
   }
 
   // ── Advance add ──────────────────────────────────────────────────────────────
@@ -133,7 +208,11 @@ export default function AttendancePage() {
     })
     if (res.ok) {
       const adv = await res.json()
-      setAdvances(prev => [...prev, adv])
+      setAdvances(prev => {
+        const next = [...prev, adv]
+        syncEntry(days, next)
+        return next
+      })
       setAdvForm({ date: '', amount: '', advanceType: 'cash_advance', note: '' })
       setShowAdvForm(false)
     }
@@ -142,7 +221,13 @@ export default function AttendancePage() {
 
   async function deleteAdvance(id: number) {
     const res = await fetch(`/api/payroll/${runId}/advances/${workerId}?id=${id}`, { method: 'DELETE' })
-    if (res.ok) setAdvances(prev => prev.filter(a => a.id !== id))
+    if (res.ok) {
+      setAdvances(prev => {
+        const next = prev.filter(a => a.id !== id)
+        syncEntry(days, next)
+        return next
+      })
+    }
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -167,30 +252,36 @@ export default function AttendancePage() {
 
   async function confirmImport() {
     if (!uploadPreview) return
-    for (const [i, parsed] of uploadPreview.entries()) {
-      if (!importingSel.has(i)) continue
-      const existing = days.find(d => d.date === parsed.date)
-      if (!existing) continue
-      await saveDay(existing, {
-        absent:        !parsed.present,
-        absenceReason: parsed.absent_reason ?? null,
-        hoursWorked:   parsed.hours != null ? String(parsed.hours) : existing.hoursWorked,
-        note:          parsed.note ?? null,
-      })
-    }
+    // Fix 1 + Fix 13: parallelise saveDay calls
+    await Promise.all(
+      uploadPreview
+        .filter((_, i) => importingSel.has(i))
+        .map(parsed => {
+          const existing = days.find(d => d.date === parsed.date)
+          if (!existing) return Promise.resolve()
+          return saveDay(existing, {
+            absent:        !parsed.present,
+            absenceReason: parsed.absent_reason ?? null,
+            hoursWorked:   parsed.hours != null ? String(parsed.hours) : existing.hoursWorked,
+            note:          parsed.note ?? null,
+          })
+        })
+    )
     // Import any shop deductions found on the timesheet
-    for (const ded of uploadShopDeds) {
-      await fetch(`/api/payroll/${runId}/advances/${workerId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: ded.date,
-          amount: String(ded.amount),
-          advanceType: 'shop_deduction',
-          note: ded.note ?? 'from timesheet',
-        }),
-      })
-    }
+    await Promise.all(
+      uploadShopDeds.map(ded =>
+        fetch(`/api/payroll/${runId}/advances/${workerId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: ded.date,
+            amount: String(ded.amount),
+            advanceType: 'shop_deduction',
+            note: ded.note ?? 'from timesheet',
+          }),
+        })
+      )
+    )
     setUploadPreview(null)
     setUploadShopDeds([])
     setUploadWarnings([])
@@ -217,15 +308,45 @@ export default function AttendancePage() {
 
   const inp = 'rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-300'
 
+  const wid = parseInt(workerId)
+  const workerIdx  = runWorkers.findIndex(w => w.id === wid)
+  const prevWorker = workerIdx > 0 ? runWorkers[workerIdx - 1] : null
+  const nextWorker = workerIdx >= 0 && workerIdx < runWorkers.length - 1 ? runWorkers[workerIdx + 1] : null
+
   return (
     <div className="p-8 max-w-4xl">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
-        <Link href="/dashboard/payroll" className="hover:text-gray-600">Payroll</Link>
-        <span>/</span>
-        <Link href={`/dashboard/payroll/${runId}`} className="hover:text-gray-600">Run #{runId}</Link>
-        <span>/</span>
-        <span className="text-gray-700">{worker.name}</span>
+      {/* Breadcrumb + prev/next */}
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <Link href="/dashboard/payroll" className="hover:text-gray-600">Payroll</Link>
+          <span>/</span>
+          <Link href={`/dashboard/payroll/${runId}`} className="hover:text-gray-600">Run #{runId}</Link>
+          <span>/</span>
+          <span className="text-gray-700">{worker.name}</span>
+        </div>
+        {runWorkers.length > 1 && (
+          <div className="flex items-center gap-1">
+            <Link
+              href={prevWorker ? `/dashboard/payroll/${runId}/attendance/${prevWorker.id}` : '#'}
+              aria-disabled={!prevWorker}
+              className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                prevWorker ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-gray-100 text-gray-300 pointer-events-none'
+              }`}>
+              <ChevronLeft size={13} />
+              {prevWorker?.name ?? 'Prev'}
+            </Link>
+            <span className="text-xs text-gray-400 px-1">{workerIdx + 1} / {runWorkers.length}</span>
+            <Link
+              href={nextWorker ? `/dashboard/payroll/${runId}/attendance/${nextWorker.id}` : '#'}
+              aria-disabled={!nextWorker}
+              className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                nextWorker ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-gray-100 text-gray-300 pointer-events-none'
+              }`}>
+              {nextWorker?.name ?? 'Next'}
+              <ChevronRight size={13} />
+            </Link>
+          </div>
+        )}
       </div>
       <h1 className="text-2xl font-semibold text-gray-900 mb-1">{worker.name}</h1>
       <p className="text-sm text-gray-500 mb-6">
@@ -291,6 +412,34 @@ export default function AttendancePage() {
                   ))}
                 </div>
               )}
+
+              {/* Override diff: show existing saved days that will be replaced */}
+              {(() => {
+                const willOverride = uploadPreview
+                  ? [...importingSel].map(i => uploadPreview[i]).filter(p => {
+                      const ex = days.find(d => d.date === p.date)
+                      return ex && ex.id !== null // has a real saved record
+                    })
+                  : []
+                return willOverride.length > 0 ? (
+                  <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                    <p className="text-xs font-semibold text-amber-800 mb-1 flex items-center gap-1">
+                      <AlertTriangle size={11} /> These days already have saved data and will be overridden:
+                    </p>
+                    {willOverride.map((p, i) => {
+                      const ex = days.find(d => d.date === p.date)!
+                      return (
+                        <div key={i} className="flex items-center gap-2 text-xs text-amber-700">
+                          <span className="w-24 font-medium">{fmtDate(p.date)}</span>
+                          <span className="line-through text-amber-400">{ex.absent ? 'absent' : `${ex.hoursWorked ?? worker?.stdHoursPerDay}h`}</span>
+                          <span>→</span>
+                          <span className="font-medium">{!p.present ? 'absent' : `${p.hours ?? worker?.stdHoursPerDay}h`}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null
+              })()}
 
               <div className="flex gap-2">
                 <button onClick={confirmImport}
@@ -574,6 +723,19 @@ export default function AttendancePage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Fix 6: footer navigation */}
+      <div className="mt-8 pt-4 border-t border-gray-100 flex justify-between items-center">
+        <Link href={`/dashboard/payroll/${runId}`} className="text-sm text-gray-500 hover:text-gray-700">
+          ← Back to Run #{runId}
+        </Link>
+        {nextWorker && (
+          <Link href={`/dashboard/payroll/${runId}/attendance/${nextWorker.id}`}
+            className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white hover:bg-gray-700">
+            Next: {nextWorker.name} →
+          </Link>
+        )}
       </div>
     </div>
   )

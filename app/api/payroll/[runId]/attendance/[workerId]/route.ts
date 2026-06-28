@@ -78,10 +78,25 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { runId, workerId } = await params
   const rid = parseInt(runId)
   const wid = parseInt(workerId)
+
+  // Fix 4: block writes on finalised runs
+  const [runCheck] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, rid))
+  if (runCheck?.status === 'finalised') {
+    return NextResponse.json({ error: 'Run is finalised' }, { status: 403 })
+  }
+
   const body = await req.json()
 
-  const { date, dayType, hoursWorked, absent, absenceReason,
+  const { date, hoursWorked, absent, absenceReason,
           calculatedAmount, phDoubleConfirmed, source, note } = body
+
+  // Always compute dayType server-side from the date — never trust client-sent value
+  const [ph] = await db.select().from(publicHolidays).where(eq(publicHolidays.date, date))
+  const dow = new Date(date + 'T12:00:00Z').getUTCDay()
+  const dayType = ph ? 'public_holiday'
+    : dow === 0 ? 'sunday'
+    : dow === 6 ? 'saturday'
+    : 'weekday'
 
   // Check if record exists
   const [existing] = await db
