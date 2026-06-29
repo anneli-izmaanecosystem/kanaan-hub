@@ -615,7 +615,7 @@ export default function AttendancePage() {
                         ) : worker.payStructure === 'hourly' ? (
                           <input
                             type="number" step="0.25" min="0" max="24"
-                            disabled={day.absent || excludedByTimesheet}
+                            disabled={day.absent}
                             defaultValue={day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay ?? '')}
                             className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'text-gray-300' : ''}`}
                             onBlur={e => {
