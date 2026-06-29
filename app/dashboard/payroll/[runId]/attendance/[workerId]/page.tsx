@@ -569,7 +569,8 @@ export default function AttendancePage() {
                                  isSun ? 'bg-red-50'    : ''
 
                   const isTimesheetDay = day.source === 'photo_timesheet'
-                  const excludedByTimesheet = timesheetMode && !isTimesheetDay
+                  // Excluded = no DB row at all (pure calendar default). Manually-saved days always show.
+                  const excludedByTimesheet = timesheetMode && day.id === null && !isTimesheetDay
 
                   const amount = excludedByTimesheet ? 0
                     : day.calculatedAmount !== null
