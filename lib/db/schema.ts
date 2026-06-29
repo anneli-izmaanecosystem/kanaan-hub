@@ -224,6 +224,10 @@ export const payrollEntries = pgTable('payroll_entries', {
   defaultsApplied:   boolean('defaults_applied').notNull().default(false),
 
   notes: text('notes'),
+
+  // Attendance sign-off
+  markedReady:   boolean('marked_ready').notNull().default(false),
+  markedReadyAt: timestamp('marked_ready_at'),
 }, t => [unique('payroll_entries_run_worker_unique').on(t.runId, t.workerId)])
 
 // ── Fuel logs (legacy stub — superseded by fuelFills below) ──────────────────
@@ -290,14 +294,15 @@ export const fuelAllocations = pgTable('fuel_allocations', {
 // Alpheus's working days — captured by manager.
 // Matched to fuel fills by fillDate = alpheusDays.dayDate + driverName = 'Alpheus'.
 export const alpheusDays = pgTable('alpheus_days', {
-  id:        serial('id').primaryKey(),
-  dayDate:   date('day_date').notNull(),
-  dayType:   alpheusDayTypeEnum('day_type').notNull(),
-  notes:     text('notes'),
-  status:    fuelFillStatusEnum('status').notNull().default('draft'),  // reuse draft/final
-  createdBy: text('created_by'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  id:          serial('id').primaryKey(),
+  dayDate:     date('day_date').notNull(),
+  dayType:     alpheusDayTypeEnum('day_type').notNull(),
+  onsiteHours: numeric('onsite_hours', { precision: 5, scale: 2 }), // partial days: hours spent at Kanaan
+  notes:       text('notes'),
+  status:      fuelFillStatusEnum('status').notNull().default('draft'),  // reuse draft/final
+  createdBy:   text('created_by'),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
 })
 
 // Per-client blocks within an Alpheus day (a partial day can have multiple clients).

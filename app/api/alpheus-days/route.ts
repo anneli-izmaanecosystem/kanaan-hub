@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { dayDate, dayType, notes, clients: clientBlocks, createdBy } = body
+    const { dayDate, dayType, onsiteHours, notes, clients: clientBlocks, createdBy } = body
 
     if (!dayDate)  return NextResponse.json({ error: 'dayDate required' },  { status: 400 })
     if (!dayType)  return NextResponse.json({ error: 'dayType required' },  { status: 400 })
@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     const [day] = await db.insert(alpheusDays).values({
       dayDate,
       dayType,
+      onsiteHours: onsiteHours != null ? String(onsiteHours) : null,
       notes:     notes ?? null,
       status:    'draft',
       createdBy: createdBy ?? null,
