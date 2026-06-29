@@ -147,13 +147,12 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
             absent:        !day.present,
             absenceReason: day.absent_reason ?? null,
             // Only save hours for hourly workers — daily/floor workers get presence only
-            hoursWorked:   workerIsHourly && day.present && day.hours != null
-                             ? String(day.hours)
-                             : workerIsHourly && day.present
-                             ? '0'
+            // Use '0' when hours not parsed so user can see and correct it manually
+            hoursWorked:   workerIsHourly && day.present
+                             ? (day.hours != null ? String(day.hours) : '0')
                              : null,
             note:          day.note ?? null,
-            source:        'timesheet_photo',
+            source:        'photo_timesheet',
           }),
         })
       ))
