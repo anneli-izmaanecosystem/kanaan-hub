@@ -105,7 +105,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     .where(and(eq(attendanceDays.workerId, wid), eq(attendanceDays.runId, rid), eq(attendanceDays.date, date)))
 
   const values = {
-    workerId: wid, runId: rid, date, dayType,
+    workerId: wid, runId: rid, date, dayType: dayType as 'weekday' | 'saturday' | 'sunday' | 'public_holiday',
     hoursWorked:       hoursWorked != null ? String(hoursWorked) : null,
     absent:            absent ?? false,
     absenceReason:     absenceReason ?? null,
