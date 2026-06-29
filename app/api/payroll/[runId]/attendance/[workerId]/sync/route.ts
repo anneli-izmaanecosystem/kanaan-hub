@@ -63,7 +63,15 @@ export async function POST(_req: NextRequest, { params }: Params) {
   ei.otherAdditions = parseFloat(entry.otherAdditions ?? '0')
   ei.otherDeductions= parseFloat(entry.otherDeductions ?? '0')
 
+  // If any day was imported from a photo timesheet, that timesheet is the source of truth.
+  // Only count explicitly saved days — unsaved days contribute 0 (not stdHoursPerDay default).
+  const timesheetMode = savedDays.some(d => d.source === 'photo_timesheet')
+  const savedDates    = new Set(savedDays.map(s => s.date))
+
   for (const d of allDays) {
+    // In timesheet mode, skip days not saved to DB — they were not on the timesheet
+    if (timesheetMode && !savedDates.has(d.date)) continue
+
     if (d.absent) {
       if (d.absenceReason === 'unpaid')       ei.unpaidLeaveDays      += 1
       if (d.absenceReason === 'annual_leave') ei.annualLeaveDaysTaken += 1
