@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, payrollRuns, payrollEntries, workers, attendanceDays, advances } from '@/lib/db'
+import { db, payrollRuns, payrollEntries, workers, attendanceDays, advances, entities } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 
 export async function GET(
@@ -16,6 +16,8 @@ export async function GET(
   const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, id))
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  const [entity] = await db.select().from(entities).where(eq(entities.id, run.entityId))
+
   const rawEntries = await db
     .select({ entry: payrollEntries, worker: workers })
     .from(payrollEntries)
@@ -30,7 +32,7 @@ export async function GET(
     return true
   })
 
-  return NextResponse.json({ run, entries })
+  return NextResponse.json({ run, entity: entity ?? null, entries })
 }
 
 export async function DELETE(

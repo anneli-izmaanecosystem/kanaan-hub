@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X, ChevronLeft, ChevronRight, Camera } from 'lucide-react'
 import { round2 } from '@/lib/payroll'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -16,6 +16,7 @@ type Worker = {
 }
 type Run = { id: number; periodStart: string; periodEnd: string; status: string }
 type RunWorker = { id: number; name: string }
+type Entry = { markedReady: boolean; markedReadyAt: string | null }
 type Day = {
   date: string; dayType: string; holidayName: string | null
   id: number | null; hoursWorked: string | null; absent: boolean
@@ -44,7 +45,7 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
   if (worker.payStructure === 'hourly') {
     const rate  = parseFloat(worker.hourlyRate ?? '0')
     const hours = parseFloat(day.hoursWorked ?? worker.stdHoursPerDay ?? '0')
-    if (day.dayType === 'saturday')       return round2(hours * rate * 1.5)
+    if (day.dayType === 'saturday')       return round2(hours * rate * 1.5)  // BCEA s.10
     if (day.dayType === 'public_holiday') return worker.workerType === 'employee' && phDouble ? round2(hours * rate * 2) : round2(hours * rate)
     if (day.dayType === 'sunday')         return worker.workerType === 'employee' ? round2(hours * rate * 2) : 0
     return round2(hours * rate)
@@ -77,6 +78,9 @@ export default function AttendancePage() {
   const [loading,    setLoading]    = useState(true)
   const [runWorkers, setRunWorkers] = useState<RunWorker[]>([])
 
+  const [entry, setEntry] = useState<Entry | null>(null)
+  const [markingSaved, setMarkingSaved] = useState(false)
+
   // Timesheet upload
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading,      setUploading]      = useState(false)
@@ -100,19 +104,23 @@ export default function AttendancePage() {
       fetch(`/api/payroll/${runId}/attendance/${workerId}`).then(r => r.json()),
       fetch(`/api/payroll/${runId}/advances/${workerId}`).then(r => r.json()),
       fetch(`/api/payroll/${runId}`).then(r => r.json()),
-    ]).then(([att, adv, run]) => {
+      // entries-by-worker is non-critical — fall back to null on any failure
+      fetch(`/api/payroll/${runId}/entries-by-worker/${workerId}`)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+    ]).then(([att, adv, run, ent]) => {
       setRun(att.run)
       setWorker(att.worker)
       setDays(att.days ?? [])
       setAdvances(Array.isArray(adv) ? adv : [])
-      // Fix 5: sort workers alphabetically
       setRunWorkers(
         (run.entries ?? [])
           .map((e: any) => ({ id: e.worker.id, name: e.worker.name }))
           .sort((a: any, b: any) => a.name.localeCompare(b.name))
       )
+      setEntry(ent && ent.markedReady !== undefined ? ent : null)
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
   }, [runId, workerId])
 
   useEffect(() => { load() }, [load])
@@ -161,6 +169,20 @@ export default function AttendancePage() {
     }).catch(() => {/* fire and forget */})
   }
 
+
+  async function savePayroll() {
+    setMarkingSaved(true)
+    // First sync attendance
+    await fetch(`/api/payroll/${runId}/attendance/${workerId}/sync`, { method: 'POST' })
+    // Then mark as ready
+    await fetch(`/api/payroll/${runId}/entries-by-worker/${workerId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ markedReady: true }),
+    })
+    setEntry(prev => prev ? { ...prev, markedReady: true, markedReadyAt: new Date().toISOString() } : prev)
+    setMarkingSaved(false)
+  }
 
   // ── Advance add ──────────────────────────────────────────────────────────────
   async function addAdvance(e: React.FormEvent) {
@@ -259,6 +281,10 @@ export default function AttendancePage() {
         })
       )
     )
+    // Re-sync after shop deductions so grossPay/netPay includes them
+    if (uploadShopDeds.length > 0) {
+      await fetch(`/api/payroll/${runId}/attendance/${workerId}/sync`, { method: 'POST' }).catch(() => {})
+    }
     setUploadPreview(null)
     setUploadShopDeds([])
     setUploadWarnings([])
@@ -274,7 +300,13 @@ export default function AttendancePage() {
   // Calculate gross from attendance days
   const attendanceGross = worker.payStructure === 'floor'
     ? parseFloat(worker.floorSalary ?? '0') // floor handled separately
-    : days.reduce((s, d) => s + parseFloat(d.calculatedAmount ?? '0'), 0)
+    : days.reduce((s, d) => {
+        if (d.absent) return s
+        const amt = d.calculatedAmount !== null
+          ? parseFloat(d.calculatedAmount)
+          : calcAmount(worker, d, d.phDoubleConfirmed === true)
+        return s + amt
+      }, 0)
   const saturdayExtra = worker.payStructure === 'floor'
     ? days.filter(d => d.dayType === 'saturday' && !d.absent).reduce((s, d) => s + parseFloat(d.calculatedAmount ?? '0'), 0)
     : 0
@@ -371,22 +403,49 @@ export default function AttendancePage() {
                 </div>
               )}
 
-              <div className="space-y-1 mb-4 max-h-60 overflow-y-auto">
+              <div className="space-y-1 mb-4 max-h-72 overflow-y-auto">
                 {uploadPreview.map((p, i) => (
-                  <label key={i} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm cursor-pointer hover:bg-blue-50">
+                  <div key={i} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm">
                     <input type="checkbox" checked={importingSel.has(i)}
                       onChange={e => setImportingSel(prev => {
                         const n = new Set(prev)
                         e.target.checked ? n.add(i) : n.delete(i)
                         return n
                       })} />
-                    <span className="font-medium text-gray-700 w-24">{fmtDate(p.date)}</span>
-                    {p.present
-                      ? <span className="text-green-700">Present{p.hours != null ? ` · ${p.hours}h` : ''}</span>
-                      : <span className="text-red-600">Absent{p.absent_reason ? ` (${p.absent_reason.replace('_', ' ')})` : ''}</span>
-                    }
-                    {p.note && <span className="text-gray-400 text-xs">— {p.note}</span>}
-                  </label>
+                    <span className="font-medium text-gray-700 w-24 flex-shrink-0">{fmtDate(p.date)}</span>
+                    {/* Present toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setUploadPreview(prev => prev ? prev.map((x, j) => j === i ? { ...x, present: !x.present } : x) : prev)}
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium flex-shrink-0 ${p.present ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                      {p.present ? 'Present' : 'Absent'}
+                    </button>
+                    {/* Hours input — present only */}
+                    {p.present && (
+                      <input
+                        type="number" step="0.25" min="0" max="24" placeholder="hrs"
+                        value={p.hours ?? ''}
+                        onChange={e => setUploadPreview(prev => prev ? prev.map((x, j) => j === i ? { ...x, hours: e.target.value ? parseFloat(e.target.value) : null } : x) : prev)}
+                        className={`${inp} w-16 text-center`}
+                      />
+                    )}
+                    {/* Absence reason — absent only */}
+                    {!p.present && (
+                      <select
+                        value={p.absent_reason ?? 'unpaid'}
+                        onChange={e => setUploadPreview(prev => prev ? prev.map((x, j) => j === i ? { ...x, absent_reason: e.target.value } : x) : prev)}
+                        className={`${inp} w-28`}>
+                        {ABSENCE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    )}
+                    {/* Note input */}
+                    <input
+                      type="text" placeholder="note…"
+                      value={p.note ?? ''}
+                      onChange={e => setUploadPreview(prev => prev ? prev.map((x, j) => j === i ? { ...x, note: e.target.value || null } : x) : prev)}
+                      className={`${inp} flex-1 min-w-0`}
+                    />
+                  </div>
                 ))}
               </div>
 
@@ -476,6 +535,7 @@ export default function AttendancePage() {
             <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Attendance</p>
             </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-400 border-b border-gray-100">
@@ -500,7 +560,9 @@ export default function AttendancePage() {
                                  isSat ? 'bg-blue-50'   :
                                  isSun ? 'bg-red-50'    : ''
 
-                  const amount = parseFloat(day.calculatedAmount ?? '0')
+                  const amount = day.calculatedAmount !== null
+                    ? parseFloat(day.calculatedAmount)
+                    : calcAmount(worker, day, day.phDoubleConfirmed === true)
 
                   return (
                     <tr key={`${day.date}-${day.hoursWorked ?? 'null'}-${day.id ?? 0}`} className={rowCls}>
@@ -509,6 +571,11 @@ export default function AttendancePage() {
                         {isPH && (
                           <span className="ml-1 text-orange-600">
                             <Star size={9} className="inline" /> {day.holidayName}
+                          </span>
+                        )}
+                        {day.source === 'photo_timesheet' && (
+                          <span title="From timesheet upload">
+                            <Camera size={10} className="inline ml-1 text-indigo-400" />
                           </span>
                         )}
                       </td>
@@ -562,13 +629,21 @@ export default function AttendancePage() {
                           day.absent ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 text-xs">{day.absenceReason ?? 'absent'}</span> : null
                         ) : (
                           day.absent ? (
-                            <select
-                              value={day.absenceReason ?? 'unpaid'}
-                              disabled={isLocked}
-                              onChange={e => saveDay(day, { absent: true, absenceReason: e.target.value })}
-                              className={`${inp} w-28`}>
-                              {ABSENCE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={day.absenceReason ?? 'unpaid'}
+                                disabled={isLocked}
+                                onChange={e => saveDay(day, { absent: true, absenceReason: e.target.value })}
+                                className={`${inp} w-28`}>
+                                {ABSENCE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                              </select>
+                              <button
+                                onClick={() => saveDay(day, { absent: false, absenceReason: null })}
+                                title="Mark present"
+                                className="rounded p-0.5 text-gray-300 hover:text-green-600 hover:bg-green-50 transition-colors">
+                                <X size={12} />
+                              </button>
+                            </div>
                           ) : (
                             <button onClick={() => saveDay(day, { absent: true, absenceReason: 'unpaid' })}
                               className="rounded px-2 py-0.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-xs">
@@ -586,7 +661,7 @@ export default function AttendancePage() {
                       </td>
 
                       {/* Note */}
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 min-w-[7rem]">
                         {isLocked ? (
                           <span className="text-gray-400">{day.note ?? ''}</span>
                         ) : (
@@ -603,6 +678,7 @@ export default function AttendancePage() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
 
@@ -634,6 +710,26 @@ export default function AttendancePage() {
                 bold green />
             </div>
           </div>
+
+          {/* Sign-off card */}
+          {!isLocked && (
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Payroll Sign-off</p>
+              {entry?.markedReady ? (
+                <div className="flex items-center gap-2 text-xs text-green-700">
+                  <Check size={14} className="text-green-600" />
+                  <span>Payroll saved{entry.markedReadyAt ? ` · ${fmtDate(entry.markedReadyAt.slice(0, 10))}` : ''}</span>
+                </div>
+              ) : (
+                <button
+                  onClick={savePayroll}
+                  disabled={markingSaved}
+                  className="w-full rounded-lg bg-gray-900 py-2 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50">
+                  {markingSaved ? 'Saving…' : 'Save Payroll'}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Advances ledger */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
