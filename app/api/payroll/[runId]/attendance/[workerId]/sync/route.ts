@@ -64,11 +64,18 @@ export async function POST(_req: NextRequest, { params }: Params) {
     })
   }
 
-  // Build EntryInput from full calendar — preserve manually-entered bonus/additions
+  // Preserve all manually-entered values that are not rebuilt from attendance/advances
   const ei = defaultEntry()
-  ei.bonus          = parseFloat(entry.bonus          ?? '0')
-  ei.otherAdditions = parseFloat(entry.otherAdditions ?? '0')
-  ei.otherDeductions= parseFloat(entry.otherDeductions ?? '0')
+  ei.bonus           = parseFloat(entry.bonus           ?? '0')
+  ei.otherAdditions  = parseFloat(entry.otherAdditions  ?? '0')
+  ei.otherDeductions = parseFloat(entry.otherDeductions ?? '0')
+  // Shop deductions and advances: rebuilt from advances table below.
+  // If no advances rows exist for a given type, preserve the existing entry value
+  // so manually-entered amounts survive a recalculate.
+  const hasShopAdvances = advRows.some(a => a.advanceType === 'shop_deduction')
+  const hasCashAdvances = advRows.some(a => a.advanceType === 'cash_advance')
+  ei.shopDeductions = hasShopAdvances ? 0 : parseFloat(entry.shopDeductions ?? '0')
+  ei.salaryAdvance  = hasCashAdvances ? 0 : parseFloat(entry.salaryAdvance  ?? '0')
 
   // If any day was imported from a photo timesheet, that timesheet is the source of truth.
   // Only count explicitly saved days — unsaved days contribute 0 (not stdHoursPerDay default).
