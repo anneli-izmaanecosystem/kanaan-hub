@@ -78,6 +78,47 @@ export async function PATCH(
       return NextResponse.json({ fill: updated, allocations: insertedAllocs })
     }
 
+    if (action === 'edit-fill') {
+      const { fillDate, driverName, vehicle, openReading, closeReading, litres, isEstimated, ratePerLitre } = body
+
+      const [fill] = await db.select().from(fuelFills).where(eq(fuelFills.id, fillId))
+      if (!fill) return NextResponse.json({ error: 'Fill not found' }, { status: 404 })
+
+      const newRate = ratePerLitre !== undefined ? parseFloat(ratePerLitre) : parseFloat(String(fill.ratePerLitre))
+
+      const [updated] = await db
+        .update(fuelFills)
+        .set({
+          ...(fillDate     !== undefined && { fillDate }),
+          ...(driverName   !== undefined && { driverName }),
+          ...(vehicle      !== undefined && { vehicle }),
+          ...(openReading  !== undefined && { openReading:  openReading  !== null ? String(openReading)  : null }),
+          ...(closeReading !== undefined && { closeReading: closeReading !== null ? String(closeReading) : null }),
+          ...(litres       !== undefined && { litres: String(litres) }),
+          ...(isEstimated  !== undefined && { isEstimated }),
+          ...(ratePerLitre !== undefined && { ratePerLitre: String(ratePerLitre) }),
+          ...(notes        !== undefined && { notes }),
+          ...(flag         !== undefined && { flag }),
+          updatedAt: new Date(),
+        })
+        .where(eq(fuelFills.id, fillId))
+        .returning()
+
+      // Recompute allocation costs if rate changed
+      if (ratePerLitre !== undefined) {
+        const allocs = await db.select().from(fuelAllocations).where(eq(fuelAllocations.fillId, fillId))
+        for (const a of allocs) {
+          const newCost = parseFloat(String(a.litres)) * newRate
+          await db.update(fuelAllocations)
+            .set({ cost: String(newCost.toFixed(2)) })
+            .where(eq(fuelAllocations.id, a.id))
+        }
+      }
+
+      const allocations = await db.select().from(fuelAllocations).where(eq(fuelAllocations.fillId, fillId))
+      return NextResponse.json({ fill: updated, allocations })
+    }
+
     // Simple field update (notes, photoUrl, flag)
     const [updated] = await db
       .update(fuelFills)

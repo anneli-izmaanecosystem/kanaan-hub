@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { fmtDate } from '@/lib/utils'
+import { fmt, fmtDate } from '@/lib/utils'
 import { Printer } from 'lucide-react'
 
 type Entity = {
@@ -30,12 +30,12 @@ type Entry = {
 type Run = { periodStart: string; periodEnd: string }
 
 function r(n: string | number | null | undefined) {
-  return `R ${parseFloat(String(n ?? '0')).toFixed(2)}`
+  return fmt(parseFloat(String(n ?? '0')))
 }
 
 function Row({ label, value, red }: { label: string; value: string | number; red?: boolean }) {
   return (
-    <tr>
+    <tr className="border-b border-gray-50">
       <td className="py-1.5 pr-4 text-gray-600">{label}</td>
       <td className={`py-1.5 text-right font-medium ${red ? 'text-red-600' : 'text-gray-900'}`}>
         {red ? `(${r(value)})` : r(value)}
@@ -72,6 +72,8 @@ export default function PayslipPage() {
           <Link href="/dashboard/payroll" className="hover:text-gray-700">Payroll</Link>
           <span>/</span>
           <Link href={`/dashboard/payroll/${runId}`} className="hover:text-gray-700">Run #{runId}</Link>
+          <span>/</span>
+          <Link href={`/dashboard/payroll/${runId}/attendance/${employeeId}`} className="hover:text-gray-700">← Edit attendance</Link>
           <span>/</span>
           <span className="text-gray-700">{isContractor ? 'Invoice' : 'Payslip'} — {worker.name}</span>
         </div>
@@ -149,7 +151,7 @@ export default function PayslipPage() {
               {parseFloat(entry.saturdayPay) > 0 && (
                 <Row label={
                   worker.payStructure === 'hourly'
-                    ? `Saturday pay (${entry.saturdayHours} hrs × 1.5)`
+                    ? `Saturday pay (${entry.saturdayHours} hrs)`
                     : `Saturday on-site (${entry.saturdayDays} day(s))`
                 } value={entry.saturdayPay} />
               )}
@@ -216,7 +218,15 @@ export default function PayslipPage() {
         </div>
       </div>
 
-      <style>{`@media print { body { background: white !important; } .print\\:hidden { display: none !important; } }`}</style>
+      <style>{`
+        @media print {
+          body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .print\\:hidden { display: none !important; }
+          @page { margin: 1.5cm; size: A4 portrait; }
+          table { width: 100%; border-collapse: collapse; }
+          td, th { padding: 6px 0; }
+        }
+      `}</style>
     </div>
   )
 }

@@ -26,8 +26,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { runId, workerId } = await params
   const { date, amount, advanceType, note } = await req.json()
 
-  if (!date || !amount || !advanceType)
-    return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
+  if (!date || !advanceType || !(parseFloat(String(amount)) > 0))
+    return NextResponse.json({ error: 'Missing fields or invalid amount' }, { status: 400 })
 
   const [row] = await db.insert(advances).values({
     workerId:    parseInt(workerId),

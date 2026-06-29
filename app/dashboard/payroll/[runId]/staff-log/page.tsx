@@ -48,8 +48,9 @@ export default function StaffLogReviewPage() {
   const [workers, setWorkers] = useState<Worker[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Per-row state: workerId and action
-  const [rowState, setRowState] = useState<Record<number, { workerId: string; action: string }>>({})
+  // Per-row state: workerId, action, and amount override
+  type RowState = { workerId: string; action: string; amount: string }
+  const [rowState, setRowState] = useState<Record<number, RowState>>({})
   const [processing, setProcessing] = useState<Record<number, boolean>>({})
   const [done, setDone] = useState<Set<number>>(new Set())
 
@@ -61,11 +62,12 @@ export default function StaffLogReviewPage() {
         setRun(d.run)
         setEntries(d.entries ?? [])
         setWorkers(d.workers ?? [])
-        const init: Record<number, { workerId: string; action: string }> = {}
+        const init: Record<number, RowState> = {}
         for (const e of d.entries ?? []) {
           init[e.id] = {
             workerId: e.suggestedWorkerId ? String(e.suggestedWorkerId) : '',
             action: defaultAction(e.logType),
+            amount: e.amount ?? '',
           }
         }
         setRowState(init)
@@ -75,7 +77,7 @@ export default function StaffLogReviewPage() {
 
   useEffect(() => { load() }, [load])
 
-  function setRow(id: number, patch: Partial<{ workerId: string; action: string }>) {
+  function setRow(id: number, patch: Partial<RowState>) {
     setRowState(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }))
   }
 
@@ -91,6 +93,7 @@ export default function StaffLogReviewPage() {
         entryId:  entry.id,
         workerId: row.workerId ? parseInt(row.workerId) : null,
         action:   row.action,
+        amount:   row.amount !== '' ? row.amount : undefined,
       }),
     })
 
@@ -182,6 +185,15 @@ export default function StaffLogReviewPage() {
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
+
+                      {(row.action === 'advance' || row.action === 'shop') && (
+                        <input
+                          type="number" step="0.01" min="0" placeholder="Amount"
+                          value={row.amount}
+                          onChange={e => setRow(entry.id, { amount: e.target.value })}
+                          className={`${inp} w-28`}
+                        />
+                      )}
 
                       <button
                         onClick={() => process(entry)}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, Plus, Trash2, Pencil, X, Check } from 'lucide-react'
 import { cn, fmtDate } from '@/lib/utils'
 
 type ClientBlock = { clientName: string; billingInfo: string; hoursWorked: string }
@@ -14,6 +14,7 @@ type Day = {
   id: number
   dayDate: string
   dayType: 'onsite' | 'offsite' | 'partial'
+  onsiteHours: string | null
   notes: string | null
   status: 'draft' | 'final'
   clients: DayClient[]
@@ -32,17 +33,32 @@ const DAY_LABEL: Record<string, string> = {
 
 const TLB_RATE = 575
 
-export default function AlpheusDaysPage() {
-  const [days, setDays]         = useState<Day[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [saving, setSaving]     = useState(false)
-  const [error, setError]       = useState('')
+function emptyClient(): ClientBlock {
+  return { clientName: '', billingInfo: '', hoursWorked: '' }
+}
 
-  // Form state
-  const [dayDate, setDayDate]   = useState(() => new Date().toISOString().split('T')[0])
-  const [dayType, setDayType]   = useState<'onsite' | 'offsite' | 'partial'>('offsite')
-  const [notes, setNotes]       = useState('')
-  const [clients, setClients]   = useState<ClientBlock[]>([{ clientName: '', billingInfo: '', hoursWorked: '' }])
+export default function AlpheusDaysPage() {
+  const [days, setDays]       = useState<Day[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [error, setError]     = useState('')
+
+  // Form state (new log)
+  const [dayDate, setDayDate]       = useState(() => new Date().toISOString().split('T')[0])
+  const [dayType, setDayType]       = useState<'onsite' | 'offsite' | 'partial'>('offsite')
+  const [onsiteHours, setOnsiteHours] = useState('')
+  const [notes, setNotes]           = useState('')
+  const [clients, setClients]       = useState<ClientBlock[]>([emptyClient()])
+
+  // Edit state
+  const [editId, setEditId]               = useState<number | null>(null)
+  const [editDate, setEditDate]           = useState('')
+  const [editType, setEditType]           = useState<'onsite' | 'offsite' | 'partial'>('offsite')
+  const [editOnsiteHours, setEditOnsiteHours] = useState('')
+  const [editNotes, setEditNotes]         = useState('')
+  const [editClients, setEditClients]     = useState<ClientBlock[]>([emptyClient()])
+  const [editSaving, setEditSaving]       = useState(false)
+  const [editError, setEditError]         = useState('')
 
   useEffect(() => {
     fetch('/api/alpheus-days').then(r => r.json()).then(d => {
@@ -51,17 +67,12 @@ export default function AlpheusDaysPage() {
     }).catch(() => setLoading(false))
   }, [])
 
+  // ── New log helpers ──────────────────────────────────────────────────────────
   function updateClient(i: number, key: keyof ClientBlock, val: string) {
     setClients(prev => prev.map((c, idx) => idx === i ? { ...c, [key]: val } : c))
   }
-
-  function addClient() {
-    setClients(prev => [...prev, { clientName: '', billingInfo: '', hoursWorked: '' }])
-  }
-
-  function removeClient(i: number) {
-    setClients(prev => prev.filter((_, idx) => idx !== i))
-  }
+  function addClient() { setClients(prev => [...prev, emptyClient()]) }
+  function removeClient(i: number) { setClients(prev => prev.filter((_, idx) => idx !== i)) }
 
   const showClients = dayType === 'offsite' || dayType === 'partial'
   const totalHours  = clients.reduce((s, c) => s + (parseFloat(c.hoursWorked) || 0), 0)
@@ -80,6 +91,7 @@ export default function AlpheusDaysPage() {
         body: JSON.stringify({
           dayDate,
           dayType,
+          onsiteHours: dayType === 'partial' && onsiteHours ? parseFloat(onsiteHours) : null,
           notes: notes || null,
           clients: showClients ? clients.map(c => ({
             clientName:  c.clientName,
@@ -91,14 +103,68 @@ export default function AlpheusDaysPage() {
       if (!res.ok) { const e = await res.json(); setError(e.error); return }
       const data = await res.json()
       setDays(prev => [{ ...data.day, clients: data.clients, linkedAllocations: [] }, ...prev])
-      // reset
       setDayDate(new Date().toISOString().split('T')[0])
       setDayType('offsite')
+      setOnsiteHours('')
       setNotes('')
-      setClients([{ clientName: '', billingInfo: '', hoursWorked: '' }])
+      setClients([emptyClient()])
     } finally { setSaving(false) }
   }
 
+  // ── Edit helpers ─────────────────────────────────────────────────────────────
+  function startEdit(d: Day) {
+    setEditId(d.id)
+    setEditDate(d.dayDate)
+    setEditType(d.dayType)
+    setEditOnsiteHours(d.onsiteHours ?? '')
+    setEditNotes(d.notes ?? '')
+    setEditClients(d.clients.length ? d.clients.map(c => ({
+      clientName: c.clientName, billingInfo: c.billingInfo ?? '', hoursWorked: c.hoursWorked,
+    })) : [emptyClient()])
+    setEditError('')
+  }
+
+  function cancelEdit() { setEditId(null); setEditError('') }
+
+  function updateEditClient(i: number, key: keyof ClientBlock, val: string) {
+    setEditClients(prev => prev.map((c, idx) => idx === i ? { ...c, [key]: val } : c))
+  }
+
+  const editShowClients = editType === 'offsite' || editType === 'partial'
+
+  async function saveEdit() {
+    if (!editDate) { setEditError('Date is required'); return }
+    if (editShowClients && editClients.some(c => !c.clientName || !c.hoursWorked)) {
+      setEditError('Client name and hours required for each client block'); return
+    }
+    setEditSaving(true); setEditError('')
+    try {
+      const res = await fetch(`/api/alpheus-days/${editId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dayDate:     editDate,
+          dayType:     editType,
+          onsiteHours: editType === 'partial' && editOnsiteHours ? parseFloat(editOnsiteHours) : null,
+          notes:       editNotes || null,
+          clients: editShowClients ? editClients.map(c => ({
+            clientName:  c.clientName,
+            billingInfo: c.billingInfo || null,
+            hoursWorked: parseFloat(c.hoursWorked),
+          })) : [],
+        }),
+      })
+      if (!res.ok) { const e = await res.json(); setEditError(e.error); return }
+      const data = await res.json()
+      setDays(prev => prev.map(d => d.id === editId
+        ? { ...d, ...data.day, clients: data.clients }
+        : d
+      ))
+      setEditId(null)
+    } finally { setEditSaving(false) }
+  }
+
+  // ── Stats ────────────────────────────────────────────────────────────────────
   const totalOffsite = days.filter(d => d.dayType !== 'onsite').length
   const totalOnsite  = days.filter(d => d.dayType === 'onsite').length
   const totalHrsAll  = days.reduce((s, d) => s + d.clients.reduce((cs, c) => cs + parseFloat(c.hoursWorked), 0), 0)
@@ -129,7 +195,7 @@ export default function AlpheusDaysPage() {
 
       <div className="grid grid-cols-[360px_1fr] gap-6">
 
-        {/* Form */}
+        {/* ── Log form ── */}
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="px-5 py-4 border-b border-gray-100">
             <h2 className="text-sm font-semibold text-gray-900">Log a Day</h2>
@@ -159,10 +225,22 @@ export default function AlpheusDaysPage() {
               </div>
             </div>
 
+            {/* Partial: on-site hours at Kanaan */}
+            {dayType === 'partial' && (
+              <div className="rounded-lg border border-green-100 bg-green-50/40 p-3 space-y-1">
+                <label className="text-[10px] uppercase tracking-wide font-semibold text-green-700">On-site hours (Kanaan)</label>
+                <input type="number" value={onsiteHours} onChange={e => setOnsiteHours(e.target.value)}
+                  placeholder="e.g. 4"
+                  className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-200" />
+              </div>
+            )}
+
             {/* Client blocks (offsite / partial) */}
             {showClients && (
               <div className="space-y-3">
-                <label className="text-[10px] uppercase tracking-wide font-semibold text-gray-500">Client{clients.length > 1 ? 's' : ''}</label>
+                <label className="text-[10px] uppercase tracking-wide font-semibold text-gray-500">
+                  {dayType === 'partial' ? 'Off-site client(s)' : `Client${clients.length > 1 ? 's' : ''}`}
+                </label>
                 {clients.map((c, i) => (
                   <div key={i} className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -193,11 +271,9 @@ export default function AlpheusDaysPage() {
                   </div>
                 ))}
 
-                {dayType === 'partial' && (
-                  <button onClick={addClient} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
-                    <Plus size={13} /> Add another client
-                  </button>
-                )}
+                <button onClick={addClient} className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                  <Plus size={13} /> Add another client
+                </button>
 
                 {totalHours > 0 && (
                   <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 flex justify-between text-xs">
@@ -223,7 +299,7 @@ export default function AlpheusDaysPage() {
           </div>
         </div>
 
-        {/* Days table */}
+        {/* ── Days table ── */}
         <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
           <div className="px-5 py-4 border-b border-gray-100">
             <h2 className="text-sm font-semibold text-gray-900">All Days</h2>
@@ -242,18 +318,98 @@ export default function AlpheusDaysPage() {
                   <th className="px-4 py-3 text-left font-medium">Date</th>
                   <th className="px-4 py-3 text-left font-medium">Type</th>
                   <th className="px-4 py-3 text-left font-medium">Client(s)</th>
-                  <th className="px-4 py-3 text-right font-medium">Hours</th>
+                  <th className="px-4 py-3 text-right font-medium">On-site h</th>
+                  <th className="px-4 py-3 text-right font-medium">Off-site h</th>
                   <th className="px-4 py-3 text-right font-medium">Labour excl VAT</th>
                   <th className="px-4 py-3 text-right font-medium">Diesel (L)</th>
                   <th className="px-4 py-3 text-center font-medium">Matched</th>
+                  <th className="px-4 py-3 text-center font-medium w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {days.map(d => {
-                  const hrs     = d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0)
-                  const labour  = hrs * TLB_RATE
+                  const offHrs  = d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0)
+                  const onHrs   = parseFloat(d.onsiteHours ?? '0')
+                  const labour  = offHrs * TLB_RATE
                   const diesel  = d.linkedAllocations.reduce((s, a) => s + parseFloat(a.litres), 0)
                   const matched = d.linkedAllocations.length > 0
+
+                  if (editId === d.id) {
+                    // ── Inline edit row ──────────────────────────────────────
+                    return (
+                      <tr key={d.id} className="bg-amber-50">
+                        <td colSpan={9} className="px-4 py-4">
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                                className="rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300" />
+                              <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs">
+                                {(['onsite', 'offsite', 'partial'] as const).map(t => (
+                                  <button key={t} onClick={() => setEditType(t)}
+                                    className={cn(
+                                      'px-3 py-1.5 font-medium transition-colors',
+                                      editType === t
+                                        ? t === 'onsite' ? 'bg-green-600 text-white' : t === 'offsite' ? 'bg-blue-600 text-white' : 'bg-amber-500 text-white'
+                                        : 'text-gray-500 hover:bg-gray-50'
+                                    )}>
+                                    {DAY_LABEL[t]}
+                                  </button>
+                                ))}
+                              </div>
+                              {editType === 'partial' && (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs text-green-700 font-medium">On-site h:</span>
+                                  <input type="number" value={editOnsiteHours} onChange={e => setEditOnsiteHours(e.target.value)}
+                                    placeholder="e.g. 4" className="w-20 rounded-md border border-gray-200 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-200" />
+                                </div>
+                              )}
+                              <input value={editNotes} onChange={e => setEditNotes(e.target.value)}
+                                placeholder="Notes…" className="flex-1 min-w-[140px] rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                            </div>
+
+                            {editShowClients && (
+                              <div className="space-y-2">
+                                <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                                  {editType === 'partial' ? 'Off-site client(s)' : 'Client(s)'}
+                                </p>
+                                {editClients.map((c, i) => (
+                                  <div key={i} className="flex items-center gap-2 flex-wrap">
+                                    <input value={c.clientName} onChange={e => updateEditClient(i, 'clientName', e.target.value)}
+                                      placeholder="Client" className="rounded-md border border-gray-200 px-2.5 py-1.5 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                                    <input value={c.billingInfo} onChange={e => updateEditClient(i, 'billingInfo', e.target.value)}
+                                      placeholder="Billing (opt)" className="rounded-md border border-gray-200 px-2.5 py-1.5 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                                    <input type="number" value={c.hoursWorked} onChange={e => updateEditClient(i, 'hoursWorked', e.target.value)}
+                                      placeholder="Hrs" className="rounded-md border border-gray-200 px-2.5 py-1.5 text-sm w-16 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                                    {editClients.length > 1 && (
+                                      <button onClick={() => setEditClients(prev => prev.filter((_, idx) => idx !== i))}
+                                        className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                                    )}
+                                  </div>
+                                ))}
+                                <button onClick={() => setEditClients(prev => [...prev, emptyClient()])}
+                                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                  <Plus size={12} /> Add client
+                                </button>
+                              </div>
+                            )}
+
+                            {editError && <p className="text-xs text-red-600">{editError}</p>}
+
+                            <div className="flex items-center gap-2">
+                              <button onClick={saveEdit} disabled={editSaving}
+                                className="flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white font-medium hover:bg-gray-700 disabled:opacity-40">
+                                <Check size={13} /> {editSaving ? 'Saving…' : 'Save'}
+                              </button>
+                              <button onClick={cancelEdit}
+                                className="flex items-center gap-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
+                                <X size={13} /> Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  }
 
                   return (
                     <tr key={d.id} className="hover:bg-gray-50">
@@ -274,7 +430,12 @@ export default function AlpheusDaysPage() {
                           ))
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums">{hrs > 0 ? hrs.toFixed(1) : '—'}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-green-700">
+                        {onHrs > 0 ? onHrs.toFixed(1) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums">
+                        {offHrs > 0 ? offHrs.toFixed(1) : '—'}
+                      </td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium">{labour > 0 ? `R ${labour.toFixed(2)}` : '—'}</td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {diesel > 0 ? <span className="text-blue-700 font-medium">{diesel.toFixed(0)} L</span> : <span className="text-gray-300">—</span>}
@@ -283,6 +444,11 @@ export default function AlpheusDaysPage() {
                         {matched
                           ? <span className="text-green-500 text-sm">✓</span>
                           : <span className="text-amber-400 text-xs">⚠ No fill</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button onClick={() => startEdit(d)} className="text-gray-400 hover:text-gray-700">
+                          <Pencil size={14} />
+                        </button>
                       </td>
                     </tr>
                   )

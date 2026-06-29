@@ -315,20 +315,35 @@ function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: Sort
 }
 
 function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onTogglePaid: (id: number, totalAmount: string, currentlyPaid: boolean) => Promise<void> }) {
-  const [sort, setSort]         = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
-  const [search, setSearch]     = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [paying, setPaying]     = useState<number | null>(null)
+  const [sort, setSort]               = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
+  const [search, setSearch]           = useState('')
+  const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set())
+  const [showCancelled, setShowCancelled] = useState(false)
+  const [paying, setPaying]           = useState<number | null>(null)
 
   function toggleSort(key: SortKey) {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
   }
 
-  const allStatuses = Array.from(new Set(bookings.map(b => b.booking.status))).sort()
+  const nonCancelledStatuses = Array.from(
+    new Set(bookings.filter(b => b.booking.status !== 'cancelled').map(b => b.booking.status))
+  ).sort()
+
+  function toggleStatus(s: string) {
+    setStatusFilters(prev => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
+  }
+
+  const isAll = statusFilters.size === 0
 
   const filtered = bookings
     .filter(({ booking, room }) => {
-      if (statusFilter !== 'all' && booking.status !== statusFilter) return false
+      if (booking.status === 'cancelled' && !showCancelled) return false
+      if (!isAll && !statusFilters.has(booking.status)) return false
       if (search) {
         const q = search.toLowerCase()
         return (
@@ -369,32 +384,64 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
   return (
     <div>
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search guest, room, source…"
-            className="pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-gray-300"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
-              <X size={13} />
-            </button>
-          )}
+      <div className="flex flex-col gap-2 mb-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search guest, room, source…"
+              className="pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg w-56 focus:outline-none focus:ring-2 focus:ring-gray-300"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <span className="text-xs text-gray-400 ml-auto">{filtered.length} of {bookings.length}</span>
         </div>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300"
-        >
-          <option value="all">All Statuses</option>
-          {allStatuses.map(s => (
-            <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+
+        {/* Status chips */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setStatusFilters(new Set())}
+            className={cn(
+              'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+              isAll
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+            )}
+          >
+            All
+          </button>
+          {nonCancelledStatuses.map(s => (
+            <button
+              key={s}
+              onClick={() => toggleStatus(s)}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                statusFilters.has(s)
+                  ? cn(STATUS_COLORS[s], 'border-transparent')
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+              )}
+            >
+              {STATUS_LABEL[s] ?? s}
+            </button>
           ))}
-        </select>
-        <span className="text-xs text-gray-400 ml-auto">{filtered.length} of {bookings.length}</span>
+          <button
+            onClick={() => setShowCancelled(v => !v)}
+            className={cn(
+              'rounded-full px-3 py-1 text-xs font-medium border transition-colors ml-2',
+              showCancelled
+                ? 'bg-red-100 text-red-700 border-red-200'
+                : 'bg-white text-gray-400 border-gray-200 hover:border-red-200 hover:text-red-500'
+            )}
+          >
+            {showCancelled ? 'Hide Cancelled' : 'Show Cancelled'}
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (

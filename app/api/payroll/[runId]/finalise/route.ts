@@ -4,7 +4,7 @@ import { db, payrollRuns, payrollEntries, leaveBalances, workers } from '@/lib/d
 import { eq, and } from 'drizzle-orm'
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> },
 ) {
   const { userId } = await auth()
@@ -12,6 +12,7 @@ export async function POST(
 
   const { runId } = await params
   const id = parseInt(runId)
+  const force = new URL(req.url).searchParams.get('force') === 'true'
 
   const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, id))
   if (!run)                      return NextResponse.json({ error: 'Not found' },        { status: 404 })
@@ -22,6 +23,21 @@ export async function POST(
     .from(payrollEntries)
     .innerJoin(workers, eq(payrollEntries.workerId, workers.id))
     .where(eq(payrollEntries.runId, id))
+
+  // Fix 2: warn if any entry has zero/null grossPay (unless ?force=true)
+  if (!force) {
+    const zeroPay = entries.filter(({ entry }) => {
+      const g = parseFloat(entry.grossPay ?? '0')
+      return isNaN(g) || g === 0
+    })
+    if (zeroPay.length > 0) {
+      const names = zeroPay.map(({ worker }) => worker.name).join(', ')
+      return NextResponse.json(
+        { error: `The following workers have R 0 gross pay — check attendance first: ${names}` },
+        { status: 422 },
+      )
+    }
+  }
 
   const year = new Date(run.periodEnd).getFullYear()
 

@@ -81,7 +81,13 @@ export default async function PayrollPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right text-gray-700">
-                    {fmt(runTotals[i]?.[0]?.total ?? 0)}
+                    {(() => {
+                      const total = parseFloat(String(runTotals[i]?.[0]?.total ?? '0'))
+                      if (run.status !== 'finalised' && total === 0) {
+                        return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">pending</span>
+                      }
+                      return fmt(total)
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link href={`/dashboard/payroll/${run.id}`} className="text-xs text-blue-600 hover:underline">

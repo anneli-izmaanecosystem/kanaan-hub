@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle, Info, Truck, Clock, ChevronRight, Plus, ReceiptText } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Info, Truck, Clock, ChevronRight, Plus, ReceiptText, Pencil } from 'lucide-react'
 import { cn, fmt, fmtDate } from '@/lib/utils'
 
 type Allocation = {
@@ -168,6 +168,7 @@ export default function FuelReconPage() {
                   <th className="px-4 py-3 text-left font-medium">Allocation</th>
                   <th className="px-4 py-3 text-right font-medium">Cost (R)</th>
                   <th className="px-4 py-3 text-center font-medium">Flag</th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -216,6 +217,13 @@ export default function FuelReconPage() {
                           {FLAG_LABEL[f.flag]}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        <EditFillButton fill={f} onDone={updated =>
+                          setFills(prev => prev.map(x => x.id === updated.fill.id
+                            ? { ...updated.fill, allocations: updated.allocations }
+                            : x))
+                        } />
+                      </td>
                     </tr>
                   )
                 })}
@@ -230,6 +238,7 @@ export default function FuelReconPage() {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">R {totalCost.toFixed(2)}</td>
                   <td />
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -237,6 +246,167 @@ export default function FuelReconPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// ── Edit fill modal ──────────────────────────────────────────────────────────
+
+type EditFillForm = {
+  fillDate: string
+  driverName: string
+  vehicle: string
+  openReading: string
+  closeReading: string
+  litres: string
+  isEstimated: boolean
+  ratePerLitre: string
+  flag: Fill['flag']
+  notes: string
+}
+
+function EditFillButton({ fill, onDone }: { fill: Fill; onDone: (updated: { fill: Fill; allocations: Allocation[] }) => void }) {
+  const [open, setOpen]     = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+  const [form, setForm]     = useState<EditFillForm>({
+    fillDate:     fill.fillDate,
+    driverName:   fill.driverName,
+    vehicle:      fill.vehicle,
+    openReading:  fill.openReading ?? '',
+    closeReading: fill.closeReading ?? '',
+    litres:       fill.litres,
+    isEstimated:  fill.isEstimated,
+    ratePerLitre: fill.ratePerLitre,
+    flag:         fill.flag,
+    notes:        fill.notes ?? '',
+  })
+
+  function set<K extends keyof EditFillForm>(key: K, val: EditFillForm[K]) {
+    setForm(prev => ({ ...prev, [key]: val }))
+  }
+
+  async function save() {
+    setSaving(true); setError('')
+    try {
+      const res = await fetch(`/api/fuel-fills/${fill.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action:       'edit-fill',
+          fillDate:     form.fillDate,
+          driverName:   form.driverName,
+          vehicle:      form.vehicle,
+          openReading:  form.openReading  ? parseFloat(form.openReading)  : null,
+          closeReading: form.closeReading ? parseFloat(form.closeReading) : null,
+          litres:       parseFloat(form.litres),
+          isEstimated:  form.isEstimated,
+          ratePerLitre: parseFloat(form.ratePerLitre),
+          flag:         form.flag,
+          notes:        form.notes || null,
+        }),
+      })
+      if (!res.ok) { const e = await res.json(); setError(e.error); return }
+      const data = await res.json()
+      onDone(data)
+      setOpen(false)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => { setForm({ fillDate: fill.fillDate, driverName: fill.driverName, vehicle: fill.vehicle, openReading: fill.openReading ?? '', closeReading: fill.closeReading ?? '', litres: fill.litres, isEstimated: fill.isEstimated, ratePerLitre: fill.ratePerLitre, flag: fill.flag, notes: fill.notes ?? '' }); setOpen(true) }}
+        className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-gray-400 hover:text-gray-800"
+      >
+        <Pencil size={11} /> Edit
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Edit Fill</h3>
+                <p className="text-xs text-gray-400">ID #{fill.id} — changes recalculate allocation costs if rate changes</p>
+              </div>
+              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3 max-h-[65vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Date</label>
+                  <input type="date" value={form.fillDate} onChange={e => set('fillDate', e.target.value)}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Flag</label>
+                  <select value={form.flag} onChange={e => set('flag', e.target.value as Fill['flag'])}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300">
+                    <option value="ok">OK</option>
+                    <option value="estimated">Estimated</option>
+                    <option value="delivery">Delivery</option>
+                    <option value="shortage">Shortage</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Driver</label>
+                  <input value={form.driverName} onChange={e => set('driverName', e.target.value)}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Vehicle</label>
+                  <input value={form.vehicle} onChange={e => set('vehicle', e.target.value)}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Open Reading (L)</label>
+                  <input type="number" value={form.openReading} onChange={e => set('openReading', e.target.value)}
+                    placeholder="—" className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Close Reading (L)</label>
+                  <input type="number" value={form.closeReading} onChange={e => set('closeReading', e.target.value)}
+                    placeholder="—" className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Litres</label>
+                  <input type="number" value={form.litres} onChange={e => set('litres', e.target.value)}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-gray-300" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Rate per Litre (R)</label>
+                  <input type="number" step="0.01" value={form.ratePerLitre} onChange={e => set('ratePerLitre', e.target.value)}
+                    className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm font-semibold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Notes</label>
+                <input value={form.notes} onChange={e => set('notes', e.target.value)}
+                  placeholder="Any notes…" className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input type="checkbox" checked={form.isEstimated} onChange={e => set('isEstimated', e.target.checked)}
+                  className="rounded border-gray-300" />
+                Litres are estimated (no meter reading)
+              </label>
+
+              {error && <p className="text-xs text-red-600">{error}</p>}
+            </div>
+
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-100">
+              <button onClick={() => setOpen(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={save} disabled={saving}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40">
+                {saving ? 'Saving…' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

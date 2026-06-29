@@ -47,6 +47,7 @@ export default function SetupPage() {
   const [weekdays,   setWeekdays]   = useState(0)
   const [loading,    setLoading]    = useState(true)
   const [saving,     setSaving]     = useState(false)
+  const [applyError, setApplyError] = useState('')
   const [showAdd,    setShowAdd]    = useState(false)
 
   const load = useCallback(() => {
@@ -106,11 +107,18 @@ export default function SetupPage() {
       .filter(c => c.entryId < 0 && !c.remove)
       .map(c => c.workerId)
 
-    await fetch(`/api/payroll/${runId}/setup`, {
+    const res = await fetch(`/api/payroll/${runId}/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workerConfigs, addWorkerIds }),
     })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setApplyError(data.error ?? 'Failed to apply setup. Please try again.')
+      setSaving(false)
+      return
+    }
 
     router.push(`/dashboard/payroll/${runId}`)
   }
@@ -130,7 +138,9 @@ export default function SetupPage() {
       <div className="flex items-center gap-2 mb-1 text-sm text-gray-400">
         <Link href="/dashboard/payroll" className="hover:text-gray-600">Payroll</Link>
         <span>/</span>
-        <span className="text-gray-600">Run #{runId} — Setup</span>
+        <Link href={`/dashboard/payroll/${runId}`} className="hover:text-gray-600">Run #{runId}</Link>
+        <span>/</span>
+        <span className="text-gray-600">Setup</span>
       </div>
 
       <div className="flex items-start justify-between mb-2">
@@ -151,6 +161,12 @@ export default function SetupPage() {
           </button>
         </div>
       </div>
+
+      {applyError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-4">
+          {applyError}
+        </div>
+      )}
 
       {/* Explainer */}
       <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800 mb-6">
@@ -214,28 +230,32 @@ export default function SetupPage() {
                 </button>
               </div>
 
-              {/* Timesheet toggle */}
+              {/* Timesheet toggle — hidden for floor workers */}
               <div className="mt-4 flex items-center gap-6 flex-wrap">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => update(w.id, { usesTimesheet: true })}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
-                      cfg.usesTimesheet
-                        ? 'bg-gray-900 text-white border-gray-900'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}>
-                    <Clock size={12} /> Timesheet
-                  </button>
-                  <button
-                    onClick={() => update(w.id, { usesTimesheet: false })}
-                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
-                      !cfg.usesTimesheet
-                        ? 'bg-gray-900 text-white border-gray-900'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}>
-                    <Calendar size={12} /> Default hours
-                  </button>
-                </div>
+                {isFloor ? (
+                  <p className="text-xs text-amber-700 italic">Floor salary — attendance tracked by presence only</p>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => update(w.id, { usesTimesheet: true })}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
+                        cfg.usesTimesheet
+                          ? 'bg-gray-900 text-white border-gray-900'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}>
+                      <Clock size={12} /> Timesheet
+                    </button>
+                    <button
+                      onClick={() => update(w.id, { usesTimesheet: false })}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
+                        !cfg.usesTimesheet
+                          ? 'bg-gray-900 text-white border-gray-900'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}>
+                      <Calendar size={12} /> Default hours
+                    </button>
+                  </div>
+                )}
 
                 {/* Default inputs (non-timesheet only) */}
                 {!cfg.usesTimesheet && !isFloor && (
@@ -260,11 +280,6 @@ export default function SetupPage() {
                   </div>
                 )}
 
-                {!cfg.usesTimesheet && isFloor && (
-                  <p className="text-xs text-gray-500 italic">
-                    Weekdays covered by floor salary. Saturdays confirmed on attendance page.
-                  </p>
-                )}
               </div>
             </div>
           )

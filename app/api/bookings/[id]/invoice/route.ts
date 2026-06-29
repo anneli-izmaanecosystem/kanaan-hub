@@ -98,8 +98,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { booking, room } = row
 
-  // Assign a sequential invoice number if not yet set
-  const invNo = booking.invoiceNumber ?? await assignInvoiceNumber(booking.id)
+  // Assign a sequential CI-YYYY-NNNN number if one hasn't been issued yet in our format
+  const hasNewFormat = /^CI-\d{4}-\d{4}$/.test(booking.invoiceNumber ?? '')
+  const invNo = hasNewFormat ? booking.invoiceNumber! : await assignInvoiceNumber(booking.id)
 
   const invDate = fmtDate(booking.checkIn)
   const nights  = booking.nights
