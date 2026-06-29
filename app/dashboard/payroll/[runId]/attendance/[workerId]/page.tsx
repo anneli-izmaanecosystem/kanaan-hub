@@ -617,7 +617,7 @@ export default function AttendancePage() {
                             type="number" step="0.25" min="0" max="24"
                             disabled={day.absent}
                             defaultValue={day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay ?? '')}
-                            className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'text-gray-300' : ''}`}
+                            className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'border-dashed text-gray-400' : ''}`}
                             onBlur={e => {
                               if (e.target.value !== (day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay))) {
                                 saveDay(day, { hoursWorked: e.target.value })
