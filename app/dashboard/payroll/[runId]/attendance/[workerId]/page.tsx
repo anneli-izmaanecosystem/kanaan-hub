@@ -300,11 +300,16 @@ export default function AttendancePage() {
   const totalAdvances   = advances.filter(a => a.advanceType === 'cash_advance').reduce((s, a) => s + parseFloat(a.amount), 0)
   const totalShop       = advances.filter(a => a.advanceType === 'shop_deduction').reduce((s, a) => s + parseFloat(a.amount), 0)
 
+  // timesheetMode: any day was saved from a photo timesheet upload
+  const timesheetMode = days.some(d => d.source === 'photo_timesheet')
+
   // Calculate gross from attendance days
   const attendanceGross = worker.payStructure === 'floor'
     ? parseFloat(worker.floorSalary ?? '0') // floor handled separately
     : days.reduce((s, d) => {
         if (d.absent) return s
+        // In timesheetMode, only count days that were explicitly saved from timesheet
+        if (timesheetMode && d.source !== 'photo_timesheet') return s
         const amt = d.calculatedAmount !== null
           ? parseFloat(d.calculatedAmount)
           : calcAmount(worker, d, d.phDoubleConfirmed === true)
@@ -563,7 +568,11 @@ export default function AttendancePage() {
                                  isSat ? 'bg-blue-50'   :
                                  isSun ? 'bg-red-50'    : ''
 
-                  const amount = day.calculatedAmount !== null
+                  const isTimesheetDay = day.source === 'photo_timesheet'
+                  const excludedByTimesheet = timesheetMode && !isTimesheetDay
+
+                  const amount = excludedByTimesheet ? 0
+                    : day.calculatedAmount !== null
                     ? parseFloat(day.calculatedAmount)
                     : calcAmount(worker, day, day.phDoubleConfirmed === true)
 
@@ -606,9 +615,9 @@ export default function AttendancePage() {
                         ) : worker.payStructure === 'hourly' ? (
                           <input
                             type="number" step="0.25" min="0" max="24"
-                            disabled={day.absent}
+                            disabled={day.absent || excludedByTimesheet}
                             defaultValue={day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay ?? '')}
-                            className={`${inp} w-16 text-center disabled:opacity-30`}
+                            className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'text-gray-300' : ''}`}
                             onBlur={e => {
                               if (e.target.value !== (day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay))) {
                                 saveDay(day, { hoursWorked: e.target.value })
@@ -660,6 +669,7 @@ export default function AttendancePage() {
                       <td className="px-3 py-2 text-right font-medium">
                         {day.absent ? <span className="text-gray-300">—</span>
                           : isFloor && !isSat ? <span className="text-gray-400 text-xs">in floor</span>
+                          : excludedByTimesheet ? <span className="text-gray-300">—</span>
                           : <span className={amount > 0 ? 'text-gray-800' : 'text-gray-300'}>{amount > 0 ? fmt(amount) : '—'}</span>}
                       </td>
 
