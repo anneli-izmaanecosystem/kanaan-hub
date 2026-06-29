@@ -11,10 +11,25 @@ const client = new Anthropic()
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  )
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+  return dp[m][n]
+}
+
 function fuzzyMatch(parsed: string, name: string): boolean {
   const a = parsed.toLowerCase().replace(/[^a-z]/g, '')
   const b = name.toLowerCase().replace(/[^a-z]/g, '')
-  return a === b || b.startsWith(a) || a.startsWith(b) || b.includes(a) || a.includes(b)
+  if (a === b || b.startsWith(a) || a.startsWith(b) || b.includes(a) || a.includes(b)) return true
+  // Token-level edit distance — handles OCR variants like Florah/Flora, Nozipho/Nozipo
+  const aToks = parsed.toLowerCase().split(/\s+/).map(t => t.replace(/[^a-z]/g, '')).filter(t => t.length >= 4)
+  const bToks = name.toLowerCase().split(/\s+/).map(t => t.replace(/[^a-z]/g, '')).filter(t => t.length >= 4)
+  return aToks.some(at => bToks.some(bt => editDistance(at, bt) <= 1))
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -121,14 +136,29 @@ Return ONLY valid JSON, no explanation:
       for (const w of workerEntries) {
         const workerName: string = w.worker_name ?? ''
         const match = allWorkers.find(aw => fuzzyMatch(workerName, aw.name))
+
+        const rawDays: any[] = w.days ?? []
+        const warnings: string[] = [...(w.warnings ?? [])]
+
+        // Filter out days with dates outside the pay period — Claude sometimes
+        // misreads handwritten month/year, producing dates that get saved to the
+        // DB but never appear in the attendance page (which only shows periodStart–periodEnd).
+        const validDays = rawDays.filter(d => {
+          if (!d.date || d.date < run.periodStart || d.date > run.periodEnd) {
+            warnings.push(`Date ${d.date} is outside pay period (${run.periodStart}–${run.periodEnd}) — skipped`)
+            return false
+          }
+          return true
+        })
+
         results.push({
           filename:        entry.name,
           workerName,
           workerId:        match?.id ?? null,
           matched:         !!match,
-          days:            w.days ?? [],
+          days:            validDays,
           shop_deductions: w.shop_deductions ?? [],
-          warnings:        w.warnings ?? [],
+          warnings,
         })
       }
     } catch (err: any) {

@@ -27,7 +27,8 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
   const [error,      setError]      = useState('')
   const [importing,  setImporting]  = useState(false)
   const [expanded,   setExpanded]   = useState<Set<string>>(new Set())
-  const [overrides,  setOverrides]  = useState<Record<string, number>>({})
+  // null = explicitly skipped; number = assigned worker id
+  const [overrides,  setOverrides]  = useState<Record<string, number | null>>({})
   const [imported,   setImported]   = useState<{ name: string; days: number; deds: number }[] | null>(null)
   const [existingMap, setExistingMap] = useState<ExistingMap>({})
 
@@ -131,8 +132,8 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
     setImporting(true)
 
     for (const result of results) {
-      const wid = overrides[result.filename] ?? result.workerId
-      if (!wid) continue
+      const wid = getWid(result)
+      if (wid == null) continue
 
       const worker = allWorkers.find(w => w.id === wid)
       const workerIsHourly = !worker || worker.payStructure === 'hourly'
@@ -193,8 +194,12 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
   }
 
   // ── derived counts ────────────────────────────────────────────────────────────
-  const matched    = results?.filter(r => !r.error && (r.matched || overrides[r.filename])) ?? []
-  const unmatched  = results?.filter(r => !r.error && !r.matched && !overrides[r.filename]) ?? []
+  // explicit key check: null = user skipped, number = assigned, absent = use auto-match
+  const getWid = (r: WorkerResult): number | null =>
+    r.filename in overrides ? overrides[r.filename] : r.workerId
+
+  const matched    = results?.filter(r => !r.error && getWid(r) != null) ?? []
+  const unmatched  = results?.filter(r => !r.error && getWid(r) == null && !r.matched) ?? []
   const errored    = results?.filter(r => !!r.error) ?? []
   const totalDays  = matched.reduce((s, r) => s + r.days.filter(d => d.present).length, 0)
   const totalDeds  = matched.reduce((s, r) => s + r.shop_deductions.filter(d => d.amount > 0).length, 0)
@@ -286,7 +291,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                   </span>
                   <select
                     value={overrides[r.filename] ?? ''}
-                    onChange={e => setOverrides(prev => ({ ...prev, [r.filename]: parseInt(e.target.value) }))}
+                    onChange={e => setOverrides(prev => ({ ...prev, [r.filename]: e.target.value ? parseInt(e.target.value) : null }))}
                     className="rounded border border-amber-300 px-2 py-1 text-xs focus:outline-none flex-1">
                     <option value="">— skip —</option>
                     {allWorkers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -299,7 +304,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
           {/* Result cards */}
           <div className="space-y-1.5 max-h-[32rem] overflow-y-auto pr-1">
             {results.filter(r => !r.error).map(r => {
-              const wid        = overrides[r.filename] ?? r.workerId
+              const wid        = getWid(r)
               const isOpen     = expanded.has(r.filename)
               const dPresent   = r.days.filter(d => d.present).length
               const dAbsent    = r.days.filter(d => !d.present).length
@@ -334,9 +339,9 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                     </button>
                     {/* Inline worker reassignment */}
                     <select
-                      value={overrides[r.filename] ?? r.workerId ?? ''}
+                      value={wid ?? ''}
                       onClick={e => e.stopPropagation()}
-                      onChange={e => setOverrides(prev => ({ ...prev, [r.filename]: parseInt(e.target.value) }))}
+                      onChange={e => setOverrides(prev => ({ ...prev, [r.filename]: e.target.value ? parseInt(e.target.value) : null }))}
                       className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-1 focus:ring-indigo-300 max-w-[160px]">
                       <option value="">— skip —</option>
                       {allWorkers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
