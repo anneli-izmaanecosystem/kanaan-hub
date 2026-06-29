@@ -93,7 +93,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   // Always compute dayType server-side from the date — never trust client-sent value
   const [ph] = await db.select().from(publicHolidays).where(eq(publicHolidays.date, date))
   const dow = new Date(date + 'T12:00:00Z').getUTCDay()
-  const dayType = ph ? 'public_holiday'
+  const dayType: 'weekday' | 'saturday' | 'sunday' | 'public_holiday' = ph ? 'public_holiday'
     : dow === 0 ? 'sunday'
     : dow === 6 ? 'saturday'
     : 'weekday'
