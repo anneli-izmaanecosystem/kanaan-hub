@@ -66,7 +66,8 @@ export async function POST(_req: NextRequest, { params }: Params) {
   // If any day was imported from a photo timesheet, that timesheet is the source of truth.
   // Only count explicitly saved days — unsaved days contribute 0 (not stdHoursPerDay default).
   const timesheetMode = savedDays.some(d => d.source === 'photo_timesheet')
-  const savedDates    = new Set(savedDays.map(s => s.date))
+  // Normalise to YYYY-MM-DD regardless of whether Drizzle returns a Date object or ISO string
+  const savedDates    = new Set(savedDays.map(s => String(s.date).slice(0, 10)))
 
   for (const d of allDays) {
     // In timesheet mode, skip days not saved to DB — they were not on the timesheet
