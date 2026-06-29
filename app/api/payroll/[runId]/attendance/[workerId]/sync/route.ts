@@ -29,16 +29,23 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
   // Build full period calendar — same logic as the attendance GET route
   // so that unsaved days (default: present, stdHoursPerDay) are included
+  // Normalise a date value that may be a Date object or ISO/YYYY-MM-DD string → YYYY-MM-DD
+  const toDateStr = (v: unknown): string =>
+    v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+
   const holidays = await db.select().from(publicHolidays)
     .where(between(publicHolidays.date, run.periodStart, run.periodEnd))
-  const holidayDates = new Set(holidays.map(h => h.date))
+  const holidayDates = new Set(holidays.map(h => toDateStr(h.date)))
 
   const allDays: {
     date: string; dayType: string; absent: boolean; absenceReason: string | null;
     hoursWorked: string | null; phDoubleConfirmed: boolean | null;
   }[] = []
 
-  for (let d = new Date(run.periodStart); d <= new Date(run.periodEnd); d.setUTCDate(d.getUTCDate() + 1)) {
+  const periodStart = toDateStr(run.periodStart)
+  const periodEnd   = toDateStr(run.periodEnd)
+
+  for (let d = new Date(periodStart); d <= new Date(periodEnd); d.setUTCDate(d.getUTCDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0]
     const dow     = d.getUTCDay()
     const dayType = holidayDates.has(dateStr) ? 'public_holiday'
@@ -46,7 +53,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
       : dow === 6 ? 'saturday'
       : 'weekday'
 
-    const saved = savedDays.find(s => s.date === dateStr)
+    const saved = savedDays.find(s => toDateStr(s.date) === dateStr)
     allDays.push({
       date:               dateStr,
       dayType,
@@ -66,8 +73,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
   // If any day was imported from a photo timesheet, that timesheet is the source of truth.
   // Only count explicitly saved days — unsaved days contribute 0 (not stdHoursPerDay default).
   const timesheetMode = savedDays.some(d => d.source === 'photo_timesheet')
-  // Normalise to YYYY-MM-DD regardless of whether Drizzle returns a Date object or ISO string
-  const savedDates    = new Set(savedDays.map(s => String(s.date).slice(0, 10)))
+  const savedDates    = new Set(savedDays.map(s => toDateStr(s.date)))
 
   for (const d of allDays) {
     // In timesheet mode, skip days not saved to DB — they were not on the timesheet
