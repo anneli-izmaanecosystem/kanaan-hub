@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Lock, Users, ChevronRight, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
+import { Lock, Users, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
 import BulkUploadPanel from './BulkUploadPanel'
 
 type Worker = {
@@ -34,16 +34,14 @@ export default function PayrollRunPage() {
   const [entries, setEntries] = useState<{ entry: Entry; worker: Worker }[]>([])
   const [loading, setLoading] = useState(true)
   const [finalising, setFinalising] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
-  function load() {
-    fetch(`/api/payroll/${runId}`)
-      .then(r => r.json())
-      .then(d => {
-        setRun(d.run)
-        setEntity(d.entity ?? null)
-        setEntries(d.entries ?? [])
-        setLoading(false)
-      })
+  async function load() {
+    const d = await fetch(`/api/payroll/${runId}`).then(r => r.json())
+    setRun(d.run)
+    setEntity(d.entity ?? null)
+    setEntries(d.entries ?? [])
+    setLoading(false)
   }
 
   useEffect(() => { load() }, [runId])
@@ -54,11 +52,33 @@ export default function PayrollRunPage() {
     if (res.ok) router.push('/dashboard/payroll')
   }
 
-  async function finalise() {
+  async function syncAll() {
+    setSyncing(true)
+    await Promise.all(
+      entries.map(({ worker }) =>
+        fetch(`/api/payroll/${runId}/attendance/${worker.id}/sync`, { method: 'POST' }).catch(() => null)
+      )
+    )
+    await load()
+    setSyncing(false)
+  }
+
+  async function finalise(force = false) {
     if (!confirm('Finalise this payroll run? This cannot be undone.')) return
     setFinalising(true)
-    const res = await fetch(`/api/payroll/${runId}/finalise`, { method: 'POST' })
-    if (res.ok) setRun(prev => prev ? { ...prev, status: 'finalised' } : prev)
+    const url = `/api/payroll/${runId}/finalise${force ? '?force=true' : ''}`
+    const res = await fetch(url, { method: 'POST' })
+    if (res.ok) {
+      setRun(prev => prev ? { ...prev, status: 'finalised' } : prev)
+    } else if (res.status === 422) {
+      const data = await res.json()
+      setFinalising(false)
+      const proceed = confirm(
+        `⚠ ${data.error}\n\nSome workers show R 0 gross pay — this may mean attendance hasn't been calculated yet. Proceed anyway?`
+      )
+      if (proceed) finalise(true)
+      return
+    }
     setFinalising(false)
   }
 
@@ -98,6 +118,12 @@ export default function PayrollRunPage() {
             {run.status}
           </span>
           {!isLocked && (
+            <button onClick={syncAll} disabled={syncing}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              {syncing ? 'Recalculating…' : '↻ Recalculate All'}
+            </button>
+          )}
+          {!isLocked && (
             <Link href={`/dashboard/payroll/${runId}/setup`}
               className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
               <Settings2 size={14} /> Setup
@@ -118,7 +144,7 @@ export default function PayrollRunPage() {
             <FileSpreadsheet size={14} /> UIF Schedule
           </Link>
           {!isLocked && (
-            <button onClick={finalise} disabled={finalising}
+            <button onClick={() => finalise()} disabled={finalising}
               className="flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50">
               <Lock size={14} /> {finalising ? 'Finalising…' : 'Finalise Run'}
             </button>
@@ -221,7 +247,6 @@ function WorkerRow({ entry, worker, runId, locked }: {
           className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-200">
           {worker.workerType === 'contractor' ? 'Invoice' : 'Payslip'}
         </Link>
-        <ChevronRight size={14} className="text-gray-300" />
       </div>
     </div>
   )
