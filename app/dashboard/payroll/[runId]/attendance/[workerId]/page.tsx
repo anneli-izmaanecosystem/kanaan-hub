@@ -263,6 +263,7 @@ export default function AttendancePage() {
             absenceReason: parsed.absent_reason ?? null,
             hoursWorked:   parsed.hours != null ? String(parsed.hours) : (parsed.present ? '0' : null),
             note:          parsed.note ?? null,
+            source:        'photo_timesheet',
           })
         })
     )
