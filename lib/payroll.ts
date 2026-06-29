@@ -68,7 +68,7 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
   if (worker.payStructure === 'hourly') {
     const rate = parseFloat(worker.hourlyRate ?? '0')
     basicPay    = entry.ordinaryHours * rate
-    saturdayPay = entry.saturdayHours * rate * SAT_MULTIPLIER   // BCEA s.10: 1.5× Saturday
+    saturdayPay = entry.saturdayHours * rate   // normal rate — hours within 45h/week average
     // PH: double pay for employees only, zero for contractors
     phPay = isEmployee ? entry.phHours * rate * PH_MULTIPLIER : 0
 

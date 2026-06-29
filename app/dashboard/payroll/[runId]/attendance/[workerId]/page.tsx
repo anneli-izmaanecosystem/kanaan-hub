@@ -45,7 +45,7 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
   if (worker.payStructure === 'hourly') {
     const rate  = parseFloat(worker.hourlyRate ?? '0')
     const hours = parseFloat(day.hoursWorked ?? worker.stdHoursPerDay ?? '0')
-    if (day.dayType === 'saturday')       return round2(hours * rate * 1.5)  // BCEA s.10
+    if (day.dayType === 'saturday')       return round2(hours * rate)  // normal rate within 45h average
     if (day.dayType === 'public_holiday') return worker.workerType === 'employee' && phDouble ? round2(hours * rate * 2) : round2(hours * rate)
     if (day.dayType === 'sunday')         return worker.workerType === 'employee' ? round2(hours * rate * 2) : 0
     return round2(hours * rate)
