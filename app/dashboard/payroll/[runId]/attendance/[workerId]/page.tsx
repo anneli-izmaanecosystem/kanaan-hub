@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
 import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X, ChevronLeft, ChevronRight, Camera } from 'lucide-react'
-import { round2, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY } from '@/lib/payroll'
+import { round2, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY, ALPHEUS_FLOOR_MIN_DAYS } from '@/lib/payroll'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Worker = {
@@ -349,19 +349,29 @@ export default function AttendancePage() {
 
   let attendanceGross: number
   let alphEarned = 0
+  let alphSaturdayEarned = 0
   let alphFloorApplied = false
 
   if (worker.payStructure === 'floor' && hasFuelDays) {
-    // Sum per-day amounts from fuel log, then apply R8000 minimum
-    alphEarned = days.reduce((s, d) => {
-      if (d.absent || !d.note?.startsWith('[Fuel]')) return s
-      const amt = d.calculatedAmount !== null
-        ? parseFloat(d.calculatedAmount)
-        : calcAmount(worker, d, false)
+    // Separate weekday and Saturday fuel days
+    const weekdayFuelDays  = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType !== 'saturday')
+    const saturdayFuelDays = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType === 'saturday')
+
+    const weekdayEarned_ = weekdayFuelDays.reduce((s, d) => {
+      const amt = d.calculatedAmount !== null ? parseFloat(d.calculatedAmount) : calcAmount(worker, d, false)
       return s + amt
     }, 0)
-    attendanceGross = Math.max(alphEarned, ALPHEUS_MIN_MONTHLY)
-    alphFloorApplied = attendanceGross > alphEarned
+    const saturdayEarned_ = saturdayFuelDays.reduce((s, d) => {
+      const amt = d.calculatedAmount !== null ? parseFloat(d.calculatedAmount) : calcAmount(worker, d, false)
+      return s + amt
+    }, 0)
+
+    const effectiveDays  = weekdayFuelDays.length + saturdayFuelDays.length
+    alphFloorApplied     = effectiveDays >= ALPHEUS_FLOOR_MIN_DAYS && weekdayEarned_ < ALPHEUS_MIN_MONTHLY
+    const weekdayGross   = alphFloorApplied ? ALPHEUS_MIN_MONTHLY : weekdayEarned_
+    alphEarned           = weekdayEarned_  // used in Pay Summary for "earned" line
+    alphSaturdayEarned   = saturdayEarned_
+    attendanceGross      = round2(weekdayGross + saturdayEarned_)
   } else if (worker.payStructure === 'floor') {
     attendanceGross = parseFloat(worker.floorSalary ?? '0')
   } else {
@@ -917,10 +927,13 @@ export default function AttendancePage() {
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pay Summary</p>
             {worker.payStructure === 'floor' && hasFuelDays ? (
               <>
-                <SummaryRow label={`Earned (${days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent).length} days)`} value={fmt(alphEarned)} />
+                <SummaryRow label={`Weekdays earned (${days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent && d.dayType !== 'saturday').length} days)`} value={fmt(alphEarned)} />
                 {alphFloorApplied
                   ? <SummaryRow label={`Floor min (earned R${alphEarned.toFixed(0)} < R${ALPHEUS_MIN_MONTHLY.toLocaleString()})`} value={fmt(ALPHEUS_MIN_MONTHLY)} />
                   : <SummaryRow label="Above floor min ✓" value="" />}
+                {alphSaturdayEarned > 0 && (
+                  <SummaryRow label={`Saturday (${days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent && d.dayType === 'saturday').length} days)`} value={`+ ${fmt(alphSaturdayEarned)}`} />
+                )}
               </>
             ) : worker.payStructure === 'floor' ? (
               <SummaryRow label="Floor salary" value={fmt(parseFloat(worker.floorSalary ?? '0'))} />

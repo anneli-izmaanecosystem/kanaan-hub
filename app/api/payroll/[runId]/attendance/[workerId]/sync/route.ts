@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, payrollRuns, payrollEntries, workers, attendanceDays, advances, publicHolidays } from '@/lib/db'
 import { eq, and, between } from 'drizzle-orm'
-import { calculatePayroll, calculateAlpheusSalary, defaultEntry, round2, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE } from '@/lib/payroll'
+import { calculatePayroll, defaultEntry, round2, ALPHEUS_MIN_MONTHLY, ALPHEUS_FLOOR_MIN_DAYS } from '@/lib/payroll'
 
 type Params = { params: Promise<{ runId: string; workerId: string }> }
 
@@ -126,34 +126,22 @@ export async function POST(_req: NextRequest, { params }: Params) {
   // Sum per-day calculatedAmounts and apply the R8000 monthly floor.
   const fuelDays = savedDays.filter(d => !d.absent && typeof d.note === 'string' && (d.note as string).startsWith('[Fuel]'))
   if (worker.payStructure === 'floor' && fuelDays.length > 0) {
-    const alphInput = fuelDays.map(d => {
-      const note = (d.note as string)
-      const dayType = note.includes('offsite') ? 'offsite'
-        : note.includes('partial') ? 'partial'
-        : 'onsite' as 'onsite' | 'offsite' | 'partial'
-      // For partial, use the stored calculatedAmount directly (already apportioned on import)
-      const preCalc = d.calculatedAmount ? parseFloat(String(d.calculatedAmount)) : null
-      return { dayType, onsiteHours: null as string | null, offsiteHours: 0, preCalc }
-    })
+    // Split fuel days into weekdays and Saturdays
+    const fuelWeekdays  = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() !== 6)
+    const fuelSaturdays = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() === 6)
 
-    const subtotal = round2(alphInput.reduce((s, d) => {
-      if (d.preCalc !== null) return s + d.preCalc
-      if (d.dayType === 'onsite')  return s + ALPHEUS_ONSITE_RATE
-      if (d.dayType === 'offsite') return s + ALPHEUS_OFFSITE_RATE
-      return s
-    }, 0))
+    // Sum stored per-day amounts (set on import, correctly apportioned for partials)
+    const weekdayEarned  = round2(fuelWeekdays.reduce((s, d)  => s + parseFloat(String(d.calculatedAmount ?? '0')), 0))
+    const saturdayEarned = round2(fuelSaturdays.reduce((s, d) => s + parseFloat(String(d.calculatedAmount ?? '0')), 0))
 
-    const { finalPay } = calculateAlpheusSalary(alphInput.map(d => ({
-      dayType: d.dayType,
-      onsiteHours: d.onsiteHours,
-      offsiteHours: d.offsiteHours,
-    })))
+    // Floor applies to weekday portion only if effective days >= 20
+    const effectiveDays  = fuelWeekdays.length + fuelSaturdays.length
+    const floorApplied   = effectiveDays >= ALPHEUS_FLOOR_MIN_DAYS && weekdayEarned < ALPHEUS_MIN_MONTHLY
+    const weekdayGross   = floorApplied ? ALPHEUS_MIN_MONTHLY : weekdayEarned
+    const grossOverride  = round2(weekdayGross + saturdayEarned)
 
-    // Override basicPay with the correct floor-applied total
-    // (saturdayPay is handled by saturdayDays via the normal floor path)
-    const satR = parseFloat(worker.saturdayRate ?? '0')
-    const saturdayPay = ei.saturdayDays * satR
-    const grossOverride = round2(finalPay + saturdayPay)
+    // saturdayPay stored separately for payslip transparency
+    const saturdayPay = saturdayEarned
 
     const uifEmployee = worker.workerType === 'employee' ? Math.min(grossOverride * 0.01, 177.12) : 0
     const uifEmployer = uifEmployee
@@ -163,14 +151,14 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const [updated] = await db
       .update(payrollEntries)
       .set({
-        daysWorked:           String(fuelDays.length),
-        saturdayDays:         String(ei.saturdayDays),
+        daysWorked:           String(fuelWeekdays.length),
+        saturdayDays:         String(fuelSaturdays.length),
         salaryAdvance:        String(ei.salaryAdvance),
         shopDeductions:       String(ei.shopDeductions),
         otherDeductions:      String(ei.otherDeductions),
         annualLeaveDaysTaken: String(ei.annualLeaveDaysTaken),
         sickLeaveDaysTaken:   String(ei.sickLeaveDaysTaken),
-        basicPay:             String(finalPay),
+        basicPay:             String(weekdayGross),
         saturdayPay:          String(saturdayPay),
         phPay:                '0',
         grossPay:             String(grossOverride),

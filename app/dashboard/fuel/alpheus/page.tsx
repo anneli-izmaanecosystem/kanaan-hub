@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Plus, Trash2, Pencil, X, Check, AlertCircle } from 'lucide-react'
 import { cn, fmtDate } from '@/lib/utils'
-import { calculateAlpheusSalary, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY } from '@/lib/payroll'
+import { calculateAlpheusSalary, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY, ALPHEUS_FLOOR_MIN_DAYS } from '@/lib/payroll'
 
 type ClientBlock = { clientName: string; billingInfo: string; hoursWorked: string }
 
@@ -203,6 +203,7 @@ export default function AlpheusDaysPage() {
     dayType:      d.dayType,
     onsiteHours:  d.onsiteHours,
     offsiteHours: d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0),
+    isSaturday:   new Date(d.dayDate + 'T12:00:00Z').getUTCDay() === 6,
   })))
 
   return (
@@ -255,7 +256,8 @@ export default function AlpheusDaysPage() {
                 { label: `On-site (${salary.onsiteDays}d × R${ALPHEUS_ONSITE_RATE})`, value: salary.onsitePay, color: 'text-green-700' },
                 { label: `Off-site (${salary.offsiteDays}d × R${ALPHEUS_OFFSITE_RATE})`, value: salary.offsitePay, color: 'text-blue-700' },
                 { label: `Partial (${salary.partialDays}d apportioned)`, value: salary.partialPay, color: 'text-amber-700' },
-                { label: 'Subtotal', value: salary.subtotal, color: 'text-gray-900' },
+                { label: `Weekday subtotal (${salary.weekdayDaysWorked} days)`, value: salary.weekdayEarned, color: 'text-gray-900' },
+                ...(salary.saturdayDays > 0 ? [{ label: `Saturday (${salary.saturdayDays}d — on top)`, value: salary.saturdayEarned, color: 'text-blue-700' }] : []),
               ].map(s => (
                 <div key={s.label} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                   <p className="text-[11px] text-gray-500 mb-1">{s.label}</p>
@@ -270,7 +272,11 @@ export default function AlpheusDaysPage() {
             )}>
               <div>
                 <p className={cn('text-xs font-semibold uppercase tracking-wide', salary.floorApplied ? 'text-amber-700' : 'text-green-700')}>
-                  {salary.floorApplied ? `Floor applied — subtotal R${salary.subtotal.toFixed(2)} < minimum` : 'Above minimum — no floor needed'}
+                  {salary.floorApplied
+                    ? `Floor applied — weekdays R${salary.weekdayEarned.toFixed(2)} < R${ALPHEUS_MIN_MONTHLY.toLocaleString()}`
+                    : (salary.weekdayDaysWorked + salary.saturdayDays) < ALPHEUS_FLOOR_MIN_DAYS
+                      ? `Below ${ALPHEUS_FLOOR_MIN_DAYS}-day threshold — no floor`
+                      : 'Above minimum — no floor needed'}
                 </p>
                 <p className="text-sm text-gray-600 mt-0.5">{monthDays.length} day{monthDays.length !== 1 ? 's' : ''} logged</p>
               </div>

@@ -1,59 +1,92 @@
 // ── Alpheus day-rate constants ────────────────────────────────────────────────
-export const ALPHEUS_ONSITE_RATE  = 300   // R/day on-site at Kanaan
-export const ALPHEUS_OFFSITE_RATE = 500   // R/day off-site with client
-export const ALPHEUS_MIN_MONTHLY  = 8000  // guaranteed floor for all weekdays in month
+export const ALPHEUS_ONSITE_RATE   = 300   // R/day on-site at Kanaan
+export const ALPHEUS_OFFSITE_RATE  = 500   // R/day off-site with client
+export const ALPHEUS_MIN_MONTHLY   = 8000  // guaranteed floor for weekday portion
+// Floor applies only when effective days (weekdays + Saturdays) reach this threshold.
+// Allows e.g. 20 weekdays + 2 Saturdays in a 22-weekday month to still qualify.
+export const ALPHEUS_FLOOR_MIN_DAYS = 20
 
 export interface AlpheusDayInput {
   dayType:      'onsite' | 'offsite' | 'partial'
   onsiteHours:  string | null  // for partial days — hours at Kanaan
   offsiteHours: number         // sum of client hours (partial) or 0
+  isSaturday?:  boolean        // Saturday days: paid at face value on top of weekday floor
 }
 
 export interface AlpheusSalaryResult {
-  onsiteDays:  number
-  offsiteDays: number
-  partialDays: number
-  onsitePay:   number
-  offsitePay:  number
-  partialPay:  number
-  subtotal:    number
-  guaranteed:  number
-  finalPay:    number
-  floorApplied: boolean
+  onsiteDays:       number
+  offsiteDays:      number
+  partialDays:      number
+  saturdayDays:     number
+  weekdayDaysWorked: number
+  onsitePay:        number
+  offsitePay:       number
+  partialPay:       number
+  saturdayEarned:   number
+  weekdayEarned:    number
+  subtotal:         number  // = weekdayEarned (kept for display compat)
+  guaranteed:       number
+  finalPay:         number  // weekday gross (floor if needed) + saturdayEarned
+  floorApplied:     boolean
 }
 
 export function calculateAlpheusSalary(days: AlpheusDayInput[]): AlpheusSalaryResult {
   let onsitePay  = 0
   let offsitePay = 0
   let partialPay = 0
+  let saturdayEarned = 0
   let onsiteDays  = 0
   let offsiteDays = 0
   let partialDays = 0
+  let saturdayDays = 0
+  let weekdayDaysWorked = 0
 
   for (const d of days) {
+    let dayEarned = 0
     if (d.dayType === 'onsite') {
-      onsiteDays++
-      onsitePay += ALPHEUS_ONSITE_RATE
+      dayEarned = ALPHEUS_ONSITE_RATE
     } else if (d.dayType === 'offsite') {
-      offsiteDays++
-      offsitePay += ALPHEUS_OFFSITE_RATE
+      dayEarned = ALPHEUS_OFFSITE_RATE
     } else {
-      // partial — apportion between onsite and offsite rates by hours
-      partialDays++
+      // partial — apportion by hours
       const onHrs  = parseFloat(d.onsiteHours ?? '0') || 0
       const offHrs = d.offsiteHours
       const total  = onHrs + offHrs
       if (total > 0) {
-        partialPay += round2((onHrs / total) * ALPHEUS_ONSITE_RATE + (offHrs / total) * ALPHEUS_OFFSITE_RATE)
+        dayEarned = round2((onHrs / total) * ALPHEUS_ONSITE_RATE + (offHrs / total) * ALPHEUS_OFFSITE_RATE)
       }
+    }
+
+    if (d.isSaturday) {
+      saturdayDays++
+      saturdayEarned += dayEarned
+    } else {
+      weekdayDaysWorked++
+      if (d.dayType === 'onsite')       { onsiteDays++;  onsitePay  += dayEarned }
+      else if (d.dayType === 'offsite') { offsiteDays++; offsitePay += dayEarned }
+      else                              { partialDays++; partialPay += dayEarned }
     }
   }
 
-  const subtotal    = round2(onsitePay + offsitePay + partialPay)
-  const finalPay    = Math.max(subtotal, ALPHEUS_MIN_MONTHLY)
-  const floorApplied = finalPay > subtotal
+  saturdayEarned = round2(saturdayEarned)
+  const weekdayEarned = round2(onsitePay + offsitePay + partialPay)
 
-  return { onsiteDays, offsiteDays, partialDays, onsitePay, offsitePay, partialPay: round2(partialPay), subtotal, guaranteed: ALPHEUS_MIN_MONTHLY, finalPay, floorApplied }
+  // Floor applies to weekday portion only. Saturday days count toward the
+  // effective-days threshold so a long weekend still qualifies.
+  const effectiveDays = weekdayDaysWorked + saturdayDays
+  const floorApplied  = effectiveDays >= ALPHEUS_FLOOR_MIN_DAYS && weekdayEarned < ALPHEUS_MIN_MONTHLY
+  const weekdayGross  = floorApplied ? ALPHEUS_MIN_MONTHLY : weekdayEarned
+
+  const finalPay = round2(weekdayGross + saturdayEarned)
+  const subtotal = weekdayEarned
+
+  return {
+    onsiteDays, offsiteDays, partialDays, saturdayDays, weekdayDaysWorked,
+    onsitePay, offsitePay, partialPay: round2(partialPay),
+    saturdayEarned, weekdayEarned, subtotal,
+    guaranteed: ALPHEUS_MIN_MONTHLY,
+    finalPay, floorApplied,
+  }
 }
 
 // SA BCEA compliance constants
