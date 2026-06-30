@@ -28,6 +28,14 @@ type Advance = {
   advanceType: string; note: string | null
 }
 
+function parseFuelNote(note: string | null): { type: string; detail: string } {
+  if (!note?.startsWith('[Fuel]')) return { type: '', detail: '' }
+  const rest = note.slice(7) // after '[Fuel] '
+  const colonIdx = rest.indexOf(':')
+  if (colonIdx === -1) return { type: rest.trim(), detail: '' }
+  return { type: rest.slice(0, colonIdx).trim(), detail: rest.slice(colonIdx + 1).trim() }
+}
+
 const DAY_LABELS: Record<string, string> = {
   weekday: '', saturday: 'Sat', sunday: 'Sun', public_holiday: 'PH',
 }
@@ -100,6 +108,11 @@ export default function AttendancePage() {
   // Import from Fuel Log (Alpheus / floor workers)
   const [importingFuel, setImportingFuel] = useState(false)
   const [importFuelMsg, setImportFuelMsg] = useState('')
+
+  // Leave recording (Alpheus mode)
+  const [showLeaveForm, setShowLeaveForm] = useState(false)
+  const [leaveForm, setLeaveForm] = useState({ date: '', leaveType: 'sick', note: '' })
+  const [leaveSaving, setLeaveSaving] = useState(false)
 
   // Advance form
   const [showAdvForm, setShowAdvForm] = useState(false)
@@ -223,6 +236,22 @@ export default function AttendancePage() {
     }
   }
 
+  async function saveLeave(e: React.FormEvent) {
+    e.preventDefault()
+    setLeaveSaving(true)
+    const day = days.find(d => d.date === leaveForm.date)
+    if (day) {
+      await saveDay(day, { absent: true, absenceReason: leaveForm.leaveType, note: leaveForm.note || null })
+      setShowLeaveForm(false)
+      setLeaveForm({ date: '', leaveType: 'sick', note: '' })
+    }
+    setLeaveSaving(false)
+  }
+
+  async function removeLeave(day: Day) {
+    await saveDay(day, { absent: false, absenceReason: null, note: null })
+  }
+
   async function importFromFuelLog() {
     setImportingFuel(true); setImportFuelMsg('')
     const res = await fetch(`/api/payroll/${runId}/attendance/${workerId}/import-alpheus`, { method: 'POST' })
@@ -310,8 +339,11 @@ export default function AttendancePage() {
 
   // Calculate gross from attendance days
   const hasFuelDays = days.some(d => d.note?.startsWith('[Fuel]'))
+  const fuelLogDays  = hasFuelDays ? days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent) : []
+  const leaveRecords = hasFuelDays ? days.filter(d => d.absent) : []
 
-  const saturdayExtra = worker.payStructure === 'floor'
+  // Alpheus: Saturdays already included in alphEarned (fuel log). No top-up needed.
+  const saturdayExtra = worker.payStructure === 'floor' && !hasFuelDays
     ? days.filter(d => d.dayType === 'saturday' && !d.absent).reduce((s, d) => s + parseFloat(d.calculatedAmount ?? '0'), 0)
     : 0
 
@@ -589,7 +621,137 @@ export default function AttendancePage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ── Attendance grid ─────────────────────────────────────────────── */}
+        {/* ── Attendance area ─────────────────────────────────────────────── */}
+        {hasFuelDays ? (
+          /* ── Alpheus mode: fuel-log read-only + leave section ─────────── */
+          <div className="lg:col-span-2 space-y-4">
+            {/* Fuel-log days table */}
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Fuel Log Days</p>
+                <span className="text-xs text-gray-400">{fuelLogDays.length} day{fuelLogDays.length !== 1 ? 's' : ''} · {fmt(alphEarned)} earned</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-400 border-b border-gray-100">
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Day</th>
+                      <th className="px-3 py-2 text-left">Type</th>
+                      <th className="px-3 py-2 text-left">Details</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {fuelLogDays.map(day => {
+                      const { type: fuelType, detail: fuelDetail } = parseFuelNote(day.note)
+                      const amount = parseFloat(day.calculatedAmount ?? '0')
+                      const isSat = day.dayType === 'saturday'
+                      return (
+                        <tr key={day.date} className={isSat ? 'bg-blue-50' : 'hover:bg-gray-50'}>
+                          <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{fmtDate(day.date)}</td>
+                          <td className="px-3 py-2 text-gray-500">
+                            {new Date(day.date + 'T12:00:00').toLocaleDateString('en-ZA', { weekday: 'short' })}
+                            {isSat && <span className="ml-1 rounded-full bg-blue-200 px-1.5 py-0.5 text-xs font-medium text-blue-800">Sat</span>}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              fuelType === 'offsite' ? 'bg-blue-100 text-blue-800' :
+                              fuelType === 'onsite'  ? 'bg-green-100 text-green-800' :
+                              'bg-amber-100 text-amber-800'
+                            }`}>
+                              {fuelType === 'offsite' ? 'Off-site' : fuelType === 'onsite' ? 'On-site' : 'Partial'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-gray-500 max-w-[12rem] truncate">{fuelDetail}</td>
+                          <td className="px-3 py-2 text-right font-medium text-gray-800">{fmt(amount)}</td>
+                        </tr>
+                      )
+                    })}
+                    {fuelLogDays.length === 0 && (
+                      <tr><td colSpan={5} className="px-4 py-4 text-xs text-gray-400">No fuel-log days imported yet.</td></tr>
+                    )}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t border-gray-200 text-xs font-semibold">
+                    <tr>
+                      <td colSpan={4} className="px-3 py-2">
+                        {alphFloorApplied
+                          ? <span className="text-amber-700">Floor applied — earned {fmt(alphEarned)}, guaranteed {fmt(ALPHEUS_MIN_MONTHLY)}</span>
+                          : alphEarned > 0 ? <span className="text-green-700">Above minimum — no floor needed</span>
+                          : <span className="text-gray-400">Import from Fuel Log to calculate pay</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-900">{fmt(attendanceGross)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Leave records */}
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Leave</p>
+                {!isLocked && (
+                  <button onClick={() => setShowLeaveForm(v => !v)}
+                    className="flex items-center gap-1 rounded-lg bg-gray-900 px-2 py-1 text-xs text-white hover:bg-gray-700">
+                    <Plus size={11} /> Mark Leave
+                  </button>
+                )}
+              </div>
+              {showLeaveForm && (
+                <form onSubmit={saveLeave} className="p-3 border-b border-gray-100 bg-orange-50 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="date" required value={leaveForm.date}
+                      min={run.periodStart} max={run.periodEnd}
+                      onChange={e => setLeaveForm(f => ({ ...f, date: e.target.value }))}
+                      className={inp} />
+                    <select value={leaveForm.leaveType}
+                      onChange={e => setLeaveForm(f => ({ ...f, leaveType: e.target.value }))}
+                      className={inp}>
+                      {ABSENCE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                  <input type="text" placeholder="Note (optional)" value={leaveForm.note}
+                    onChange={e => setLeaveForm(f => ({ ...f, note: e.target.value }))}
+                    className={`${inp} w-full`} />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setShowLeaveForm(false)}
+                      className="flex-1 rounded border border-gray-200 py-1 text-xs text-gray-600 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" disabled={leaveSaving}
+                      className="flex-1 rounded bg-gray-900 py-1 text-xs text-white disabled:opacity-50">
+                      {leaveSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </form>
+              )}
+              {leaveRecords.length === 0 ? (
+                <p className="px-4 py-4 text-xs text-gray-400">No leave recorded this period.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {leaveRecords.map(day => (
+                    <div key={day.date} className="flex items-center justify-between px-4 py-2">
+                      <div>
+                        <p className="text-xs font-medium text-gray-800">{fmtDate(day.date)}</p>
+                        <p className="text-xs text-gray-400">
+                          {ABSENCE_OPTS.find(o => o.value === day.absenceReason)?.label ?? day.absenceReason ?? 'Absent'}
+                          {day.note ? ` · ${day.note}` : ''}
+                        </p>
+                      </div>
+                      {!isLocked && (
+                        <button onClick={() => removeLeave(day)}
+                          title="Remove leave"
+                          className="rounded p-1 text-gray-300 hover:text-red-500 hover:bg-red-50">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+        /* ── Standard calendar grid ────────────────────────────────────── */
         <div className="lg:col-span-2">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
@@ -621,7 +783,6 @@ export default function AttendancePage() {
                                  isSun ? 'bg-red-50'    : ''
 
                   const isTimesheetDay = day.source === 'photo_timesheet'
-                  // Excluded = no DB row at all (pure calendar default). Manually-saved days always show.
                   const excludedByTimesheet = timesheetMode && day.id === null && !isTimesheetDay
 
                   const amount = excludedByTimesheet ? 0
@@ -747,6 +908,7 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* ── Right panel: summary + advances ────────────────────────────── */}
         <div className="space-y-4">

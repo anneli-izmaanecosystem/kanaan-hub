@@ -113,8 +113,11 @@ export async function POST(_req: NextRequest, { params }: Params) {
       else                                     ei.daysWorked   += 1
 
     } else if (worker.payStructure === 'floor') {
-      if (d.dayType === 'saturday') ei.saturdayDays += 1
-      // weekday fuel-log days are summed separately below
+      // Only count Saturday top-up for non-fuel-log days.
+      // Fuel-log Saturdays are already included in the fuelDays sum below.
+      const savedDay = savedDays.find(s => toDateStr(s.date) === d.date)
+      const isFuelLog = typeof savedDay?.note === 'string' && (savedDay.note as string).startsWith('[Fuel]')
+      if (d.dayType === 'saturday' && !isFuelLog) ei.saturdayDays += 1
     }
   }
 
