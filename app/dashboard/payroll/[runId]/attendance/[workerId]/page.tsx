@@ -355,9 +355,9 @@ export default function AttendancePage() {
   let alphFloorApplied = false
 
   if (worker.payStructure === 'floor' && hasFuelDays) {
-    // Separate weekday and Saturday fuel days
-    const weekdayFuelDays  = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType !== 'saturday')
-    const saturdayFuelDays = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType === 'saturday')
+    // Separate weekday and Saturday fuel days; skip zero-amount orphaned entries
+    const weekdayFuelDays  = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType !== 'saturday' && parseFloat(d.calculatedAmount ?? '0') > 0)
+    const saturdayFuelDays = days.filter(d => !d.absent && d.note?.startsWith('[Fuel]') && d.dayType === 'saturday' && parseFloat(d.calculatedAmount ?? '0') > 0)
 
     const weekdayEarned_ = weekdayFuelDays.reduce((s, d) => {
       const amt = d.calculatedAmount !== null ? parseFloat(d.calculatedAmount) : calcAmount(worker, d, false)

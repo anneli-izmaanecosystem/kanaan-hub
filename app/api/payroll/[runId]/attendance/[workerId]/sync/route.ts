@@ -126,9 +126,10 @@ export async function POST(_req: NextRequest, { params }: Params) {
   // Sum per-day calculatedAmounts and apply the R8000 monthly floor.
   const fuelDays = savedDays.filter(d => !d.absent && typeof d.note === 'string' && (d.note as string).startsWith('[Fuel]'))
   if (worker.payStructure === 'floor' && fuelDays.length > 0) {
-    // Split fuel days into weekdays and Saturdays
-    const fuelWeekdays  = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() !== 6)
-    const fuelSaturdays = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() === 6)
+    // Split fuel days into weekdays and Saturdays.
+    // Exclude zero-amount days (e.g. orphaned records from deleted fuel-log entries).
+    const fuelWeekdays  = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() !== 6 && parseFloat(String(d.calculatedAmount ?? '0')) > 0)
+    const fuelSaturdays = fuelDays.filter(d => new Date(toDateStr(d.date) + 'T12:00:00Z').getUTCDay() === 6 && parseFloat(String(d.calculatedAmount ?? '0')) > 0)
 
     // Sum stored per-day amounts (set on import, correctly apportioned for partials)
     const weekdayEarned  = round2(fuelWeekdays.reduce((s, d)  => s + parseFloat(String(d.calculatedAmount ?? '0')), 0))
@@ -165,7 +166,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
         uifEmployee:          String(uifEmployee),
         uifEmployer:          String(uifEmployer),
         netPay:               String(netPay),
-        payeTaxableAmount:    grossOverride * 12 > 95750 ? String(grossOverride) : null,
+        payeTaxableAmount:    null, // variable day-rate — annualising one month is not meaningful
       })
       .where(eq(payrollEntries.id, entry.id))
       .returning()
