@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, payrollRuns, payrollEntries, workers, attendanceDays, advances, publicHolidays } from '@/lib/db'
 import { eq, and, between } from 'drizzle-orm'
-import { calculatePayroll, defaultEntry } from '@/lib/payroll'
+import { calculatePayroll, calculateAlpheusSalary, defaultEntry, round2, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE } from '@/lib/payroll'
 
 type Params = { params: Promise<{ runId: string; workerId: string }> }
 
@@ -114,7 +114,72 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
     } else if (worker.payStructure === 'floor') {
       if (d.dayType === 'saturday') ei.saturdayDays += 1
+      // weekday fuel-log days are summed separately below
     }
+  }
+
+  // ── Alpheus: day-rate pay from fuel log ──────────────────────────────────────
+  // If any saved day has a [Fuel] note, this is an Alpheus-style run.
+  // Sum per-day calculatedAmounts and apply the R8000 monthly floor.
+  const fuelDays = savedDays.filter(d => !d.absent && typeof d.note === 'string' && (d.note as string).startsWith('[Fuel]'))
+  if (worker.payStructure === 'floor' && fuelDays.length > 0) {
+    const alphInput = fuelDays.map(d => {
+      const note = (d.note as string)
+      const dayType = note.includes('offsite') ? 'offsite'
+        : note.includes('partial') ? 'partial'
+        : 'onsite' as 'onsite' | 'offsite' | 'partial'
+      // For partial, use the stored calculatedAmount directly (already apportioned on import)
+      const preCalc = d.calculatedAmount ? parseFloat(String(d.calculatedAmount)) : null
+      return { dayType, onsiteHours: null as string | null, offsiteHours: 0, preCalc }
+    })
+
+    const subtotal = round2(alphInput.reduce((s, d) => {
+      if (d.preCalc !== null) return s + d.preCalc
+      if (d.dayType === 'onsite')  return s + ALPHEUS_ONSITE_RATE
+      if (d.dayType === 'offsite') return s + ALPHEUS_OFFSITE_RATE
+      return s
+    }, 0))
+
+    const { finalPay } = calculateAlpheusSalary(alphInput.map(d => ({
+      dayType: d.dayType,
+      onsiteHours: d.onsiteHours,
+      offsiteHours: d.offsiteHours,
+    })))
+
+    // Override basicPay with the correct floor-applied total
+    // (saturdayPay is handled by saturdayDays via the normal floor path)
+    const satR = parseFloat(worker.saturdayRate ?? '0')
+    const saturdayPay = ei.saturdayDays * satR
+    const grossOverride = round2(finalPay + saturdayPay)
+
+    const uifEmployee = worker.workerType === 'employee' ? Math.min(grossOverride * 0.01, 177.12) : 0
+    const uifEmployer = uifEmployee
+    const totalDeds   = ei.salaryAdvance + ei.shopDeductions + ei.otherDeductions + uifEmployee
+    const netPay      = round2(grossOverride - totalDeds)
+
+    const [updated] = await db
+      .update(payrollEntries)
+      .set({
+        daysWorked:           String(fuelDays.length),
+        saturdayDays:         String(ei.saturdayDays),
+        salaryAdvance:        String(ei.salaryAdvance),
+        shopDeductions:       String(ei.shopDeductions),
+        otherDeductions:      String(ei.otherDeductions),
+        annualLeaveDaysTaken: String(ei.annualLeaveDaysTaken),
+        sickLeaveDaysTaken:   String(ei.sickLeaveDaysTaken),
+        basicPay:             String(finalPay),
+        saturdayPay:          String(saturdayPay),
+        phPay:                '0',
+        grossPay:             String(grossOverride),
+        uifEmployee:          String(uifEmployee),
+        uifEmployer:          String(uifEmployer),
+        netPay:               String(netPay),
+        payeTaxableAmount:    grossOverride * 12 > 95750 ? String(grossOverride) : null,
+      })
+      .where(eq(payrollEntries.id, entry.id))
+      .returning()
+
+    return NextResponse.json({ ok: true, grossPay: grossOverride, netPay })
   }
 
   // Advances

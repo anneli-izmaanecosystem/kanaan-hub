@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, payrollRuns, workers, attendanceDays, alpheusDays, alpheusDayClients, publicHolidays, payrollEntries } from '@/lib/db'
 import { eq, and, between } from 'drizzle-orm'
+import { ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, round2 } from '@/lib/payroll'
 
 type Params = { params: Promise<{ runId: string; workerId: string }> }
 
@@ -60,6 +61,16 @@ export async function POST(_req: NextRequest, { params }: Params) {
     if (fd.dayType === 'onsite' || fd.dayType === 'partial') parts.push('Kanaan')
     const note = `[Fuel] ${fd.dayType}${parts.length ? ': ' + parts.join(', ') : ''}`
 
+    // Calculate per-day raw rate (floor min applied at monthly level in sync)
+    let dayAmount = 0
+    if (fd.dayType === 'onsite') {
+      dayAmount = ALPHEUS_ONSITE_RATE
+    } else if (fd.dayType === 'offsite') {
+      dayAmount = ALPHEUS_OFFSITE_RATE
+    } else if (fd.dayType === 'partial' && totalHours > 0) {
+      dayAmount = round2((onsiteHours / totalHours) * ALPHEUS_ONSITE_RATE + (offSiteHours / totalHours) * ALPHEUS_OFFSITE_RATE)
+    }
+
     const values = {
       workerId:         wid,
       runId:            rid,
@@ -68,7 +79,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
       hoursWorked:      totalHours > 0 ? String(totalHours) : null,
       absent:           false,
       absenceReason:    null,
-      calculatedAmount: null,
+      calculatedAmount: String(dayAmount),
       phDoubleConfirmed: null,
       source:           'manual' as any,
       note,

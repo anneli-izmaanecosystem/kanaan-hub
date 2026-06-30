@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
 import { Plus, Trash2, AlertTriangle, Sun, Star, Upload, Check, X, ChevronLeft, ChevronRight, Camera } from 'lucide-react'
-import { round2 } from '@/lib/payroll'
+import { round2, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY } from '@/lib/payroll'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Worker = {
@@ -61,9 +61,14 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
   }
 
   if (worker.payStructure === 'floor') {
-    // Floor days: return the saturday top-up; floor itself is a monthly total
     if (day.dayType === 'saturday') return parseFloat(worker.saturdayRate ?? '0')
-    return 0 // weekdays absorbed in floor
+    // Fuel-log days carry their own per-day rate (stored in calculatedAmount on import)
+    if (day.note?.startsWith('[Fuel]')) {
+      if (day.calculatedAmount !== null) return parseFloat(day.calculatedAmount)
+      if (day.note.includes('offsite')) return ALPHEUS_OFFSITE_RATE
+      if (day.note.includes('onsite'))  return ALPHEUS_ONSITE_RATE
+    }
+    return 0
   }
 
   return 0
@@ -304,21 +309,41 @@ export default function AttendancePage() {
   const timesheetMode = days.some(d => d.source === 'photo_timesheet')
 
   // Calculate gross from attendance days
-  const attendanceGross = worker.payStructure === 'floor'
-    ? parseFloat(worker.floorSalary ?? '0') // floor handled separately
-    : days.reduce((s, d) => {
-        if (d.absent) return s
-        // In timesheetMode, only count days that were explicitly saved from timesheet
-        if (timesheetMode && d.source !== 'photo_timesheet') return s
-        const amt = d.calculatedAmount !== null
-          ? parseFloat(d.calculatedAmount)
-          : calcAmount(worker, d, d.phDoubleConfirmed === true)
-        return s + amt
-      }, 0)
+  const hasFuelDays = days.some(d => d.note?.startsWith('[Fuel]'))
+
   const saturdayExtra = worker.payStructure === 'floor'
     ? days.filter(d => d.dayType === 'saturday' && !d.absent).reduce((s, d) => s + parseFloat(d.calculatedAmount ?? '0'), 0)
     : 0
-  const grossPay  = round2(attendanceGross + saturdayExtra)
+
+  let attendanceGross: number
+  let alphEarned = 0
+  let alphFloorApplied = false
+
+  if (worker.payStructure === 'floor' && hasFuelDays) {
+    // Sum per-day amounts from fuel log, then apply R8000 minimum
+    alphEarned = days.reduce((s, d) => {
+      if (d.absent || !d.note?.startsWith('[Fuel]')) return s
+      const amt = d.calculatedAmount !== null
+        ? parseFloat(d.calculatedAmount)
+        : calcAmount(worker, d, false)
+      return s + amt
+    }, 0)
+    attendanceGross = Math.max(alphEarned, ALPHEUS_MIN_MONTHLY)
+    alphFloorApplied = attendanceGross > alphEarned
+  } else if (worker.payStructure === 'floor') {
+    attendanceGross = parseFloat(worker.floorSalary ?? '0')
+  } else {
+    attendanceGross = days.reduce((s, d) => {
+      if (d.absent) return s
+      if (timesheetMode && d.source !== 'photo_timesheet') return s
+      const amt = d.calculatedAmount !== null
+        ? parseFloat(d.calculatedAmount)
+        : calcAmount(worker, d, d.phDoubleConfirmed === true)
+      return s + amt
+    }, 0)
+  }
+
+  const grossPay = round2(attendanceGross + saturdayExtra)
   const totalDeds = round2(totalAdvances + totalShop)
 
   const pendingPH = days.filter(d => d.dayType === 'public_holiday' && !d.absent && d.phDoubleConfirmed === null && worker.workerType === 'employee')
@@ -370,7 +395,9 @@ export default function AttendancePage() {
         {fmtDate(run.periodStart)} – {fmtDate(run.periodEnd)} ·{' '}
         {worker.payStructure === 'hourly' ? `R${worker.hourlyRate}/hr · ${worker.stdHoursPerDay}h/day`
           : worker.payStructure === 'daily' ? `R${worker.dailyRate}/day`
-          : `R${worker.floorSalary} floor + R${worker.saturdayRate}/on-site Sat`}
+          : hasFuelDays
+            ? `On-site R${ALPHEUS_ONSITE_RATE}/day · Off-site R${ALPHEUS_OFFSITE_RATE}/day · Min R${ALPHEUS_MIN_MONTHLY.toLocaleString()}/month · Sat R${worker.saturdayRate}`
+            : `R${worker.floorSalary} floor + R${worker.saturdayRate}/on-site Sat`}
       </p>
 
       {/* Import from Fuel Log — floor workers only */}
@@ -459,12 +486,37 @@ export default function AttendancePage() {
 
               {uploadShopDeds.length > 0 && (
                 <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2">
-                  <p className="text-xs font-semibold text-orange-800 mb-1">Shop deductions found on timesheet</p>
-                  {uploadShopDeds.map((d, i) => (
-                    <p key={i} className="text-xs text-orange-700">
-                      {fmtDate(d.date)} · R{d.amount.toFixed(2)}{d.note ? ` — ${d.note}` : ''}
-                    </p>
-                  ))}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-xs font-semibold text-orange-800">Shop deductions</p>
+                    <button
+                      type="button"
+                      onClick={() => setUploadShopDeds(prev => [...prev, { date: run?.periodStart ?? '', amount: 0, note: null }])}
+                      className="flex items-center gap-1 text-xs text-orange-700 hover:text-orange-900">
+                      <Plus size={11} /> Add
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {uploadShopDeds.map((d, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input type="date" value={d.date}
+                          onChange={e => setUploadShopDeds(prev => prev.map((x, j) => j === i ? { ...x, date: e.target.value } : x))}
+                          className={`${inp} w-32 flex-shrink-0`} />
+                        <span className="text-xs text-orange-600 flex-shrink-0">R</span>
+                        <input type="number" step="0.01" min="0"
+                          value={d.amount || ''}
+                          placeholder="0.00"
+                          onChange={e => setUploadShopDeds(prev => prev.map((x, j) => j === i ? { ...x, amount: parseFloat(e.target.value) || 0 } : x))}
+                          className={`${inp} w-24 text-right`} />
+                        <input type="text" value={d.note ?? ''} placeholder="description…"
+                          onChange={e => setUploadShopDeds(prev => prev.map((x, j) => j === i ? { ...x, note: e.target.value || null } : x))}
+                          className={`${inp} flex-1 min-w-0`} />
+                        <button type="button" onClick={() => setUploadShopDeds(prev => prev.filter((_, j) => j !== i))}
+                          className="text-orange-300 hover:text-red-500 flex-shrink-0">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -669,8 +721,8 @@ export default function AttendancePage() {
                       {/* Amount */}
                       <td className="px-3 py-2 text-right font-medium">
                         {day.absent ? <span className="text-gray-300">—</span>
-                          : isFloor && !isSat ? <span className="text-gray-400 text-xs">in floor</span>
                           : excludedByTimesheet ? <span className="text-gray-300">—</span>
+                          : isFloor && !isSat && !day.note?.startsWith('[Fuel]') ? <span className="text-gray-400 text-xs">in floor</span>
                           : <span className={amount > 0 ? 'text-gray-800' : 'text-gray-300'}>{amount > 0 ? fmt(amount) : '—'}</span>}
                       </td>
 
@@ -701,14 +753,20 @@ export default function AttendancePage() {
           {/* Pay summary */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4 space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pay Summary</p>
-            {worker.payStructure === 'floor' && (
-              <SummaryRow label="Floor salary"    value={fmt(parseFloat(worker.floorSalary ?? '0'))} />
+            {worker.payStructure === 'floor' && hasFuelDays ? (
+              <>
+                <SummaryRow label={`Earned (${days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent).length} days)`} value={fmt(alphEarned)} />
+                {alphFloorApplied
+                  ? <SummaryRow label={`Floor min (earned R${alphEarned.toFixed(0)} < R${ALPHEUS_MIN_MONTHLY.toLocaleString()})`} value={fmt(ALPHEUS_MIN_MONTHLY)} />
+                  : <SummaryRow label="Above floor min ✓" value="" />}
+              </>
+            ) : worker.payStructure === 'floor' ? (
+              <SummaryRow label="Floor salary" value={fmt(parseFloat(worker.floorSalary ?? '0'))} />
+            ) : (
+              <SummaryRow label="Attendance total" value={fmt(attendanceGross)} />
             )}
             {saturdayExtra > 0 && (
               <SummaryRow label="Saturday top-ups" value={fmt(saturdayExtra)} />
-            )}
-            {worker.payStructure !== 'floor' && (
-              <SummaryRow label="Attendance total" value={fmt(attendanceGross)} />
             )}
             <div className="border-t border-gray-100 pt-2">
               <SummaryRow label="Gross pay" value={fmt(grossPay)} bold />
