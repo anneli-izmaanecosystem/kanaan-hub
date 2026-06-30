@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, Plus, Trash2, Pencil, X, Check } from 'lucide-react'
+import { ChevronLeft, Plus, Trash2, Pencil, X, Check, AlertCircle } from 'lucide-react'
 import { cn, fmtDate } from '@/lib/utils'
+import { calculateAlpheusSalary, ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY } from '@/lib/payroll'
 
 type ClientBlock = { clientName: string; billingInfo: string; hoursWorked: string }
 
@@ -31,10 +32,15 @@ const DAY_LABEL: Record<string, string> = {
   onsite: 'On-site', offsite: 'Off-site', partial: 'Partial',
 }
 
-const TLB_RATE = 575
+const tlbRateNum_DEFAULT = 4500 / 8  // R562.50/hr (R4500/day ÷ 8hrs)
 
 function emptyClient(): ClientBlock {
   return { clientName: '', billingInfo: '', hoursWorked: '' }
+}
+
+function currentYearMonth() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
 export default function AlpheusDaysPage() {
@@ -49,6 +55,17 @@ export default function AlpheusDaysPage() {
   const [onsiteHours, setOnsiteHours] = useState('')
   const [notes, setNotes]           = useState('')
   const [clients, setClients]       = useState<ClientBlock[]>([emptyClient()])
+
+  // TLB billing rate — editable, defaults to R4500/day ÷ 8hrs
+  const [tlbRate, setTlbRate] = useState(String(tlbRateNum_DEFAULT))
+  const tlbRateNum = parseFloat(tlbRate) || tlbRateNum_DEFAULT
+
+  // Salary month filter
+  const [salaryMonth, setSalaryMonth]   = useState(currentYearMonth())
+
+  // Delete state
+  const [deletingId, setDeletingId]     = useState<number | null>(null)
+  const [deleteError, setDeleteError]   = useState('')
 
   // Edit state
   const [editId, setEditId]               = useState<number | null>(null)
@@ -76,7 +93,7 @@ export default function AlpheusDaysPage() {
 
   const showClients = dayType === 'offsite' || dayType === 'partial'
   const totalHours  = clients.reduce((s, c) => s + (parseFloat(c.hoursWorked) || 0), 0)
-  const labourExcl  = totalHours * TLB_RATE
+  const labourExcl  = totalHours * tlbRateNum
 
   async function save() {
     if (!dayDate) { setError('Date is required'); return }
@@ -109,6 +126,17 @@ export default function AlpheusDaysPage() {
       setNotes('')
       setClients([emptyClient()])
     } finally { setSaving(false) }
+  }
+
+  // ── Delete ──────────────────────────────────────────────────────────────────
+  async function confirmDelete(id: number) {
+    setDeleteError('')
+    try {
+      const res = await fetch(`/api/alpheus-days/${id}`, { method: 'DELETE' })
+      if (!res.ok) { const e = await res.json(); setDeleteError(e.error); return }
+      setDays(prev => prev.filter(d => d.id !== id))
+    } catch { setDeleteError('Failed to delete') }
+    setDeletingId(null)
   }
 
   // ── Edit helpers ─────────────────────────────────────────────────────────────
@@ -169,6 +197,14 @@ export default function AlpheusDaysPage() {
   const totalOnsite  = days.filter(d => d.dayType === 'onsite').length
   const totalHrsAll  = days.reduce((s, d) => s + d.clients.reduce((cs, c) => cs + parseFloat(c.hoursWorked), 0), 0)
 
+  // ── Salary calc for selected month ───────────────────────────────────────────
+  const monthDays = days.filter(d => d.dayDate.startsWith(salaryMonth))
+  const salary    = calculateAlpheusSalary(monthDays.map(d => ({
+    dayType:      d.dayType,
+    onsiteHours:  d.onsiteHours,
+    offsiteHours: d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0),
+  })))
+
   return (
     <div className="p-6">
       <div className="flex items-center gap-3 mb-5">
@@ -180,7 +216,7 @@ export default function AlpheusDaysPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-3 gap-4 mb-4">
         {[
           { label: 'Off-site Days', value: totalOffsite, color: 'text-blue-700' },
           { label: 'On-site Days', value: totalOnsite, color: 'text-green-700' },
@@ -191,6 +227,64 @@ export default function AlpheusDaysPage() {
             <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
           </div>
         ))}
+      </div>
+
+      {/* ── Monthly salary summary ── */}
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm mb-6">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Monthly Salary — Alpheus</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              On-site R{ALPHEUS_ONSITE_RATE}/day · Off-site R{ALPHEUS_OFFSITE_RATE}/day · Partial apportioned · Min R{ALPHEUS_MIN_MONTHLY.toLocaleString('en-ZA')}/month
+            </p>
+          </div>
+          <input
+            type="month"
+            value={salaryMonth}
+            onChange={e => setSalaryMonth(e.target.value)}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+          />
+        </div>
+
+        {monthDays.length === 0 ? (
+          <p className="px-5 py-4 text-sm text-gray-400">No days logged for this month.</p>
+        ) : (
+          <div className="px-5 py-4">
+            <div className="grid grid-cols-4 gap-3 mb-4">
+              {[
+                { label: `On-site (${salary.onsiteDays}d × R${ALPHEUS_ONSITE_RATE})`, value: salary.onsitePay, color: 'text-green-700' },
+                { label: `Off-site (${salary.offsiteDays}d × R${ALPHEUS_OFFSITE_RATE})`, value: salary.offsitePay, color: 'text-blue-700' },
+                { label: `Partial (${salary.partialDays}d apportioned)`, value: salary.partialPay, color: 'text-amber-700' },
+                { label: 'Subtotal', value: salary.subtotal, color: 'text-gray-900' },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                  <p className="text-[11px] text-gray-500 mb-1">{s.label}</p>
+                  <p className={cn('text-lg font-bold tabular-nums', s.color)}>R {s.value.toFixed(2)}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className={cn(
+              'flex items-center justify-between rounded-xl px-5 py-4',
+              salary.floorApplied ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'
+            )}>
+              <div>
+                <p className={cn('text-xs font-semibold uppercase tracking-wide', salary.floorApplied ? 'text-amber-700' : 'text-green-700')}>
+                  {salary.floorApplied ? `Floor applied — subtotal R${salary.subtotal.toFixed(2)} < minimum` : 'Above minimum — no floor needed'}
+                </p>
+                <p className="text-sm text-gray-600 mt-0.5">{monthDays.length} day{monthDays.length !== 1 ? 's' : ''} logged</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500 mb-0.5">Pay this month</p>
+                <p className={cn('text-3xl font-bold tabular-nums', salary.floorApplied ? 'text-amber-700' : 'text-green-700')}>
+                  R {salary.finalPay.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            {deleteError && <p className="mt-2 text-xs text-red-600">{deleteError}</p>}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-[360px_1fr] gap-6">
@@ -264,7 +358,7 @@ export default function AlpheusDaysPage() {
                       <div>
                         <label className="text-[10px] text-gray-500">Labour excl VAT</label>
                         <div className="mt-0.5 rounded-md border border-gray-100 bg-white px-2.5 py-1.5 text-sm font-semibold text-green-700">
-                          R {((parseFloat(c.hoursWorked) || 0) * TLB_RATE).toFixed(2)}
+                          R {((parseFloat(c.hoursWorked) || 0) * tlbRateNum).toFixed(2)}
                         </div>
                       </div>
                     </div>
@@ -277,7 +371,7 @@ export default function AlpheusDaysPage() {
 
                 {totalHours > 0 && (
                   <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 flex justify-between text-xs">
-                    <span className="text-gray-500">Total — {totalHours.toFixed(1)} hrs @ R{TLB_RATE}/hr</span>
+                    <span className="text-gray-500">Total — {totalHours.toFixed(1)} hrs @ R{tlbRateNum}/hr</span>
                     <span className="font-bold text-gray-900">R {labourExcl.toFixed(2)}</span>
                   </div>
                 )}
@@ -288,6 +382,27 @@ export default function AlpheusDaysPage() {
               <label className="text-[10px] uppercase tracking-wide font-semibold text-gray-500">Notes</label>
               <input value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Any notes…" className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+            </div>
+
+            {/* TLB billing rate */}
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-500">TLB Billing Rate</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">R/hr charged to clients · daily = R{(tlbRateNum * 8).toFixed(0)}</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500">R</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={tlbRate}
+                    onChange={e => setTlbRate(e.target.value)}
+                    className="w-24 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm font-semibold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                  <span className="text-xs text-gray-500">/hr</span>
+                </div>
+              </div>
             </div>
 
             {error && <p className="text-xs text-red-600">{error}</p>}
@@ -324,13 +439,14 @@ export default function AlpheusDaysPage() {
                   <th className="px-4 py-3 text-right font-medium">Diesel (L)</th>
                   <th className="px-4 py-3 text-center font-medium">Matched</th>
                   <th className="px-4 py-3 text-center font-medium w-10"></th>
+                  <th className="px-4 py-3 w-8"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {days.map(d => {
                   const offHrs  = d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0)
                   const onHrs   = parseFloat(d.onsiteHours ?? '0')
-                  const labour  = offHrs * TLB_RATE
+                  const labour  = offHrs * tlbRateNum
                   const diesel  = d.linkedAllocations.reduce((s, a) => s + parseFloat(a.litres), 0)
                   const matched = d.linkedAllocations.length > 0
 
@@ -338,7 +454,7 @@ export default function AlpheusDaysPage() {
                     // ── Inline edit row ──────────────────────────────────────
                     return (
                       <tr key={d.id} className="bg-amber-50">
-                        <td colSpan={9} className="px-4 py-4">
+                        <td colSpan={10} className="px-4 py-4">
                           <div className="space-y-3">
                             <div className="flex items-center gap-3 flex-wrap">
                               <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
@@ -449,6 +565,24 @@ export default function AlpheusDaysPage() {
                         <button onClick={() => startEdit(d)} className="text-gray-400 hover:text-gray-700">
                           <Pencil size={14} />
                         </button>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {deletingId === d.id ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button onClick={() => confirmDelete(d.id)}
+                              className="rounded bg-red-600 px-2 py-0.5 text-[11px] text-white font-medium hover:bg-red-700">
+                              Confirm
+                            </button>
+                            <button onClick={() => setDeletingId(null)}
+                              className="rounded border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setDeletingId(d.id)} className="text-gray-300 hover:text-red-500">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )

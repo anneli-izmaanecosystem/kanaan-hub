@@ -1,3 +1,61 @@
+// ── Alpheus day-rate constants ────────────────────────────────────────────────
+export const ALPHEUS_ONSITE_RATE  = 300   // R/day on-site at Kanaan
+export const ALPHEUS_OFFSITE_RATE = 500   // R/day off-site with client
+export const ALPHEUS_MIN_MONTHLY  = 8000  // guaranteed floor for all weekdays in month
+
+export interface AlpheusDayInput {
+  dayType:      'onsite' | 'offsite' | 'partial'
+  onsiteHours:  string | null  // for partial days — hours at Kanaan
+  offsiteHours: number         // sum of client hours (partial) or 0
+}
+
+export interface AlpheusSalaryResult {
+  onsiteDays:  number
+  offsiteDays: number
+  partialDays: number
+  onsitePay:   number
+  offsitePay:  number
+  partialPay:  number
+  subtotal:    number
+  guaranteed:  number
+  finalPay:    number
+  floorApplied: boolean
+}
+
+export function calculateAlpheusSalary(days: AlpheusDayInput[]): AlpheusSalaryResult {
+  let onsitePay  = 0
+  let offsitePay = 0
+  let partialPay = 0
+  let onsiteDays  = 0
+  let offsiteDays = 0
+  let partialDays = 0
+
+  for (const d of days) {
+    if (d.dayType === 'onsite') {
+      onsiteDays++
+      onsitePay += ALPHEUS_ONSITE_RATE
+    } else if (d.dayType === 'offsite') {
+      offsiteDays++
+      offsitePay += ALPHEUS_OFFSITE_RATE
+    } else {
+      // partial — apportion between onsite and offsite rates by hours
+      partialDays++
+      const onHrs  = parseFloat(d.onsiteHours ?? '0') || 0
+      const offHrs = d.offsiteHours
+      const total  = onHrs + offHrs
+      if (total > 0) {
+        partialPay += round2((onHrs / total) * ALPHEUS_ONSITE_RATE + (offHrs / total) * ALPHEUS_OFFSITE_RATE)
+      }
+    }
+  }
+
+  const subtotal    = round2(onsitePay + offsitePay + partialPay)
+  const finalPay    = Math.max(subtotal, ALPHEUS_MIN_MONTHLY)
+  const floorApplied = finalPay > subtotal
+
+  return { onsiteDays, offsiteDays, partialDays, onsitePay, offsitePay, partialPay: round2(partialPay), subtotal, guaranteed: ALPHEUS_MIN_MONTHLY, finalPay, floorApplied }
+}
+
 // SA BCEA compliance constants
 const UIF_RATE = 0.01
 const UIF_CAP  = 177.12  // 1% of R17,712 ceiling wage

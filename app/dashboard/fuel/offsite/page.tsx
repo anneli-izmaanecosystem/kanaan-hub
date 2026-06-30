@@ -61,7 +61,7 @@ type ClientSummary = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const TLB_RATE = 575
+const TLB_RATE_DEFAULT = 4500 / 8  // R562.50/hr
 
 function fmtZAR(n: number) {
   return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -94,17 +94,19 @@ const STATUS_COLORS: Record<Invoice['paymentStatus'], string> = {
 function InvoiceModal({
   client,
   activeRate,
+  defaultTlbRate,
   onClose,
   onSaved,
 }: {
   client: ClientSummary
   activeRate: string
+  defaultTlbRate: string
   onClose: () => void
   onSaved: () => void
 }) {
   const [periodStart, setPeriodStart] = useState('')
   const [periodEnd,   setPeriodEnd]   = useState('')
-  const [tlbRate,     setTlbRate]     = useState(String(TLB_RATE))
+  const [tlbRate,     setTlbRate]     = useState(defaultTlbRate)
   const [dieselRate,  setDieselRate]  = useState(activeRate)
   const [vatRate,     setVatRate]     = useState('15')
   const [notes,       setNotes]       = useState('')
@@ -308,7 +310,9 @@ export default function OffsiteSummaryPage() {
   const [fills,    setFills]    = useState<Fill[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [activeRate, setActiveRate] = useState('28.36')
+  const [tlbRate,    setTlbRate]    = useState(String(TLB_RATE_DEFAULT))
   const [loading,  setLoading]  = useState(true)
+  const tlbRateNum = parseFloat(tlbRate) || TLB_RATE_DEFAULT
 
   const [createFor,  setCreateFor]  = useState<ClientSummary | null>(null)
   const [payFor,     setPayFor]     = useState<Invoice | null>(null)
@@ -366,7 +370,7 @@ export default function OffsiteSummaryPage() {
       c.totalHours      += hrs
       c.totalLitres     += litres
       c.totalDieselCost += cost
-      c.totalLabour     += hrs * TLB_RATE
+      c.totalLabour     += hrs * tlbRateNum
       c.entries.push({ date: fill.fillDate, hours: hrs, litres, cost, rate })
     }
   }
@@ -381,9 +385,26 @@ export default function OffsiteSummaryPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Off-site Summary</h1>
-        <p className="text-sm text-gray-500 mt-1">Client diesel & labour breakdown · TLB rate R{TLB_RATE}/hr · Diesel @ R{parseFloat(activeRate).toFixed(2)}/L</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Off-site Summary</h1>
+          <p className="text-sm text-gray-500 mt-1">Client diesel & labour breakdown · Diesel @ R{parseFloat(activeRate).toFixed(2)}/L</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 shadow-sm shrink-0">
+          <div className="text-right mr-1">
+            <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-500">TLB Rate</p>
+            <p className="text-[11px] text-gray-400">R/day = R{(tlbRateNum * 8).toFixed(0)}</p>
+          </div>
+          <span className="text-sm text-gray-400">R</span>
+          <input
+            type="number"
+            step="0.01"
+            value={tlbRate}
+            onChange={e => setTlbRate(e.target.value)}
+            className="w-24 rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm font-semibold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+          <span className="text-sm text-gray-400">/hr</span>
+        </div>
       </div>
 
       {/* Stats */}
@@ -465,7 +486,7 @@ export default function OffsiteSummaryPage() {
                             <tr key={i} className="text-gray-700">
                               <td className="py-2">{fmtShort(e.date)}</td>
                               <td className="text-right py-2">{e.hours.toFixed(1)}</td>
-                              <td className="text-right py-2">{fmtZAR(e.hours * TLB_RATE)}</td>
+                              <td className="text-right py-2">{fmtZAR(e.hours * tlbRateNum)}</td>
                               <td className="text-right py-2">{e.litres.toFixed(1)}</td>
                               <td className="text-right py-2">{fmtZAR(e.cost)}</td>
                             </tr>
@@ -575,6 +596,7 @@ export default function OffsiteSummaryPage() {
         <InvoiceModal
           client={createFor}
           activeRate={activeRate}
+          defaultTlbRate={tlbRate}
           onClose={() => setCreateFor(null)}
           onSaved={load}
         />
