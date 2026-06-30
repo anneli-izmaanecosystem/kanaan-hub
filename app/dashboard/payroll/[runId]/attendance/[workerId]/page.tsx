@@ -257,7 +257,9 @@ export default function AttendancePage() {
     const res = await fetch(`/api/payroll/${runId}/attendance/${workerId}/import-alpheus`, { method: 'POST' })
     const data = await res.json()
     if (res.ok) {
-      setImportFuelMsg(`Imported ${data.imported} day${data.imported !== 1 ? 's' : ''} from Fuel Log`)
+      // Sync payroll entry immediately so the run-list total stays aligned
+      await fetch(`/api/payroll/${runId}/attendance/${workerId}/sync`, { method: 'POST' }).catch(() => {})
+      setImportFuelMsg(`Imported ${data.imported} day${data.imported !== 1 ? 's' : ''}${data.removed > 0 ? `, removed ${data.removed}` : ''} from Fuel Log`)
       load()
     } else {
       setImportFuelMsg(data.error ?? 'Import failed')

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, payrollRuns, workers, attendanceDays, alpheusDays, alpheusDayClients, publicHolidays, payrollEntries } from '@/lib/db'
-import { eq, and, between } from 'drizzle-orm'
+import { eq, and, between, sql } from 'drizzle-orm'
 import { ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, round2 } from '@/lib/payroll'
 
 type Params = { params: Promise<{ runId: string; workerId: string }> }
@@ -103,6 +103,29 @@ export async function POST(_req: NextRequest, { params }: Params) {
     })
   }
 
+  // Remove attendance days whose fuel-log entry was deleted since last import
+  const toDateStr = (v: unknown): string =>
+    v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+
+  const importedDates = new Set(fuelDays.map(fd => fd.dayDate))
+  const existingAttendance = await db
+    .select({ id: attendanceDays.id, date: attendanceDays.date, note: attendanceDays.note })
+    .from(attendanceDays)
+    .where(and(
+      eq(attendanceDays.workerId, wid),
+      eq(attendanceDays.runId, rid),
+      between(attendanceDays.date, run.periodStart, run.periodEnd),
+      sql`${attendanceDays.note} like '[Fuel]%'`,
+    ))
+
+  let removed = 0
+  for (const row of existingAttendance) {
+    if (!importedDates.has(toDateStr(row.date))) {
+      await db.delete(attendanceDays).where(eq(attendanceDays.id, row.id))
+      removed++
+    }
+  }
+
   // Update tlbReconSummary on payroll entry
   const [entry] = await db
     .select()
@@ -116,5 +139,5 @@ export async function POST(_req: NextRequest, { params }: Params) {
       .where(eq(payrollEntries.id, entry.id))
   }
 
-  return NextResponse.json({ ok: true, imported })
+  return NextResponse.json({ ok: true, imported, removed })
 }
