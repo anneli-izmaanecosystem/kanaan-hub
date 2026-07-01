@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
 import { Printer } from 'lucide-react'
+import { ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, ALPHEUS_MIN_MONTHLY } from '@/lib/payroll'
 
 type Entity = {
   name: string; tradingName: string | null; registrationNo: string | null
@@ -26,6 +27,7 @@ type Entry = {
   annualLeaveDaysTaken: string; sickLeaveDaysTaken: string
   contractorInvoiceNo: string | null; engagementDescription: string | null
   notes: string | null
+  tlbReconSummary: string | null
 }
 type Run = { periodStart: string; periodEnd: string }
 
@@ -60,6 +62,8 @@ export default function PayslipPage() {
 
   const { run, entity, worker, entry } = data
   const isContractor = worker.workerType === 'contractor'
+  // Fuel-log day-rate worker (Alpheus): tlbReconSummary is set during import
+  const isFuelLog = worker.payStructure === 'floor' && !!entry.tlbReconSummary
 
   const hasDeductions = [entry.salaryAdvance, entry.shopDeductions, entry.uifEmployee, entry.otherDeductions]
     .some(v => parseFloat(v) > 0)
@@ -145,14 +149,18 @@ export default function PayslipPage() {
                 <Row label={
                   worker.payStructure === 'hourly' ? `Basic pay (${entry.ordinaryHours} hrs)`
                   : worker.payStructure === 'daily' ? `Basic pay (${entry.daysWorked} days)`
-                  : 'Floor salary'
+                  : isFuelLog
+                    ? `Day-rate wages (${entry.daysWorked} weekday${parseInt(entry.daysWorked) !== 1 ? 's' : ''})`
+                    : 'Floor salary'
                 } value={entry.basicPay} />
               )}
               {parseFloat(entry.saturdayPay) > 0 && (
                 <Row label={
                   worker.payStructure === 'hourly'
                     ? `Saturday pay (${entry.saturdayHours} hrs)`
-                    : `Saturday on-site (${entry.saturdayDays} day(s))`
+                    : isFuelLog
+                      ? `Saturday (${entry.saturdayDays} day${parseInt(entry.saturdayDays) !== 1 ? 's' : ''})`
+                      : `Saturday on-site (${entry.saturdayDays} day(s))`
                 } value={entry.saturdayPay} />
               )}
               {parseFloat(entry.phPay)          > 0 && <Row label="Public holiday pay (× 2.0)"  value={entry.phPay} />}
@@ -164,6 +172,13 @@ export default function PayslipPage() {
             <span className="text-gray-700">Gross pay</span>
             <span className="text-gray-900">{r(entry.grossPay)}</span>
           </div>
+          {isFuelLog && (
+            <p className="mt-2 text-[11px] text-gray-400">
+              On-site R{ALPHEUS_ONSITE_RATE}/day · Off-site R{ALPHEUS_OFFSITE_RATE}/day · Partial apportioned
+              {' · '}R{ALPHEUS_MIN_MONTHLY.toLocaleString('en-ZA')}/month minimum (weekdays)
+              {parseFloat(entry.saturdayPay) > 0 ? ' · Saturday paid at day rate on top' : ''}
+            </p>
+          )}
         </div>
 
         {/* Deductions */}
