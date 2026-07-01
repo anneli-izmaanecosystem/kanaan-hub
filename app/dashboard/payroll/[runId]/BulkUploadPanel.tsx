@@ -71,12 +71,12 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
 
   // ── upload handler ────────────────────────────────────────────────────────────
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files
+    if (!files || files.length === 0) return
     setProcessing(true); setError(''); setResults(null); setOverrides({})
 
     const fd = new FormData()
-    fd.append('file', file)
+    for (const file of Array.from(files)) fd.append('file', file)
     const res  = await fetch(`/api/payroll/${runId}/bulk-upload`, { method: 'POST', body: fd })
     const data = await res.json()
 
@@ -241,7 +241,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
           </div>
           <button onClick={() => setImported(null)}
             className="flex items-center gap-2 rounded-lg border border-dashed border-indigo-300 px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-100 transition-colors">
-            <Upload size={14} /> Upload another zip
+            <Upload size={14} /> Upload more timesheets
           </button>
         </div>
       )}
@@ -251,10 +251,10 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
           <p className="text-xs text-indigo-700 mb-3">
             Upload a zip of all timesheet photos. Claude reads each sheet, identifies the worker, and imports attendance + shop deductions. Review and edit before confirming.
           </p>
-          <input ref={fileRef} type="file" accept=".zip" className="hidden" onChange={handleFile} />
+          <input ref={fileRef} type="file" accept=".zip,image/*" multiple className="hidden" onChange={handleFile} />
           <button onClick={() => fileRef.current?.click()}
             className="flex items-center gap-2 rounded-lg border border-dashed border-indigo-300 px-4 py-2.5 text-sm text-indigo-600 hover:border-indigo-500 hover:bg-indigo-100 transition-colors">
-            <Upload size={14} /> Choose zip file…
+            <Upload size={14} /> Choose photos or zip…
           </button>
         </>
       )}
@@ -520,7 +520,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                   </button>
                   <button onClick={() => fileRef.current?.click()} disabled={processing}
                     className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
-                    Upload different zip
+                    Upload different files
                   </button>
                 </div>
               </div>

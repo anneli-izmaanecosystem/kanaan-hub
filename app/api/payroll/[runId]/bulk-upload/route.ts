@@ -46,18 +46,33 @@ export async function POST(req: NextRequest, { params }: Params) {
   const allWorkers = await db.select().from(workers).where(eq(workers.entityId, run.entityId))
 
   const formData = await req.formData()
-  const file = formData.get('file') as File | null
-  if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
+  const uploaded = formData.getAll('file') as File[]
+  if (uploaded.length === 0) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
 
-  const bytes = await file.arrayBuffer()
-  const zip = new AdmZip(Buffer.from(bytes))
-  const entries = zip.getEntries().filter(e => {
-    const ext = e.name.toLowerCase().slice(e.name.lastIndexOf('.'))
-    return !e.isDirectory && IMAGE_EXTS.has(ext)
-  })
+  type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/webp'
+  type ImageEntry = { name: string; buffer: Buffer; mediaType: ImageMediaType }
+  const entries: ImageEntry[] = []
+
+  for (const file of uploaded) {
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+    if (ext === '.zip') {
+      // Extract images from zip
+      const zip = new AdmZip(Buffer.from(await file.arrayBuffer()))
+      for (const e of zip.getEntries()) {
+        const eext = e.name.toLowerCase().slice(e.name.lastIndexOf('.'))
+        if (!e.isDirectory && IMAGE_EXTS.has(eext)) {
+          const mt: ImageMediaType = eext === '.png' ? 'image/png' : eext === '.webp' ? 'image/webp' : 'image/jpeg'
+          entries.push({ name: e.name, buffer: e.getData(), mediaType: mt })
+        }
+      }
+    } else if (IMAGE_EXTS.has(ext)) {
+      const mt: ImageMediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+      entries.push({ name: file.name, buffer: Buffer.from(await file.arrayBuffer()), mediaType: mt })
+    }
+  }
 
   if (entries.length === 0)
-    return NextResponse.json({ error: 'No images found in zip' }, { status: 400 })
+    return NextResponse.json({ error: 'No images found — upload image files or a zip containing images' }, { status: 400 })
 
   const prompt = `You are reading a handwritten employee timesheet or deductions sheet.
 The pay period is ${run.periodStart} to ${run.periodEnd}.
@@ -105,10 +120,8 @@ Return ONLY valid JSON, no explanation:
   }[] = []
 
   for (const entry of entries) {
-    const imgBuffer = entry.getData()
-    const base64 = imgBuffer.toString('base64')
-    const ext = entry.name.toLowerCase().slice(entry.name.lastIndexOf('.'))
-    const mediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    const base64 = entry.buffer.toString('base64')
+    const mediaType = entry.mediaType
 
     try {
       const response = await client.messages.create({
