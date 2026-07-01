@@ -77,12 +77,22 @@ export default function AlpheusDaysPage() {
   const [editSaving, setEditSaving]       = useState(false)
   const [editError, setEditError]         = useState('')
 
-  useEffect(() => {
-    fetch('/api/alpheus-days').then(r => r.json()).then(d => {
+  const [refreshing, setRefreshing] = useState(false)
+
+  function loadDays() {
+    return fetch('/api/alpheus-days').then(r => r.json()).then(d => {
       setDays(Array.isArray(d) ? d : [])
       setLoading(false)
     }).catch(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadDays() }, [])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await loadDays()
+    setRefreshing(false)
+  }
 
   // ── New log helpers ──────────────────────────────────────────────────────────
   function updateClient(i: number, key: keyof ClientBlock, val: string) {
@@ -239,31 +249,53 @@ export default function AlpheusDaysPage() {
               On-site R{ALPHEUS_ONSITE_RATE}/day · Off-site R{ALPHEUS_OFFSITE_RATE}/day · Partial apportioned · Min R{ALPHEUS_MIN_MONTHLY.toLocaleString('en-ZA')}/month
             </p>
           </div>
-          <input
-            type="month"
-            value={salaryMonth}
-            onChange={e => setSalaryMonth(e.target.value)}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
-          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh amounts"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+              {refreshing ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+            <input
+              type="month"
+              value={salaryMonth}
+              onChange={e => setSalaryMonth(e.target.value)}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+            />
+          </div>
         </div>
 
         {monthDays.length === 0 ? (
           <p className="px-5 py-4 text-sm text-gray-400">No days logged for this month.</p>
         ) : (
           <div className="px-5 py-4">
-            <div className="grid grid-cols-4 gap-3 mb-4">
+            {/* Type breakdown — all days including Saturday */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
               {[
-                { label: `On-site (${salary.onsiteDays}d × R${ALPHEUS_ONSITE_RATE})`, value: salary.onsitePay, color: 'text-green-700' },
-                { label: `Off-site (${salary.offsiteDays}d × R${ALPHEUS_OFFSITE_RATE})`, value: salary.offsitePay, color: 'text-blue-700' },
-                { label: `Partial (${salary.partialDays}d apportioned)`, value: salary.partialPay, color: 'text-amber-700' },
-                { label: `Weekday subtotal (${salary.weekdayDaysWorked} days)`, value: salary.weekdayEarned, color: 'text-gray-900' },
-                ...(salary.saturdayDays > 0 ? [{ label: `Saturday (${salary.saturdayDays}d — on top)`, value: salary.saturdayEarned, color: 'text-blue-700' }] : []),
-              ].map(s => (
+                { label: `On-site (${salary.onsiteDays}d × R${ALPHEUS_ONSITE_RATE})`,    value: salary.onsitePay,  color: 'text-green-700', show: salary.onsiteDays  > 0 },
+                { label: `Off-site (${salary.offsiteDays}d × R${ALPHEUS_OFFSITE_RATE})`, value: salary.offsitePay, color: 'text-blue-700',  show: salary.offsiteDays > 0 },
+                { label: `Partial (${salary.partialDays}d apportioned)`,                  value: salary.partialPay, color: 'text-amber-700', show: salary.partialDays > 0 },
+              ].filter(s => s.show).map(s => (
                 <div key={s.label} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                   <p className="text-[11px] text-gray-500 mb-1">{s.label}</p>
                   <p className={cn('text-lg font-bold tabular-nums', s.color)}>R {s.value.toFixed(2)}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Weekday / Saturday split */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <p className="text-[11px] text-gray-500 mb-1">Weekday portion ({salary.weekdayDaysWorked}d)</p>
+                <p className="text-lg font-bold tabular-nums text-gray-900">R {salary.weekdayEarned.toFixed(2)}</p>
+              </div>
+              {salary.saturdayDays > 0 && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+                  <p className="text-[11px] text-blue-600 mb-1">Saturday ({salary.saturdayDays}d — on top of floor)</p>
+                  <p className="text-lg font-bold tabular-nums text-blue-700">+ R {salary.saturdayEarned.toFixed(2)}</p>
+                </div>
+              )}
             </div>
 
             <div className={cn(

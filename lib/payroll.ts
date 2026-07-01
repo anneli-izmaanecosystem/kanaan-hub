@@ -31,45 +31,37 @@ export interface AlpheusSalaryResult {
 }
 
 export function calculateAlpheusSalary(days: AlpheusDayInput[]): AlpheusSalaryResult {
-  let onsitePay  = 0
-  let offsitePay = 0
-  let partialPay = 0
-  let saturdayEarned = 0
-  let onsiteDays  = 0
-  let offsiteDays = 0
-  let partialDays = 0
-  let saturdayDays = 0
-  let weekdayDaysWorked = 0
+  // Type totals (ALL days, including Saturday) — used for display counts
+  let onsiteDays  = 0, offsiteDays  = 0, partialDays  = 0
+  let onsitePay   = 0, offsitePay   = 0, partialPay   = 0
+  // Weekday / Saturday split — used for floor logic
+  let saturdayDays = 0, weekdayDaysWorked = 0
+  let weekdayEarned = 0, saturdayEarned = 0
 
   for (const d of days) {
     let dayEarned = 0
     if (d.dayType === 'onsite') {
       dayEarned = ALPHEUS_ONSITE_RATE
+      onsiteDays++; onsitePay += dayEarned
     } else if (d.dayType === 'offsite') {
       dayEarned = ALPHEUS_OFFSITE_RATE
+      offsiteDays++; offsitePay += dayEarned
     } else {
       // partial — apportion by hours
       const onHrs  = parseFloat(d.onsiteHours ?? '0') || 0
       const offHrs = d.offsiteHours
       const total  = onHrs + offHrs
-      if (total > 0) {
-        dayEarned = round2((onHrs / total) * ALPHEUS_ONSITE_RATE + (offHrs / total) * ALPHEUS_OFFSITE_RATE)
-      }
+      if (total > 0) dayEarned = round2((onHrs / total) * ALPHEUS_ONSITE_RATE + (offHrs / total) * ALPHEUS_OFFSITE_RATE)
+      partialDays++; partialPay += dayEarned
     }
 
-    if (d.isSaturday) {
-      saturdayDays++
-      saturdayEarned += dayEarned
-    } else {
-      weekdayDaysWorked++
-      if (d.dayType === 'onsite')       { onsiteDays++;  onsitePay  += dayEarned }
-      else if (d.dayType === 'offsite') { offsiteDays++; offsitePay += dayEarned }
-      else                              { partialDays++; partialPay += dayEarned }
-    }
+    // Split weekday vs Saturday for floor calculation
+    if (d.isSaturday) { saturdayDays++;      saturdayEarned += dayEarned }
+    else              { weekdayDaysWorked++; weekdayEarned  += dayEarned }
   }
 
   saturdayEarned = round2(saturdayEarned)
-  const weekdayEarned = round2(onsitePay + offsitePay + partialPay)
+  weekdayEarned  = round2(weekdayEarned)
 
   // Floor applies to weekday portion only. Saturday days count toward the
   // effective-days threshold so a long weekend still qualifies.
@@ -82,7 +74,9 @@ export function calculateAlpheusSalary(days: AlpheusDayInput[]): AlpheusSalaryRe
 
   return {
     onsiteDays, offsiteDays, partialDays, saturdayDays, weekdayDaysWorked,
-    onsitePay, offsitePay, partialPay: round2(partialPay),
+    onsitePay:  round2(onsitePay),
+    offsitePay: round2(offsitePay),
+    partialPay: round2(partialPay),
     saturdayEarned, weekdayEarned, subtotal,
     guaranteed: ALPHEUS_MIN_MONTHLY,
     finalPay, floorApplied,
