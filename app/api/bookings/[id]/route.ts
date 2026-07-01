@@ -20,6 +20,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   try {
     const body = await req.json()
+
+    if (body.checkIn && body.checkOut && body.checkOut <= body.checkIn)
+      return NextResponse.json({ error: 'Check-out must be after check-in' }, { status: 400 })
+
     const [updated] = await db
       .update(bookings)
       .set({ ...body, updatedAt: new Date() })
