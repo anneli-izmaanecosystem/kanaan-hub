@@ -140,6 +140,11 @@ export default function AttendancePage() {
       )
       setEntry(ent && ent.markedReady !== undefined ? ent : null)
       setLoading(false)
+      // Keep DB in sync with what this page displays — run after every load so the
+      // run-list gross/net figures always match the attendance page calculation.
+      if (att.run?.status !== 'finalised') {
+        fetch(`/api/payroll/${runId}/attendance/${workerId}/sync`, { method: 'POST' }).catch(() => {})
+      }
     }).catch(() => setLoading(false))
   }, [runId, workerId])
 
