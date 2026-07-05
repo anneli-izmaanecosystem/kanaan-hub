@@ -1,5 +1,5 @@
 {
   "crons": [
-    { "path": "/api/ical-sync", "schedule": "0 * * * *" }
+    { "path": "/api/ical-sync", "schedule": "0 3 * * *" }
   ]
 }
