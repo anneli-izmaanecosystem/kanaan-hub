@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, bookings, rooms } from '@/lib/db'
+import { db, bookings, rooms, bookingRooms } from '@/lib/db'
 import { eq, like, desc, isNotNull } from 'drizzle-orm'
 import { renderToBuffer, Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import React from 'react'
@@ -98,6 +98,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { booking, room } = row
 
+  const roomLinks = await db
+    .select({ room: rooms })
+    .from(bookingRooms)
+    .innerJoin(rooms, eq(bookingRooms.roomId, rooms.id))
+    .where(eq(bookingRooms.bookingId, booking.id))
+  const roomNames = roomLinks.length ? roomLinks.map(l => l.room.name).join(', ') : room.name
+
   // Assign a sequential CI-YYYY-NNNN number if one hasn't been issued yet in our format
   const hasNewFormat = /^CI-\d{4}-\d{4}$/.test(booking.invoiceNumber ?? '')
   const invNo = hasNewFormat ? booking.invoiceNumber! : await assignInvoiceNumber(booking.id)
@@ -157,7 +164,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       React.createElement(View, { style: s.tableRow },
         React.createElement(Text, { style: { ...s.tableCell, width: 70 } }, fmtDate(booking.checkIn)),
         React.createElement(Text, { style: { ...s.tableCell, width: 90 } }, roomLabel(room.type)),
-        React.createElement(Text, { style: { ...s.tableCell, flex: 1 } }, room.name),
+        React.createElement(Text, { style: { ...s.tableCell, flex: 1 } }, roomNames),
         React.createElement(Text, { style: { ...s.tableCell, width: 35, textAlign: 'right' } }, String(nights)),
         React.createElement(Text, { style: { ...s.tableCell, width: 60, textAlign: 'right' } }, parseFloat(rate).toFixed(2)),
         React.createElement(Text, { style: { ...s.tableCell, width: 70, textAlign: 'right' } }, total.toFixed(2)),

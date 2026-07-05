@@ -10,6 +10,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx lib/db/seed.ts",
     "db:seed:employees": "tsx lib/db/seed-employees.ts",
+    "db:seed:pricelist": "tsx lib/db/seed-room-pricelist.ts",
     "db:import:bookings": "tsx lib/db/import-bookings.ts"
   },
   "dependencies": {
