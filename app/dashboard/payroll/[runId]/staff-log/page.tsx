@@ -55,6 +55,12 @@ function isSaturday(dateStr: string) {
   return new Date(`${dateStr}T00:00:00Z`).getUTCDay() === 6
 }
 
+// Saturdays default to absent (staff aren't expected to work them) UNLESS the log entry
+// itself reports hours worked — that's direct evidence they were present that day.
+function defaultAbsent(dateStr: string, logType: string) {
+  return isSaturday(dateStr) && logType !== 'hours'
+}
+
 export default function StaffLogReviewPage() {
   const { runId } = useParams<{ runId: string }>()
 
@@ -84,7 +90,7 @@ export default function StaffLogReviewPage() {
             action: defaultAction(e.logType),
             amount: e.amount ?? '',
             date: e.logDate,
-            absent: isSaturday(e.logDate),
+            absent: defaultAbsent(e.logDate, e.logType),
             absenceReason: 'unpaid',
           }
         }
@@ -168,7 +174,7 @@ export default function StaffLogReviewPage() {
         <div className="space-y-3">
           {entries.map(entry => {
             const isDone = done.has(entry.id)
-            const row    = rowState[entry.id] ?? { workerId: '', action: 'skip', amount: '', date: entry.logDate, absent: isSaturday(entry.logDate), absenceReason: 'unpaid' }
+            const row    = rowState[entry.id] ?? { workerId: '', action: 'skip', amount: '', date: entry.logDate, absent: defaultAbsent(entry.logDate, entry.logType), absenceReason: 'unpaid' }
 
             return (
               <div key={entry.id}
@@ -184,7 +190,7 @@ export default function StaffLogReviewPage() {
                         <input
                           type="date"
                           value={row.date}
-                          onChange={e => setRow(entry.id, { date: e.target.value, absent: isSaturday(e.target.value) })}
+                          onChange={e => setRow(entry.id, { date: e.target.value, absent: defaultAbsent(e.target.value, entry.logType) })}
                           className={`${inp} py-0.5 text-xs`}
                         />
                       ) : (

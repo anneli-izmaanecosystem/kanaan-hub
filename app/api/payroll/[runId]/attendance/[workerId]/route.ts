@@ -36,6 +36,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const holidayDates = new Set(holidays.map(h => h.date))
   const holidayNames = Object.fromEntries(holidays.map(h => [h.date, h.name]))
 
+  // Hourly workers whose attendance comes from an uploaded photo timesheet: the timesheet
+  // is the source of truth for who worked which Saturday. A Saturday with no timesheet row
+  // wasn't worked, so it should read as absent rather than a blank/unset day.
+  const timesheetMode = worker.payStructure === 'hourly' && saved.some(s => s.source === 'photo_timesheet')
+
   // Build full day list for the period
   const days: any[] = []
   const start = new Date(run.periodStart)
@@ -51,6 +56,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       : 'weekday'
 
     const existing = saved.find(s => s.date === dateStr)
+    const defaultAbsent = timesheetMode && dayType === 'saturday' && !existing
 
     days.push({
       date:              dateStr,
@@ -58,7 +64,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       holidayName:       holidayNames[dateStr] ?? null,
       id:                existing?.id ?? null,
       hoursWorked:       existing?.hoursWorked ?? null,
-      absent:            existing?.absent ?? false,
+      absent:            existing?.absent ?? defaultAbsent,
       absenceReason:     existing?.absenceReason ?? null,
       calculatedAmount:  existing?.calculatedAmount ?? null,
       phDoubleConfirmed: existing?.phDoubleConfirmed ?? null,
