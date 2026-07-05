@@ -48,6 +48,8 @@ export default function PricelistPage() {
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState<number | null>(null)
   const [savedId, setSavedId]   = useState<number | null>(null)
+  const [errorId, setErrorId]   = useState<number | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
   const [addingRoom, setAddingRoom] = useState(false)
   const [creatingRoom, setCreatingRoom] = useState(false)
   const [roomForm, setRoomForm] = useState({
@@ -74,7 +76,14 @@ export default function PricelistPage() {
   }
 
   async function saveRoom(id: number, patch: Partial<Room>) {
+    let previous: Room | undefined
+    setRooms(prev => prev.map(r => {
+      if (r.id !== id) return r
+      previous = r
+      return { ...r, ...patch }
+    }))
     setSavingId(id)
+    setErrorId(cur => cur === id ? null : cur)
     try {
       const res = await fetch(`/api/rooms/${id}`, {
         method: 'PATCH',
@@ -84,7 +93,18 @@ export default function PricelistPage() {
       if (res.ok) {
         setSavedId(id)
         setTimeout(() => setSavedId(cur => cur === id ? null : cur), 1200)
+      } else {
+        const d = await res.json().catch(() => ({}))
+        if (previous) { const prevRoom = previous; setRooms(prev => prev.map(r => r.id === id ? prevRoom : r)) }
+        setErrorId(id)
+        setErrorMsg(d.error ?? 'Save failed — reverted')
+        setTimeout(() => setErrorId(cur => cur === id ? null : cur), 5000)
       }
+    } catch {
+      if (previous) { const prevRoom = previous; setRooms(prev => prev.map(r => r.id === id ? prevRoom : r)) }
+      setErrorId(id)
+      setErrorMsg('Network error — reverted')
+      setTimeout(() => setErrorId(cur => cur === id ? null : cur), 5000)
     } finally {
       setSavingId(null)
     }
@@ -213,7 +233,7 @@ export default function PricelistPage() {
                         key={`name-${room.id}`}
                         className={cn(inp, 'font-medium text-gray-900 whitespace-nowrap')}
                         defaultValue={room.name}
-                        onBlur={e => { setRoomField(room.id, 'name', e.target.value); saveRoom(room.id, { name: e.target.value }) }}
+                        onBlur={e => e.target.value !== room.name && saveRoom(room.id, { name: e.target.value })}
                       />
                     </td>
                     <td className="px-3 py-1.5">
@@ -223,14 +243,14 @@ export default function PricelistPage() {
                         className={inp}
                         defaultValue={room.category ?? ''}
                         placeholder="Uncategorised"
-                        onBlur={e => { setRoomField(room.id, 'category', e.target.value || null); saveRoom(room.id, { category: e.target.value || null }) }}
+                        onBlur={e => (e.target.value || null) !== room.category && saveRoom(room.id, { category: e.target.value || null })}
                       />
                     </td>
                     <td className="px-3 py-1.5">
                       <select
                         className={inp}
                         value={room.type}
-                        onChange={e => { setRoomField(room.id, 'type', e.target.value); saveRoom(room.id, { type: e.target.value as any }) }}
+                        onChange={e => saveRoom(room.id, { type: e.target.value as any })}
                       >
                         {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
@@ -258,7 +278,7 @@ export default function PricelistPage() {
                       <select
                         className={inp}
                         value={room.pricingMode}
-                        onChange={e => { setRoomField(room.id, 'pricingMode', e.target.value); saveRoom(room.id, { pricingMode: e.target.value as any }) }}
+                        onChange={e => saveRoom(room.id, { pricingMode: e.target.value as any })}
                       >
                         <option value="flat">Flat / room</option>
                         <option value="per_pax">Per person</option>
@@ -288,12 +308,13 @@ export default function PricelistPage() {
                       <input
                         type="checkbox"
                         checked={room.active}
-                        onChange={e => { setRoomField(room.id, 'active', e.target.checked); saveRoom(room.id, { active: e.target.checked }) }}
+                        onChange={e => saveRoom(room.id, { active: e.target.checked })}
                       />
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       {savingId === room.id && <Loader2 size={13} className="animate-spin text-gray-300" />}
                       {savedId === room.id && <Check size={13} className="text-green-500" />}
+                      {errorId === room.id && <span title={errorMsg} className="text-red-500 text-xs font-bold cursor-help">!</span>}
                     </td>
                   </tr>
                 ))}
