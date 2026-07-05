@@ -206,127 +206,154 @@ export default function PricelistPage() {
         ))}
       </datalist>
 
-      {groupByCategory(rooms).map(([category, roomsInCat]) => (
+      {groupByCategory(rooms.filter(r => r.active)).map(([category, roomsInCat]) => (
         <div key={category} className="mb-8">
           <h2 className="text-sm font-semibold text-gray-700 mb-2">{category}</h2>
-          <div className="rounded-xl border border-gray-200 bg-white overflow-x-auto shadow-sm">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium">Room</th>
-                  <th className="px-3 py-2 text-left font-medium">Category</th>
-                  <th className="px-3 py-2 text-left font-medium">Type</th>
-                  <th className="px-3 py-2 text-left font-medium">Beds</th>
-                  <th className="px-3 py-2 text-center font-medium">Capacity</th>
-                  <th className="px-3 py-2 text-left font-medium">Pricing</th>
-                  <th className="px-3 py-2 text-right font-medium">Full Rate (R)</th>
-                  <th className="px-3 py-2 text-right font-medium">Solo Rate (R)</th>
-                  <th className="px-3 py-2 text-center font-medium">Active</th>
-                  <th className="px-3 py-2 w-6" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {roomsInCat.map(room => (
-                  <tr key={room.id} className={cn(!room.active && 'opacity-50')}>
-                    <td className="px-4 py-1.5">
-                      <input
-                        key={`name-${room.id}`}
-                        className={cn(inp, 'font-medium text-gray-900 whitespace-nowrap')}
-                        defaultValue={room.name}
-                        onBlur={e => e.target.value !== room.name && saveRoom(room.id, { name: e.target.value })}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        key={`category-${room.id}`}
-                        list="category-options"
-                        className={inp}
-                        defaultValue={room.category ?? ''}
-                        placeholder="Uncategorised"
-                        onBlur={e => (e.target.value || null) !== room.category && saveRoom(room.id, { category: e.target.value || null })}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <select
-                        className={inp}
-                        value={room.type}
-                        onChange={e => saveRoom(room.id, { type: e.target.value as any })}
-                      >
-                        {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        className={inp}
-                        value={room.bedConfig ?? ''}
-                        placeholder="e.g. 1 double, 2 twin"
-                        onChange={e => setRoomField(room.id, 'bedConfig', e.target.value)}
-                        onBlur={e => saveRoom(room.id, { bedConfig: e.target.value })}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="number" min={1}
-                        className={cn(inp, 'text-center')}
-                        value={room.capacity}
-                        onChange={e => setRoomField(room.id, 'capacity', parseInt(e.target.value) || 1)}
-                        onBlur={e => saveRoom(room.id, { capacity: parseInt(e.target.value) || 1 })}
-                      />
-                      <div className="text-[10px] text-gray-400 text-center mt-0.5">min {minOccupancy(room.capacity)}pax*</div>
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <select
-                        className={inp}
-                        value={room.pricingMode}
-                        onChange={e => saveRoom(room.id, { pricingMode: e.target.value as any })}
-                      >
-                        <option value="flat">Flat / room</option>
-                        <option value="per_pax">Per person</option>
-                      </select>
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="number" step="0.01"
-                        className={cn(inp, 'text-right')}
-                        value={room.ratePp}
-                        onChange={e => setRoomField(room.id, 'ratePp', e.target.value)}
-                        onBlur={e => saveRoom(room.id, { ratePp: e.target.value })}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        type="number" step="0.01"
-                        className={cn(inp, 'text-right')}
-                        placeholder="—"
-                        value={room.rateSolo ?? ''}
-                        onChange={e => setRoomField(room.id, 'rateSolo', e.target.value)}
-                        onBlur={e => saveRoom(room.id, { rateSolo: e.target.value })}
-                        disabled={room.pricingMode === 'per_pax'}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-center">
-                      <input
-                        type="checkbox"
-                        checked={room.active}
-                        onChange={e => saveRoom(room.id, { active: e.target.checked })}
-                      />
-                    </td>
-                    <td className="px-3 py-1.5 text-center">
-                      {savingId === room.id && <Loader2 size={13} className="animate-spin text-gray-300" />}
-                      {savedId === room.id && <Check size={13} className="text-green-500" />}
-                      {errorId === room.id && <span title={errorMsg} className="text-red-500 text-xs font-bold cursor-help">!</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RoomTable
+            rooms={roomsInCat} inp={inp}
+            setRoomField={setRoomField} saveRoom={saveRoom}
+            savingId={savingId} savedId={savedId} errorId={errorId} errorMsg={errorMsg}
+          />
         </div>
       ))}
 
       <p className="text-xs text-gray-400 mb-6">* Guidance only — don't book below capacity&nbsp;−&nbsp;1 pax unless the front desk decides otherwise.</p>
 
+      {rooms.some(r => !r.active) && (
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-gray-400 mb-2">Inactive Rooms</h2>
+          <RoomTable
+            rooms={rooms.filter(r => !r.active).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))}
+            inp={inp} muted
+            setRoomField={setRoomField} saveRoom={saveRoom}
+            savingId={savingId} savedId={savedId} errorId={errorId} errorMsg={errorMsg}
+          />
+        </div>
+      )}
+
       <RoomCombos combos={combos} rooms={rooms} onChange={setCombos} onSave={saveCombo} savingId={savingId} savedId={savedId} reload={load} />
+    </div>
+  )
+}
+
+function RoomTable({ rooms, inp, muted, setRoomField, saveRoom, savingId, savedId, errorId, errorMsg }: {
+  rooms: Room[]; inp: string; muted?: boolean
+  setRoomField: (id: number, field: keyof Room, value: any) => void
+  saveRoom: (id: number, patch: Partial<Room>) => Promise<void>
+  savingId: number | null; savedId: number | null; errorId: number | null; errorMsg: string
+}) {
+  return (
+    <div className={cn('rounded-xl border border-gray-200 bg-white overflow-x-auto shadow-sm', muted && 'opacity-70')}>
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+          <tr>
+            <th className="px-4 py-2 text-left font-medium">Room</th>
+            <th className="px-3 py-2 text-left font-medium">Category</th>
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-left font-medium">Beds</th>
+            <th className="px-3 py-2 text-center font-medium">Capacity</th>
+            <th className="px-3 py-2 text-left font-medium">Pricing</th>
+            <th className="px-3 py-2 text-right font-medium">Full Rate (R)</th>
+            <th className="px-3 py-2 text-right font-medium">Solo Rate (R)</th>
+            <th className="px-3 py-2 text-center font-medium">Active</th>
+            <th className="px-3 py-2 w-6" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {rooms.map(room => (
+            <tr key={room.id}>
+              <td className="px-4 py-1.5">
+                <input
+                  key={`name-${room.id}`}
+                  className={cn(inp, 'font-medium text-gray-900 whitespace-nowrap')}
+                  defaultValue={room.name}
+                  onBlur={e => e.target.value !== room.name && saveRoom(room.id, { name: e.target.value })}
+                />
+              </td>
+              <td className="px-3 py-1.5">
+                <input
+                  key={`category-${room.id}`}
+                  list="category-options"
+                  className={inp}
+                  defaultValue={room.category ?? ''}
+                  placeholder="Uncategorised"
+                  onBlur={e => (e.target.value || null) !== room.category && saveRoom(room.id, { category: e.target.value || null })}
+                />
+              </td>
+              <td className="px-3 py-1.5">
+                <select
+                  className={inp}
+                  value={room.type}
+                  onChange={e => saveRoom(room.id, { type: e.target.value as any })}
+                >
+                  {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </td>
+              <td className="px-3 py-1.5">
+                <input
+                  className={inp}
+                  value={room.bedConfig ?? ''}
+                  placeholder="e.g. 1 double, 2 twin"
+                  onChange={e => setRoomField(room.id, 'bedConfig', e.target.value)}
+                  onBlur={e => saveRoom(room.id, { bedConfig: e.target.value })}
+                />
+              </td>
+              <td className="px-3 py-1.5">
+                <input
+                  type="number" min={1}
+                  className={cn(inp, 'text-center')}
+                  value={room.capacity}
+                  onChange={e => setRoomField(room.id, 'capacity', parseInt(e.target.value) || 1)}
+                  onBlur={e => saveRoom(room.id, { capacity: parseInt(e.target.value) || 1 })}
+                />
+                <div className="text-[10px] text-gray-400 text-center mt-0.5">min {minOccupancy(room.capacity)}pax*</div>
+              </td>
+              <td className="px-3 py-1.5">
+                <select
+                  className={inp}
+                  value={room.pricingMode}
+                  onChange={e => saveRoom(room.id, { pricingMode: e.target.value as any })}
+                >
+                  <option value="flat">Flat / room</option>
+                  <option value="per_pax">Per person</option>
+                </select>
+              </td>
+              <td className="px-3 py-1.5">
+                <input
+                  type="number" step="0.01"
+                  className={cn(inp, 'text-right')}
+                  value={room.ratePp}
+                  onChange={e => setRoomField(room.id, 'ratePp', e.target.value)}
+                  onBlur={e => saveRoom(room.id, { ratePp: e.target.value })}
+                />
+              </td>
+              <td className="px-3 py-1.5">
+                <input
+                  type="number" step="0.01"
+                  className={cn(inp, 'text-right')}
+                  placeholder="—"
+                  value={room.rateSolo ?? ''}
+                  onChange={e => setRoomField(room.id, 'rateSolo', e.target.value)}
+                  onBlur={e => saveRoom(room.id, { rateSolo: e.target.value })}
+                  disabled={room.pricingMode === 'per_pax'}
+                />
+              </td>
+              <td className="px-3 py-1.5 text-center">
+                <input
+                  type="checkbox"
+                  checked={room.active}
+                  onChange={e => saveRoom(room.id, { active: e.target.checked })}
+                />
+              </td>
+              <td className="px-3 py-1.5 text-center">
+                {savingId === room.id && <Loader2 size={13} className="animate-spin text-gray-300" />}
+                {savedId === room.id && <Check size={13} className="text-green-500" />}
+                {errorId === room.id && <span title={errorMsg} className="text-red-500 text-xs font-bold cursor-help">!</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
