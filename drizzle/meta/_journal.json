@@ -64,6 +64,13 @@
       "when": 1751500000000,
       "tag": "0008_mark_ready",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783253265490,
+      "tag": "0009_tired_shotgun",
+      "breakpoints": true
     }
   ]
 }

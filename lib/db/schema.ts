@@ -28,6 +28,7 @@ export const rooms = pgTable('rooms', {
   ratePp:   numeric('rate_pp',   { precision: 10, scale: 2 }).notNull(),
   rateSolo: numeric('rate_solo', { precision: 10, scale: 2 }),
   active:   boolean('active').notNull().default(true),
+  icalUrl:  text('ical_url'), // Booking.com per-room calendar export URL, for availability sync
 }, t => [unique().on(t.name)])
 
 export const bookings = pgTable('bookings', {
@@ -51,9 +52,10 @@ export const bookings = pgTable('bookings', {
   invoiceNumber:   text('invoice_number'),
   payDate:         date('pay_date'),
   notes:           text('notes'),
+  externalId:      text('external_id'), // iCal UID, set for bookings imported from an external calendar (e.g. Booking.com)
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),
-})
+}, t => [unique().on(t.externalId)])
 
 // ── Entities (Kanaan / Plant Hire / Investment Project) ───────────────────────
 export const entities = pgTable('entities', {

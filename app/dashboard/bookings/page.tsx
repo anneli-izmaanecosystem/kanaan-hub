@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText, RefreshCw } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 import { todaySA, currentMonthSA } from '@/lib/date-sa'
 
@@ -110,6 +110,10 @@ export default function BookingsPage() {
               <List size={16} />
             </button>
           </div>
+          <Link href="/dashboard/bookings/sync" title="Booking.com Sync"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 hover:text-gray-900">
+            <RefreshCw size={16} />
+          </Link>
           <Link href="/dashboard/bookings/new"
             className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
             <Plus size={16} /> New Booking
