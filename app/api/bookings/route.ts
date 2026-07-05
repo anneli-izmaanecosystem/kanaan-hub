@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, bookings, rooms } from '@/lib/db'
 import { eq, and, gt, gte, lte, sql } from 'drizzle-orm'
-import { ratelimit } from '@/lib/ratelimit'
+import { checkRatelimit } from '@/lib/ratelimit'
 import { monthEndDate } from '@/lib/date-sa'
 
 export async function GET(req: NextRequest) {
@@ -32,8 +32,8 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const { success } = await ratelimit.limit(userId)
-  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+  const allowed = await checkRatelimit(userId)
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
 
   try {
     const body = await req.json()

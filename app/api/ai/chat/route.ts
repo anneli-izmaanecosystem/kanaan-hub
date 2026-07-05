@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { db, bookings, rooms, workers } from '@/lib/db'
 import { eq, gte, and } from 'drizzle-orm'
-import { ratelimit } from '@/lib/ratelimit'
+import { checkRatelimit } from '@/lib/ratelimit'
 
 const client = new Anthropic()
 
@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const { success } = await ratelimit.limit(userId)
-  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+  const allowed = await checkRatelimit(userId)
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
 
   const { messages } = await req.json()
   if (!Array.isArray(messages)) return NextResponse.json({ error: 'Invalid messages' }, { status: 400 })

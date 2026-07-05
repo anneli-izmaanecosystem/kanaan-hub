@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { ratelimit } from '@/lib/ratelimit'
+import { checkRatelimit } from '@/lib/ratelimit'
 import { todaySA } from '@/lib/date-sa'
 
 const client = new Anthropic()
@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const { success } = await ratelimit.limit(userId)
-  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+  const allowed = await checkRatelimit(userId)
+  if (!allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
 
   const { text } = await req.json()
   if (!text?.trim()) return NextResponse.json({ error: 'No text provided' }, { status: 400 })
