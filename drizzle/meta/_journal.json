@@ -71,6 +71,13 @@
       "when": 1783253265490,
       "tag": "0009_tired_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783264020404,
+      "tag": "0010_room_pricelist_and_multi_room_bookings",
+      "breakpoints": true
     }
   ]
 }

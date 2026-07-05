@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkMobileAuth } from '@/lib/mobile-auth'
-import { db, bookings, rooms } from '@/lib/db'
+import { db, bookings, rooms, bookingRooms } from '@/lib/db'
 import { eq, and, lte, gte, gt, sql } from 'drizzle-orm'
 
 // GET /api/mobile/bookings?days=3  — upcoming check-ins
@@ -76,6 +76,9 @@ export async function POST(req: NextRequest) {
       specialRequests, source: source ?? 'mobile', notes,
       status: status ?? 'confirmed',
     }).returning()
+
+    if (roomId)
+      await db.insert(bookingRooms).values({ bookingId: booking.id, roomId })
 
     return NextResponse.json(booking, { status: 201 })
   } catch (err: any) {

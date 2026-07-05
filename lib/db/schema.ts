@@ -5,6 +5,7 @@ import {
 
 // ── Unchanged enums ───────────────────────────────────────────────────────────
 export const roomTypeEnum  = pgEnum('room_type',  ['premium', 'budget', 'dorm', 'camping'])
+export const pricingModeEnum = pgEnum('pricing_mode', ['flat', 'per_pax'])
 export const bookingStatus = pgEnum('booking_status', [
   'confirmed', 'pending', 'cancelled', 'checked_in', 'checked_out',
   'fully_paid', 'partially_paid', 'quote_sent', 'unpaid',
@@ -25,15 +26,37 @@ export const rooms = pgTable('rooms', {
   name:     text('name').notNull(),
   type:     roomTypeEnum('type').notNull(),
   capacity: integer('capacity').notNull().default(2),
-  ratePp:   numeric('rate_pp',   { precision: 10, scale: 2 }).notNull(),
-  rateSolo: numeric('rate_solo', { precision: 10, scale: 2 }),
+  // ratePp = standard/full nightly rate. Under pricing_mode 'per_pax' it is multiplied by
+  // adult count (e.g. backpackers, joined-room combos); under 'flat' it is the flat room rate.
+  ratePp:      numeric('rate_pp',   { precision: 10, scale: 2 }).notNull(),
+  rateSolo:    numeric('rate_solo', { precision: 10, scale: 2 }), // discounted 1-pax rate, flat rooms only
+  pricingMode: pricingModeEnum('pricing_mode').notNull().default('flat'),
+  category:    text('category'), // display grouping for the pricelist, e.g. 'Premium (Self Catering)'
+  bedConfig:   text('bed_config'), // e.g. '1 double, 2 twin'
   active:   boolean('active').notNull().default(true),
   icalUrl:  text('ical_url'), // Booking.com per-room calendar export URL, for availability sync
 }, t => [unique().on(t.name)])
 
+// Joined-room configurations that get their own pricing when booked together as a set
+// (e.g. Room 3 + Room 6 combined into a 5-sleeper at a per-pax rate).
+export const roomCombos = pgTable('room_combos', {
+  id:          serial('id').primaryKey(),
+  name:        text('name').notNull(),
+  capacity:    integer('capacity').notNull(),
+  rate:        numeric('rate', { precision: 10, scale: 2 }).notNull(),
+  pricingMode: pricingModeEnum('pricing_mode').notNull().default('per_pax'),
+  active:      boolean('active').notNull().default(true),
+})
+
+export const roomComboMembers = pgTable('room_combo_members', {
+  id:      serial('id').primaryKey(),
+  comboId: integer('combo_id').notNull().references(() => roomCombos.id, { onDelete: 'cascade' }),
+  roomId:  integer('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
+}, t => [unique().on(t.comboId, t.roomId)])
+
 export const bookings = pgTable('bookings', {
   id:              serial('id').primaryKey(),
-  roomId:          integer('room_id').notNull().references(() => rooms.id),
+  roomId:          integer('room_id').notNull().references(() => rooms.id), // primary/first room — kept for legacy single-room flows (iCal sync, invoices)
   guestName:       text('guest_name').notNull(),
   contact:         text('contact').notNull(),
   idNumber:        text('id_number'),
@@ -56,6 +79,14 @@ export const bookings = pgTable('bookings', {
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),
 }, t => [unique().on(t.externalId)])
+
+// All rooms occupied by a booking, including its primary room — lets one booking span
+// multiple rooms (e.g. a family taking Room 1 and Room 4 for the same stay).
+export const bookingRooms = pgTable('booking_rooms', {
+  id:        serial('id').primaryKey(),
+  bookingId: integer('booking_id').notNull().references(() => bookings.id, { onDelete: 'cascade' }),
+  roomId:    integer('room_id').notNull().references(() => rooms.id),
+}, t => [unique().on(t.bookingId, t.roomId)])
 
 // ── Entities (Kanaan / Plant Hire / Investment Project) ───────────────────────
 export const entities = pgTable('entities', {

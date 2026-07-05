@@ -2,9 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, AlertTriangle } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { totalForBooking, minOccupancy, type PriceCombo } from '@/lib/pricing'
 
-type Room = { id: number; name: string; type: string; ratePp: string; rateSolo: string | null; capacity: number }
+type Room = {
+  id: number; name: string; type: string; ratePp: string; rateSolo: string | null
+  capacity: number; pricingMode: 'flat' | 'per_pax'
+}
+type Combo = PriceCombo & { name: string }
 
 const STATUS_OPTIONS = [
   { value: 'confirmed',       label: 'Confirmed' },
@@ -20,14 +26,16 @@ const STATUS_OPTIONS = [
 
 export default function NewBookingPage() {
   const router = useRouter()
-  const [rooms, setRooms] = useState<Room[]>([])
+  const [rooms, setRooms]   = useState<Room[]>([])
+  const [combos, setCombos] = useState<Combo[]>([])
   const [aiText, setAiText]   = useState('')
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
+  const [autoTotal, setAutoTotal] = useState(true) // false once the user hand-edits totalAmount
 
   const [form, setForm] = useState({
-    roomId: '', guestName: '', contact: '', idNumber: '',
+    roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
     checkIn: '', checkOut: '', adults: '1', children: '0',
     totalAmount: '', depositPaid: '0',
     status: 'confirmed', source: '', paymentMethod: '', invoiceNumber: '', payDate: '',
@@ -35,25 +43,40 @@ export default function NewBookingPage() {
   })
 
   useEffect(() => {
-    fetch('/api/rooms').then(r => r.json()).then(setRooms).catch(() => {})
+    Promise.all([
+      fetch('/api/rooms').then(r => r.json()),
+      fetch('/api/room-combos').then(r => r.json()),
+    ]).then(([r, c]) => {
+      setRooms(Array.isArray(r) ? r : [])
+      setCombos(Array.isArray(c) ? c : [])
+    }).catch(() => {})
   }, [])
 
+  function recalcTotal(next: typeof form) {
+    if (!autoTotal || !next.checkIn || !next.checkOut || next.roomIds.length === 0) return next
+    const nights = Math.ceil((new Date(next.checkOut).getTime() - new Date(next.checkIn).getTime()) / 86_400_000)
+    if (nights <= 0) return next
+    const adults = parseInt(next.adults) || 1
+    const roomIds = next.roomIds.map(id => parseInt(id))
+    const total = totalForBooking(roomIds, rooms, combos, adults, nights)
+    return { ...next, totalAmount: String(total) }
+  }
+
   function set(k: string, v: string) {
+    setForm(f => recalcTotal({ ...f, [k]: v }))
+  }
+
+  function toggleRoom(id: number) {
     setForm(f => {
-      const next = { ...f, [k]: v }
-      if (['roomId', 'checkIn', 'checkOut', 'adults'].includes(k)) {
-        const room = rooms.find(r => r.id === parseInt(next.roomId))
-        if (room && next.checkIn && next.checkOut) {
-          const nights = Math.ceil((new Date(next.checkOut).getTime() - new Date(next.checkIn).getTime()) / 86_400_000)
-          if (nights > 0) {
-            const adults = parseInt(next.adults) || 1
-            const rate   = adults === 1 ? parseFloat(room.rateSolo ?? room.ratePp) : parseFloat(room.ratePp)
-            next.totalAmount = String(nights * adults * rate)
-          }
-        }
-      }
-      return next
+      const idStr = String(id)
+      const roomIds = f.roomIds.includes(idStr) ? f.roomIds.filter(r => r !== idStr) : [...f.roomIds, idStr]
+      return recalcTotal({ ...f, roomIds })
     })
+  }
+
+  function onTotalEdited(v: string) {
+    setAutoTotal(false)
+    setForm(f => ({ ...f, totalAmount: v }))
   }
 
   async function parseWithAI() {
@@ -64,16 +87,16 @@ export default function NewBookingPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'AI parsing failed'); setParsing(false); return }
 
-      let roomId = form.roomId
+      let roomIds = form.roomIds
       if (data.roomPreference) {
         const pref = data.roomPreference.toLowerCase()
         const match = rooms.find(r => r.name.toLowerCase().includes(pref) || pref.includes(r.name.toLowerCase().replace('room ', '')))
-        if (match) roomId = String(match.id)
+        if (match) roomIds = [String(match.id)]
       }
 
-      setForm(f => ({
+      setForm(f => recalcTotal({
         ...f,
-        roomId,
+        roomIds,
         guestName:       data.guestName       ?? f.guestName,
         contact:         data.contact         ?? f.contact,
         checkIn:         data.checkIn         ?? f.checkIn,
@@ -83,6 +106,7 @@ export default function NewBookingPage() {
         specialRequests: data.specialRequests ?? f.specialRequests,
         totalAmount:     data.estimatedTotal  ? String(data.estimatedTotal) : f.totalAmount,
       }))
+      if (data.estimatedTotal) setAutoTotal(false)
     } catch { setError('Network error — could not reach AI') }
     setParsing(false)
   }
@@ -94,7 +118,7 @@ export default function NewBookingPage() {
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, roomId: parseInt(form.roomId) }),
+        body: JSON.stringify({ ...form, roomIds: form.roomIds.map(id => parseInt(id)) }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed'); setSaving(false); return }
       router.push('/dashboard/bookings')
@@ -103,6 +127,17 @@ export default function NewBookingPage() {
 
   const input = 'w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300'
   const label = 'block text-xs font-medium text-gray-600 mb-1'
+
+  const selectedRooms = form.roomIds.map(id => rooms.find(r => r.id === parseInt(id))).filter(Boolean) as Room[]
+  const adults = parseInt(form.adults) || 1
+  const combinedCapacity = selectedRooms.reduce((s, r) => s + r.capacity, 0)
+  const underMin = selectedRooms.length === 1 && adults < minOccupancy(selectedRooms[0].capacity)
+
+  const roomGroups: { label: string; filter: (r: Room) => boolean }[] = [
+    { label: 'Lodge',       filter: (r: Room) => r.type === 'premium' || r.type === 'budget' },
+    { label: 'Backpackers', filter: (r: Room) => r.type === 'dorm' },
+    { label: 'Camping',     filter: (r: Room) => r.type === 'camping' },
+  ]
 
   return (
     <div className="p-8 max-w-2xl">
@@ -126,32 +161,50 @@ export default function NewBookingPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Room + Adults */}
+        {/* Rooms + Adults */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={label}>Room</label>
-            <select className={input} value={form.roomId} onChange={e => set('roomId', e.target.value)}>
-              <option value="">Select room</option>
-              {[
-                { label: 'Lodge',       filter: (r: Room) => r.type === 'premium' || r.type === 'budget' },
-                { label: 'Backpackers', filter: (r: Room) => r.type === 'dorm' },
-                { label: 'Camping',     filter: (r: Room) => r.type === 'camping' },
-              ].map(({ label, filter }) => {
+            <label className={label}>Rooms {selectedRooms.length > 1 && <span className="text-gray-400 font-normal">({selectedRooms.length} selected)</span>}</label>
+            <div className="rounded-lg border border-gray-200 p-2 max-h-40 overflow-y-auto space-y-2">
+              {roomGroups.map(({ label: groupLabel, filter }) => {
                 const group = rooms.filter(filter)
                 if (group.length === 0) return null
                 return (
-                  <optgroup key={label} label={label}>
-                    {group.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </optgroup>
+                  <div key={groupLabel}>
+                    <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">{groupLabel}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.map(r => (
+                        <button type="button" key={r.id} onClick={() => toggleRoom(r.id)}
+                          className={cn(
+                            'rounded-full px-2.5 py-1 text-xs border transition-colors',
+                            form.roomIds.includes(String(r.id))
+                              ? 'bg-gray-900 text-white border-gray-900'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                          )}>
+                          {r.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )
               })}
-            </select>
+            </div>
           </div>
           <div>
             <label className={label}>Adults *</label>
             <input type="number" min={1} className={input} value={form.adults} onChange={e => set('adults', e.target.value)} required />
+            {selectedRooms.length > 0 && (
+              <p className="mt-1 text-[11px] text-gray-400">Combined capacity: {combinedCapacity} pax</p>
+            )}
           </div>
         </div>
+
+        {underMin && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>{selectedRooms[0].name} normally isn't booked below {minOccupancy(selectedRooms[0].capacity)} pax (capacity {selectedRooms[0].capacity}) — override only if the front desk has agreed to it.</span>
+          </div>
+        )}
 
         {/* Dates */}
         <div className="grid grid-cols-2 gap-4">
@@ -222,8 +275,8 @@ export default function NewBookingPage() {
             <input className={input} value={form.invoiceNumber} onChange={e => set('invoiceNumber', e.target.value)} />
           </div>
           <div>
-            <label className={label}>Total Amount (R) *</label>
-            <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} />
+            <label className={label}>Total Amount (R) * {autoTotal && <span className="text-gray-400 font-normal">(auto)</span>}</label>
+            <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
           </div>
           <div>
             <label className={label}>Deposit Paid (R)</label>

@@ -1,4 +1,4 @@
-import { db, bookings, rooms } from '@/lib/db'
+import { db, bookings, rooms, bookingRooms } from '@/lib/db'
 import { and, eq, gte, notInArray } from 'drizzle-orm'
 
 type IcalEvent = {
@@ -83,7 +83,7 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
       result.updated++
     } else {
       const nights = Math.max(1, Math.ceil((new Date(event.end).getTime() - new Date(event.start).getTime()) / 86_400_000))
-      await db.insert(bookings).values({
+      const [created] = await db.insert(bookings).values({
         roomId: room.id,
         guestName: 'Booking.com Guest',
         contact: 'Booking.com',
@@ -99,7 +99,8 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
         source: 'Booking.com',
         notes: event.summary || null,
         externalId: event.uid,
-      })
+      }).returning()
+      await db.insert(bookingRooms).values({ bookingId: created.id, roomId: room.id })
       result.created++
     }
   }

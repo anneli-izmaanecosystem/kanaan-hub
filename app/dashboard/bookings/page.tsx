@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText, RefreshCw } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText, RefreshCw, Tag } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 import { todaySA, currentMonthSA } from '@/lib/date-sa'
 
@@ -13,7 +13,8 @@ type Booking = {
     status: string; adults: number; totalAmount: string; balanceDue: string
     paymentMethod: string | null; source: string | null
   }
-  room: { id: number; name: string; type: string }
+  room: Room       // primary room — kept for legacy display
+  rooms: Room[]    // all rooms occupied by this booking
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -113,6 +114,10 @@ export default function BookingsPage() {
           <Link href="/dashboard/bookings/sync" title="Booking.com Sync"
             className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 hover:text-gray-900">
             <RefreshCw size={16} />
+          </Link>
+          <Link href="/dashboard/pricelist" title="Pricelist"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 hover:text-gray-900">
+            <Tag size={16} />
           </Link>
           <Link href="/dashboard/bookings/new"
             className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
@@ -218,17 +223,19 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
     }
   }, [month])
 
-  // Build a map: roomId → date → booking
+  // Build a map: roomId-date → booking (plotted once per room it occupies)
   const cellMap = new Map<string, Booking['booking'] & { roomName: string }>()
-  for (const { booking, room } of bookings) {
+  for (const { booking, rooms: bookingRooms } of bookings) {
     if (booking.status === 'cancelled') continue
     const start = new Date(Math.max(new Date(booking.checkIn).getTime(), new Date(month + '-01').getTime()))
     // Use inclusive end when checkIn === checkOut (no checkout specified → API defaults to checkIn)
     const endMs = new Date(booking.checkOut).getTime() + (booking.checkIn === booking.checkOut ? 86_400_000 : 0)
-    for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0]
-      if (dateStr.slice(0, 7) !== month) continue
-      cellMap.set(`${room.id}-${dateStr}`, { ...booking, roomName: room.name })
+    for (const room of bookingRooms) {
+      for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0]
+        if (dateStr.slice(0, 7) !== month) continue
+        cellMap.set(`${room.id}-${dateStr}`, { ...booking, roomName: room.name })
+      }
     }
   }
 
@@ -345,14 +352,14 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
   const isAll = statusFilters.size === 0
 
   const filtered = bookings
-    .filter(({ booking, room }) => {
+    .filter(({ booking, rooms: bookingRooms }) => {
       if (booking.status === 'cancelled' && !showCancelled) return false
       if (!isAll && !statusFilters.has(booking.status)) return false
       if (search) {
         const q = search.toLowerCase()
         return (
           booking.guestName.toLowerCase().includes(q) ||
-          room.name.toLowerCase().includes(q) ||
+          bookingRooms.some(r => r.name.toLowerCase().includes(q)) ||
           (booking.source ?? '').toLowerCase().includes(q)
         )
       }
@@ -360,9 +367,11 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
     })
     .sort((a, b) => {
       const dir = sort.dir === 'asc' ? 1 : -1
+      const roomNameA = a.rooms.map(r => r.name).join(', ')
+      const roomNameB = b.rooms.map(r => r.name).join(', ')
       switch (sort.key) {
         case 'guestName':   return dir * a.booking.guestName.localeCompare(b.booking.guestName)
-        case 'roomName':    return dir * a.room.name.localeCompare(b.room.name, undefined, { numeric: true })
+        case 'roomName':    return dir * roomNameA.localeCompare(roomNameB, undefined, { numeric: true })
         case 'checkIn':     return dir * a.booking.checkIn.localeCompare(b.booking.checkIn)
         case 'checkOut':    return dir * a.booking.checkOut.localeCompare(b.booking.checkOut)
         case 'status':      return dir * a.booking.status.localeCompare(b.booking.status)
@@ -468,10 +477,10 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map(({ booking, room }) => (
+              {filtered.map(({ booking, rooms: bookingRooms }) => (
                 <tr key={booking.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900">{booking.guestName}</td>
-                  <td className="px-4 py-3 text-gray-600">{room.name}</td>
+                  <td className="px-4 py-3 text-gray-600">{bookingRooms.map(r => r.name).join(', ')}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkIn)}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkOut)}</td>
                   <td className="px-4 py-3">
