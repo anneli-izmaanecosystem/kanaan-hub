@@ -1,10 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { neon } from '@neondatabase/serverless'
-import { checkMobileAuth } from '@/lib/mobile-auth'
 
-export async function POST(req: NextRequest) {
-  if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
-
+export async function POST() {
   const sql = neon(process.env.POSTGRES_URL!)
 
   // Prior migrations, kept for idempotent re-runs
