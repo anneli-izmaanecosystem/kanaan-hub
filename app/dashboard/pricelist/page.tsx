@@ -180,14 +180,22 @@ export default function PricelistPage() {
         </div>
       )}
 
+      <datalist id="category-options">
+        {Array.from(new Set([...CATEGORY_ORDER, ...rooms.map(r => r.category).filter(Boolean) as string[]])).map(c => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+
       {groupByCategory(rooms).map(([category, roomsInCat]) => (
         <div key={category} className="mb-8">
           <h2 className="text-sm font-semibold text-gray-700 mb-2">{category}</h2>
-          <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white overflow-x-auto shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium">Room</th>
+                  <th className="px-3 py-2 text-left font-medium">Category</th>
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
                   <th className="px-3 py-2 text-left font-medium">Beds</th>
                   <th className="px-3 py-2 text-center font-medium">Capacity</th>
                   <th className="px-3 py-2 text-left font-medium">Pricing</th>
@@ -200,7 +208,33 @@ export default function PricelistPage() {
               <tbody className="divide-y divide-gray-100">
                 {roomsInCat.map(room => (
                   <tr key={room.id} className={cn(!room.active && 'opacity-50')}>
-                    <td className="px-4 py-1.5 font-medium text-gray-900 whitespace-nowrap">{room.name}</td>
+                    <td className="px-4 py-1.5">
+                      <input
+                        key={`name-${room.id}`}
+                        className={cn(inp, 'font-medium text-gray-900 whitespace-nowrap')}
+                        defaultValue={room.name}
+                        onBlur={e => { setRoomField(room.id, 'name', e.target.value); saveRoom(room.id, { name: e.target.value }) }}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        key={`category-${room.id}`}
+                        list="category-options"
+                        className={inp}
+                        defaultValue={room.category ?? ''}
+                        placeholder="Uncategorised"
+                        onBlur={e => { setRoomField(room.id, 'category', e.target.value || null); saveRoom(room.id, { category: e.target.value || null }) }}
+                      />
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <select
+                        className={inp}
+                        value={room.type}
+                        onChange={e => { setRoomField(room.id, 'type', e.target.value); saveRoom(room.id, { type: e.target.value as any }) }}
+                      >
+                        {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </td>
                     <td className="px-3 py-1.5">
                       <input
                         className={inp}
