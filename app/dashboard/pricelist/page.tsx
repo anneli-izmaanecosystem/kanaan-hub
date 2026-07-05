@@ -35,12 +35,25 @@ function groupByCategory(rooms: Room[]): [string, Room[]][] {
   return keys.map(k => [k, map.get(k)!.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))])
 }
 
+const TYPE_OPTIONS = [
+  { value: 'premium', label: 'Premium' },
+  { value: 'budget',  label: 'Budget / Twin' },
+  { value: 'dorm',    label: 'Dorm / Backpackers' },
+  { value: 'camping', label: 'Camping' },
+]
+
 export default function PricelistPage() {
   const [rooms, setRooms]     = useState<Room[]>([])
   const [combos, setCombos]   = useState<Combo[]>([])
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState<number | null>(null)
   const [savedId, setSavedId]   = useState<number | null>(null)
+  const [addingRoom, setAddingRoom] = useState(false)
+  const [creatingRoom, setCreatingRoom] = useState(false)
+  const [roomForm, setRoomForm] = useState({
+    name: '', type: 'premium', category: '', bedConfig: '',
+    capacity: '2', pricingMode: 'flat' as 'flat' | 'per_pax', ratePp: '', rateSolo: '',
+  })
 
   useEffect(() => { load() }, [])
 
@@ -93,6 +106,26 @@ export default function PricelistPage() {
   }
 
   const inp = 'w-full rounded-md border border-transparent px-2 py-1 text-sm hover:border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-transparent'
+  const formInp = 'w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm'
+
+  async function createRoom() {
+    if (!roomForm.name.trim() || !roomForm.ratePp) return
+    setCreatingRoom(true)
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...roomForm, category: roomForm.category || null, bedConfig: roomForm.bedConfig || null, rateSolo: roomForm.rateSolo || null }),
+      })
+      if (res.ok) {
+        setRoomForm({ name: '', type: 'premium', category: '', bedConfig: '', capacity: '2', pricingMode: 'flat', ratePp: '', rateSolo: '' })
+        setAddingRoom(false)
+        load()
+      }
+    } finally {
+      setCreatingRoom(false)
+    }
+  }
 
   if (loading) return <div className="p-8 text-sm text-gray-400">Loading…</div>
 
@@ -100,12 +133,52 @@ export default function PricelistPage() {
     <div className="p-6 max-w-5xl">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold text-gray-900">Pricelist</h1>
-        <Link href="/dashboard/bookings"
-          className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
-          <CalendarDays size={16} /> Bookings
-        </Link>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setAddingRoom(v => !v)}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+            <Plus size={16} /> Add Room
+          </button>
+          <Link href="/dashboard/bookings"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50">
+            <CalendarDays size={16} /> Bookings
+          </Link>
+        </div>
       </div>
       <p className="text-sm text-gray-400 mb-6">Rates apply per night. Edits save automatically.</p>
+
+      {addingRoom && (
+        <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 mb-8 space-y-3">
+          <div className="grid grid-cols-4 gap-3">
+            <input className={formInp} placeholder="Room name (e.g. Room 8)" value={roomForm.name}
+              onChange={e => setRoomForm(f => ({ ...f, name: e.target.value }))} />
+            <input className={formInp} placeholder="Category (e.g. Backpackers)" value={roomForm.category}
+              onChange={e => setRoomForm(f => ({ ...f, category: e.target.value }))} />
+            <input className={formInp} placeholder="Bed config" value={roomForm.bedConfig}
+              onChange={e => setRoomForm(f => ({ ...f, bedConfig: e.target.value }))} />
+            <select className={formInp} value={roomForm.type} onChange={e => setRoomForm(f => ({ ...f, type: e.target.value }))}>
+              {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <input type="number" min={1} className={formInp} placeholder="Capacity" value={roomForm.capacity}
+              onChange={e => setRoomForm(f => ({ ...f, capacity: e.target.value }))} />
+            <select className={formInp} value={roomForm.pricingMode} onChange={e => setRoomForm(f => ({ ...f, pricingMode: e.target.value as any }))}>
+              <option value="flat">Flat / room</option>
+              <option value="per_pax">Per person</option>
+            </select>
+            <input type="number" step="0.01" className={formInp} placeholder="Full rate (R)" value={roomForm.ratePp}
+              onChange={e => setRoomForm(f => ({ ...f, ratePp: e.target.value }))} />
+            <input type="number" step="0.01" className={formInp} placeholder="Solo rate (R, optional)" value={roomForm.rateSolo}
+              onChange={e => setRoomForm(f => ({ ...f, rateSolo: e.target.value }))} />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={createRoom} disabled={creatingRoom} className="rounded-lg bg-gray-900 px-4 py-1.5 text-sm text-white disabled:opacity-50">
+              {creatingRoom ? 'Saving…' : 'Save Room'}
+            </button>
+            <button onClick={() => setAddingRoom(false)} className="rounded-lg border border-gray-200 px-4 py-1.5 text-sm text-gray-600">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {groupByCategory(rooms).map(([category, roomsInCat]) => (
         <div key={category} className="mb-8">
