@@ -54,13 +54,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
   const { runId: runIdStr } = await params
   const runId = parseInt(runIdStr)
   const body = await req.json()
-  const { entryId, workerId, action, amount: amountOverride } = body
+  const { entryId, workerId, action, amount: amountOverride, date: dateOverride, absent, absenceReason } = body
   // action: 'attendance' | 'advance' | 'shop' | 'skip'
 
   if (!entryId || !action) return NextResponse.json({ error: 'entryId and action required' }, { status: 400 })
 
   const [entry] = await db.select().from(staffLogEntries).where(eq(staffLogEntries.id, entryId))
   if (!entry) return NextResponse.json({ error: 'Entry not found' }, { status: 404 })
+
+  const logDate = dateOverride || entry.logDate
 
   if (action !== 'skip') {
     if (!workerId) return NextResponse.json({ error: 'workerId required for non-skip actions' }, { status: 400 })
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
       await db.insert(advances).values({
         workerId,
         runId,
-        date: entry.logDate,
+        date: logDate,
         amount: amountOverride != null ? String(amountOverride) : (entry.amount ?? '0'),
         advanceType: action === 'shop' ? 'shop_deduction' : 'cash_advance',
         note: entry.message,
@@ -77,21 +79,46 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
       })
     }
 
-    if (action === 'attendance') {
-      // Hours entry: upsert attendance day
+    if (action === 'note') {
+      // Note-only: attach the message to that day's note without touching hours/absence.
+      const dayType = dayTypeForDate(logDate)
       const [existing] = await db.select().from(attendanceDays)
-        .where(and(eq(attendanceDays.workerId, workerId), eq(attendanceDays.runId, runId), eq(attendanceDays.date, entry.logDate)))
+        .where(and(eq(attendanceDays.workerId, workerId), eq(attendanceDays.runId, runId), eq(attendanceDays.date, logDate)))
 
       if (existing) {
         await db.update(attendanceDays)
-          .set({ hoursWorked: entry.amount ?? existing.hoursWorked, note: entry.message, source: 'manual' })
+          .set({ note: entry.message })
           .where(eq(attendanceDays.id, existing.id))
       } else {
         await db.insert(attendanceDays).values({
-          workerId, runId, date: entry.logDate,
-          dayType: 'weekday',
-          hoursWorked: entry.amount ?? null,
-          absent: false,
+          workerId, runId, date: logDate,
+          dayType,
+          note: entry.message,
+          source: 'manual',
+        })
+      }
+    }
+
+    if (action === 'attendance') {
+      const dayType = dayTypeForDate(logDate)
+      const isAbsent = absent ?? false
+      const reason = isAbsent ? (absenceReason ?? 'unpaid') : null
+
+      // Hours entry: upsert attendance day
+      const [existing] = await db.select().from(attendanceDays)
+        .where(and(eq(attendanceDays.workerId, workerId), eq(attendanceDays.runId, runId), eq(attendanceDays.date, logDate)))
+
+      if (existing) {
+        await db.update(attendanceDays)
+          .set({ hoursWorked: isAbsent ? null : (entry.amount ?? existing.hoursWorked), absent: isAbsent, absenceReason: reason, dayType, note: entry.message, source: 'manual' })
+          .where(eq(attendanceDays.id, existing.id))
+      } else {
+        await db.insert(attendanceDays).values({
+          workerId, runId, date: logDate,
+          dayType,
+          hoursWorked: isAbsent ? null : (entry.amount ?? null),
+          absent: isAbsent,
+          absenceReason: reason,
           note: entry.message,
           source: 'manual',
         })
@@ -154,4 +181,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
   }
 
   return NextResponse.json({ ok: true })
+}
+
+// 'YYYY-MM-DD' -> weekday | saturday | sunday (no public-holiday lookup here; matches buildPeriodDays in setup/route.ts minus PH)
+function dayTypeForDate(dateStr: string): 'weekday' | 'saturday' | 'sunday' {
+  const dow = new Date(`${dateStr}T00:00:00Z`).getUTCDay()
+  if (dow === 0) return 'sunday'
+  if (dow === 6) return 'saturday'
+  return 'weekday'
 }

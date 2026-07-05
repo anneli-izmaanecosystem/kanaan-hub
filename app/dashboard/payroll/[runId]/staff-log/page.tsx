@@ -30,14 +30,29 @@ const ACTION_OPTIONS = [
   { value: 'attendance', label: '→ Attendance (hours)' },
   { value: 'advance',    label: '→ Advance (cash)'     },
   { value: 'shop',       label: '→ Shop deduction'     },
+  { value: 'note',       label: '→ Note only'          },
   { value: 'skip',       label: 'Skip / dismiss'       },
+]
+
+const ABSENCE_OPTS = [
+  { value: 'sick',         label: 'Sick leave' },
+  { value: 'annual_leave', label: 'Annual leave' },
+  { value: 'unpaid',       label: 'Unpaid leave' },
+  { value: 'other',        label: 'Other' },
 ]
 
 function defaultAction(logType: string) {
   if (logType === 'hours')         return 'attendance'
   if (logType === 'advance')       return 'advance'
   if (logType === 'shop_purchase') return 'shop'
+  if (logType === 'note')          return 'note'
   return 'skip'
+}
+
+// 'YYYY-MM-DD' -> true if that calendar date is a Saturday (UTC, matches server-side day-type logic)
+function isSaturday(dateStr: string) {
+  if (!dateStr) return false
+  return new Date(`${dateStr}T00:00:00Z`).getUTCDay() === 6
 }
 
 export default function StaffLogReviewPage() {
@@ -48,8 +63,8 @@ export default function StaffLogReviewPage() {
   const [workers, setWorkers] = useState<Worker[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Per-row state: workerId, action, and amount override
-  type RowState = { workerId: string; action: string; amount: string }
+  // Per-row state: workerId, action, amount override, effective date, and absence fields
+  type RowState = { workerId: string; action: string; amount: string; date: string; absent: boolean; absenceReason: string }
   const [rowState, setRowState] = useState<Record<number, RowState>>({})
   const [processing, setProcessing] = useState<Record<number, boolean>>({})
   const [done, setDone] = useState<Set<number>>(new Set())
@@ -68,6 +83,9 @@ export default function StaffLogReviewPage() {
             workerId: e.suggestedWorkerId ? String(e.suggestedWorkerId) : '',
             action: defaultAction(e.logType),
             amount: e.amount ?? '',
+            date: e.logDate,
+            absent: isSaturday(e.logDate),
+            absenceReason: 'unpaid',
           }
         }
         setRowState(init)
@@ -94,6 +112,9 @@ export default function StaffLogReviewPage() {
         workerId: row.workerId ? parseInt(row.workerId) : null,
         action:   row.action,
         amount:   row.amount !== '' ? row.amount : undefined,
+        date:          row.date || undefined,
+        absent:        row.action === 'attendance' ? row.absent : undefined,
+        absenceReason: row.action === 'attendance' && row.absent ? row.absenceReason : undefined,
       }),
     })
 
@@ -147,7 +168,7 @@ export default function StaffLogReviewPage() {
         <div className="space-y-3">
           {entries.map(entry => {
             const isDone = done.has(entry.id)
-            const row    = rowState[entry.id] ?? { workerId: '', action: 'skip' }
+            const row    = rowState[entry.id] ?? { workerId: '', action: 'skip', amount: '', date: entry.logDate, absent: isSaturday(entry.logDate), absenceReason: 'unpaid' }
 
             return (
               <div key={entry.id}
@@ -159,7 +180,16 @@ export default function StaffLogReviewPage() {
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${LOG_TYPE_STYLE[entry.logType] ?? 'bg-gray-100 text-gray-600'}`}>
                         {entry.logType.replace('_', ' ')}
                       </span>
-                      <span className="text-xs text-gray-400">{fmtDate(entry.logDate)}</span>
+                      {!isDone ? (
+                        <input
+                          type="date"
+                          value={row.date}
+                          onChange={e => setRow(entry.id, { date: e.target.value, absent: isSaturday(e.target.value) })}
+                          className={`${inp} py-0.5 text-xs`}
+                        />
+                      ) : (
+                        <span className="text-xs text-gray-400">{fmtDate(entry.logDate)}</span>
+                      )}
                       {entry.amount && (
                         <span className="text-xs font-medium text-amber-700">R{entry.amount}</span>
                       )}
@@ -185,6 +215,26 @@ export default function StaffLogReviewPage() {
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
+
+                      {row.action === 'attendance' && (
+                        <label className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={row.absent}
+                            onChange={e => setRow(entry.id, { absent: e.target.checked })}
+                          />
+                          Absent
+                        </label>
+                      )}
+
+                      {row.action === 'attendance' && row.absent && (
+                        <select className={`${inp} w-28`} value={row.absenceReason}
+                          onChange={e => setRow(entry.id, { absenceReason: e.target.value })}>
+                          {ABSENCE_OPTS.map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      )}
 
                       {(row.action === 'advance' || row.action === 'shop') && (
                         <input

@@ -347,7 +347,7 @@ export default function AttendancePage() {
   // Calculate gross from attendance days
   const hasFuelDays = days.some(d => d.note?.startsWith('[Fuel]'))
   const fuelLogDays  = hasFuelDays ? days.filter(d => d.note?.startsWith('[Fuel]') && !d.absent) : []
-  const leaveRecords = hasFuelDays ? days.filter(d => d.absent) : []
+  const leaveRecords = days.filter(d => d.absent)
 
   // Alpheus: Saturdays already included in alphEarned (fuel log). No top-up needed.
   const saturdayExtra = worker.payStructure === 'floor' && !hasFuelDays
