@@ -77,6 +77,14 @@ export async function POST(_req: NextRequest, { params }: Params) {
   ei.shopDeductions = hasShopAdvances ? 0 : parseFloat(entry.shopDeductions ?? '0')
   ei.salaryAdvance  = hasCashAdvances ? 0 : parseFloat(entry.salaryAdvance  ?? '0')
 
+  // Sum advances/shop deductions from the advances table now, before either the
+  // floor (Alpheus fuel-log) or standard branch below uses ei.salaryAdvance/shopDeductions.
+  for (const a of advRows) {
+    const amt = parseFloat(a.amount ?? '0')
+    if (a.advanceType === 'cash_advance')   ei.salaryAdvance  += amt
+    if (a.advanceType === 'shop_deduction') ei.shopDeductions += amt
+  }
+
   // If any day was imported from a photo timesheet, that timesheet is the source of truth.
   // Only count explicitly saved days — unsaved days contribute 0 (not stdHoursPerDay default).
   const timesheetMode = savedDays.some(d => d.source === 'photo_timesheet')
@@ -172,13 +180,6 @@ export async function POST(_req: NextRequest, { params }: Params) {
       .returning()
 
     return NextResponse.json({ ok: true, grossPay: grossOverride, netPay })
-  }
-
-  // Advances
-  for (const a of advRows) {
-    const amt = parseFloat(a.amount ?? '0')
-    if (a.advanceType === 'cash_advance')   ei.salaryAdvance  += amt
-    if (a.advanceType === 'shop_deduction') ei.shopDeductions += amt
   }
 
   const calc = calculatePayroll(worker, ei)
