@@ -125,6 +125,18 @@ export default function PricelistPage() {
     }
   }
 
+  async function deleteRoom(id: number) {
+    const room = rooms.find(r => r.id === id)
+    if (!confirm(`Permanently delete ${room?.name ?? 'this room'}? This cannot be undone.`)) return
+    const res = await fetch(`/api/rooms/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setRooms(prev => prev.filter(r => r.id !== id))
+    } else {
+      const d = await res.json().catch(() => ({}))
+      alert(d.error ?? 'Failed to delete room')
+    }
+  }
+
   const inp = 'w-full rounded-md border border-transparent px-2 py-1 text-sm hover:border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-transparent'
   const formInp = 'w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm'
 
@@ -225,7 +237,7 @@ export default function PricelistPage() {
           <RoomTable
             rooms={rooms.filter(r => !r.active).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))}
             inp={inp} muted
-            setRoomField={setRoomField} saveRoom={saveRoom}
+            setRoomField={setRoomField} saveRoom={saveRoom} onDelete={deleteRoom}
             savingId={savingId} savedId={savedId} errorId={errorId} errorMsg={errorMsg}
           />
         </div>
@@ -236,10 +248,11 @@ export default function PricelistPage() {
   )
 }
 
-function RoomTable({ rooms, inp, muted, setRoomField, saveRoom, savingId, savedId, errorId, errorMsg }: {
+function RoomTable({ rooms, inp, muted, setRoomField, saveRoom, onDelete, savingId, savedId, errorId, errorMsg }: {
   rooms: Room[]; inp: string; muted?: boolean
   setRoomField: (id: number, field: keyof Room, value: any) => void
   saveRoom: (id: number, patch: Partial<Room>) => Promise<void>
+  onDelete?: (id: number) => void
   savingId: number | null; savedId: number | null; errorId: number | null; errorMsg: string
 }) {
   return (
@@ -257,6 +270,7 @@ function RoomTable({ rooms, inp, muted, setRoomField, saveRoom, savingId, savedI
             <th className="px-3 py-2 text-right font-medium">Solo Rate (R)</th>
             <th className="px-3 py-2 text-center font-medium">Active</th>
             <th className="px-3 py-2 w-6" />
+            {onDelete && <th className="px-3 py-2 w-6" />}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -350,6 +364,13 @@ function RoomTable({ rooms, inp, muted, setRoomField, saveRoom, savingId, savedI
                 {savedId === room.id && <Check size={13} className="text-green-500" />}
                 {errorId === room.id && <span title={errorMsg} className="text-red-500 text-xs font-bold cursor-help">!</span>}
               </td>
+              {onDelete && (
+                <td className="px-3 py-1.5 text-center">
+                  <button onClick={() => onDelete(room.id)} title="Permanently delete" className="text-gray-300 hover:text-red-500">
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
