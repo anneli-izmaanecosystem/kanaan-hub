@@ -104,6 +104,10 @@ export async function POST(_req: NextRequest, { params }: Params) {
     // Sundays: skip unless saved with hours (explicit override)
     if (d.dayType === 'sunday' && d.hoursWorked === null) continue
 
+    // Hourly workers aren't expected to work Saturdays by default — skip unless hours
+    // were explicitly entered, so an unset Saturday contributes R0, not a full std day.
+    if (worker.payStructure === 'hourly' && d.dayType === 'saturday' && d.hoursWorked === null) continue
+
     if (worker.payStructure === 'hourly') {
       const hrs = parseFloat(d.hoursWorked ?? worker.stdHoursPerDay ?? '0')
       if      (d.dayType === 'saturday')       ei.saturdayHours += hrs

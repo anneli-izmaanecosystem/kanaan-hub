@@ -53,7 +53,8 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
   if (worker.payStructure === 'hourly') {
     const rate  = parseFloat(worker.hourlyRate ?? '0')
     const hours = parseFloat(day.hoursWorked ?? worker.stdHoursPerDay ?? '0')
-    if (day.dayType === 'saturday')       return round2(hours * rate)  // normal rate within 45h average
+    // Saturday: not worked by default; only pay if hours were explicitly entered
+    if (day.dayType === 'saturday')       return day.hoursWorked !== null ? round2(hours * rate) : 0
     if (day.dayType === 'public_holiday') return worker.workerType === 'employee' && phDouble ? round2(hours * rate * 2) : round2(hours * rate)
     // Sunday: only pay if hours were explicitly entered; no default hours
     if (day.dayType === 'sunday')         return day.hoursWorked !== null && worker.workerType === 'employee' ? round2(hours * rate * 2) : 0
@@ -840,17 +841,17 @@ export default function AttendancePage() {
                         {isLocked ? (
                           <span className="text-gray-600">
                             {worker.payStructure === 'hourly'
-                              ? (day.absent ? '—' : (day.hoursWorked ?? (isSun ? '—' : worker.stdHoursPerDay)))
+                              ? (day.absent ? '—' : (day.hoursWorked ?? (isSun || isSat ? '—' : worker.stdHoursPerDay)))
                               : (day.absent ? '—' : (isFloor && !isSat ? 'Floor' : '✓'))}
                           </span>
                         ) : worker.payStructure === 'hourly' ? (
                           <input
                             type="number" step="0.25" min="0" max="24"
                             disabled={day.absent}
-                            defaultValue={day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay ?? '')}
+                            defaultValue={day.hoursWorked ?? (isSun || isSat ? '' : worker.stdHoursPerDay ?? '')}
                             className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'border-dashed text-gray-400' : ''}`}
                             onBlur={e => {
-                              if (e.target.value !== (day.hoursWorked ?? (isSun ? '' : worker.stdHoursPerDay))) {
+                              if (e.target.value !== (day.hoursWorked ?? (isSun || isSat ? '' : worker.stdHoursPerDay))) {
                                 saveDay(day, { hoursWorked: e.target.value })
                               }
                             }}
