@@ -91,6 +91,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ run
       for (const { date, dayType } of days) {
         // For floor workers: weekdays are implicit (in floor salary), skip — only Saturdays tracked
         if (worker.payStructure === 'floor' && dayType === 'weekday') continue
+        // Hourly/daily workers aren't expected to work Saturdays by default — don't
+        // pre-create a "worked" row; presence must be entered explicitly, same as Sunday.
+        if ((worker.payStructure === 'hourly' || worker.payStructure === 'daily') && dayType === 'saturday') continue
         // Skip Sundays by default
         if (dayType === 'sunday') continue
         // Skip public holidays unless employee (PH is paid but attendance is a special day)
