@@ -36,10 +36,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const holidayDates = new Set(holidays.map(h => h.date))
   const holidayNames = Object.fromEntries(holidays.map(h => [h.date, h.name]))
 
-  // Hourly workers aren't expected to work Saturdays by default. A Saturday with no
-  // attendance row — whether from manual entry or an uploaded photo timesheet — reads as
-  // absent rather than a blank/unset day; matches the sync route's payroll calculation.
-  const isHourly = worker.payStructure === 'hourly'
+  // Hourly and daily workers aren't expected to work Saturdays by default. A Saturday
+  // with no attendance row — whether from manual entry or an uploaded photo timesheet —
+  // reads as absent rather than a blank/unset day; matches the sync route's calculation.
+  const defaultsToAbsentSaturday = worker.payStructure === 'hourly' || worker.payStructure === 'daily'
 
   // Build full day list for the period
   const days: any[] = []
@@ -56,7 +56,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       : 'weekday'
 
     const existing = saved.find(s => s.date === dateStr)
-    const defaultAbsent = isHourly && dayType === 'saturday' && !existing
+    const defaultAbsent = defaultsToAbsentSaturday && dayType === 'saturday' && !existing
 
     days.push({
       date:              dateStr,

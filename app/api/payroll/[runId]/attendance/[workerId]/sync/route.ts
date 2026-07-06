@@ -39,7 +39,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
   const allDays: {
     date: string; dayType: string; absent: boolean; absenceReason: string | null;
-    hoursWorked: string | null; phDoubleConfirmed: boolean | null;
+    hoursWorked: string | null; phDoubleConfirmed: boolean | null; hasRecord: boolean;
   }[] = []
 
   const periodStart = toDateStr(run.periodStart)
@@ -61,6 +61,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
       absenceReason:      saved?.absenceReason ?? null,
       hoursWorked:        saved?.hoursWorked ?? null,
       phDoubleConfirmed:  saved?.phDoubleConfirmed ?? null,
+      hasRecord:          !!saved,
     })
   }
 
@@ -107,6 +108,10 @@ export async function POST(_req: NextRequest, { params }: Params) {
     // Hourly workers aren't expected to work Saturdays by default — skip unless hours
     // were explicitly entered, so an unset Saturday contributes R0, not a full std day.
     if (worker.payStructure === 'hourly' && d.dayType === 'saturday' && d.hoursWorked === null) continue
+
+    // Daily workers aren't expected to work Saturdays by default either — skip unless
+    // an attendance row was actually saved for that date (explicit presence).
+    if (worker.payStructure === 'daily' && d.dayType === 'saturday' && !d.hasRecord) continue
 
     if (worker.payStructure === 'hourly') {
       const hrs = parseFloat(d.hoursWorked ?? worker.stdHoursPerDay ?? '0')
