@@ -11,7 +11,18 @@ import { eq, and, inArray, ne } from 'drizzle-orm'
 // logic in the GET/sync routes applies again. After running this, click "Recalculate
 // All" on each affected run to correct its stored payroll totals. Delete this route
 // once you've run it.
+//
+// GET works too (not just POST), so this can be triggered by just visiting the URL
+// in a browser while logged in — no devtools or API client needed.
+export async function GET() {
+  return run()
+}
+
 export async function POST() {
+  return run()
+}
+
+async function run() {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
