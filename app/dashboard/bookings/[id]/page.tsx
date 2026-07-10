@@ -120,6 +120,7 @@ export default function BookingDetailPage() {
     e.preventDefault()
     if (!form.guestName.trim()) { setError('Guest name is required'); return }
     if (!form.checkIn)          { setError('Check-in date is required'); return }
+    if (form.roomIds.length === 0) { setError('At least one room is required'); return }
     setSaving(true); setError('')
     try {
       const res = await fetch(`/api/bookings/${id}`, {
@@ -254,6 +255,7 @@ export default function BookingDetailPage() {
               <option value="Direct">Direct</option>
               <option value="WhatsApp">WhatsApp</option>
               <option value="Phone">Phone</option>
+              <option value="mobile">Mobile App</option>
             </select>
           </div>
         </div>

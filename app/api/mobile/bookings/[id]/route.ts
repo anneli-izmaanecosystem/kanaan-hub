@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { checkMobileAuth } from '@/lib/mobile-auth'
 import { db, bookings, bookingRooms } from '@/lib/db'
 import { eq, and, gt, lte, sql, inArray, ne } from 'drizzle-orm'
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const { id } = await params
   const [booking] = await db.select().from(bookings).where(eq(bookings.id, parseInt(id)))
@@ -17,8 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const { id } = await params
   const bookingId = parseInt(id)
@@ -34,12 +32,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Empty strings from the edit form aren't valid Postgres date literals — treat as "unset".
     if (rest.payDate === '') rest.payDate = null
-    // checkOut, totalAmount, depositPaid, balanceDue are NOT NULL columns — mirror the POST
-    // route's fallback instead of letting an empty string hit the DB as an invalid literal.
-    if (rest.checkOut === '') rest.checkOut = rest.checkIn
-    if (rest.totalAmount === '') rest.totalAmount = '0'
-    if (rest.depositPaid === '') rest.depositPaid = '0'
-    if (rest.balanceDue === '') rest.balanceDue = '0'
 
     const selectedRoomIds: number[] | undefined = Array.isArray(roomIds) && roomIds.length
       ? roomIds.map((rid: any) => parseInt(rid))
@@ -79,14 +71,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     return NextResponse.json(updated)
   } catch (err: any) {
-    console.error('[bookings PATCH]', err)
+    console.error('[mobile/bookings PATCH]', err)
     return NextResponse.json({ error: 'Failed to update booking' }, { status: 500 })
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth()
-  if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const { id } = await params
   const [updated] = await db

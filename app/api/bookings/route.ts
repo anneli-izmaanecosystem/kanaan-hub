@@ -63,6 +63,9 @@ export async function POST(req: NextRequest) {
     if (!guestName || !checkIn)
       return NextResponse.json({ error: 'Guest name and check-in date are required' }, { status: 400 })
 
+    if (!selectedRoomIds.length)
+      return NextResponse.json({ error: 'At least one room is required' }, { status: 400 })
+
     if (checkOut && checkOut <= checkIn)
       return NextResponse.json({ error: 'Check-out must be after check-in' }, { status: 400 })
 
@@ -92,7 +95,7 @@ export async function POST(req: NextRequest) {
       contact:  contact || guestName,
       idNumber: idNumber ?? null,
       checkIn,
-      checkOut: checkOut ?? checkIn,
+      checkOut: checkOut || checkIn,
       adults:   parseInt(adults ?? '1'),
       children: parseInt(children ?? '0'),
       nights,
@@ -103,7 +106,7 @@ export async function POST(req: NextRequest) {
       status:        status ?? 'confirmed',
       paymentMethod: paymentMethod ?? null,
       invoiceNumber: invoiceNumber ?? null,
-      payDate:       payDate ?? null,
+      payDate:       payDate || null,
     }).returning()
 
     if (selectedRoomIds.length)

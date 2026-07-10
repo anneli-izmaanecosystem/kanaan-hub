@@ -113,6 +113,7 @@ export default function NewBookingPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (form.roomIds.length === 0) { setError('At least one room is required'); return }
     setSaving(true); setError('')
     try {
       const res = await fetch('/api/bookings', {
