@@ -207,6 +207,24 @@ export default function AlpheusDaysPage() {
   const totalOnsite  = days.filter(d => d.dayType === 'onsite').length
   const totalHrsAll  = days.reduce((s, d) => s + d.clients.reduce((cs, c) => cs + parseFloat(c.hoursWorked), 0), 0)
 
+  // ── Monthly revenue totals for the "All Days" table ──────────────────────────
+  const monthTotals = new Map<string, { count: number; revenue: number; diesel: number }>()
+  for (const d of days) {
+    const month   = d.dayDate.slice(0, 7)
+    const revenue = d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0) * tlbRateNum
+    const diesel  = d.linkedAllocations.reduce((s, a) => s + parseFloat(a.litres), 0)
+    const cur = monthTotals.get(month) ?? { count: 0, revenue: 0, diesel: 0 }
+    cur.count++; cur.revenue += revenue; cur.diesel += diesel
+    monthTotals.set(month, cur)
+  }
+  function monthLabel(month: string) {
+    const [y, m] = month.split('-').map(Number)
+    return new Date(y, m - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+  }
+  // Newly-added days are optimistically prepended regardless of date — sort defensively
+  // so the table (and its month headers) always read in chronological order.
+  const sortedDays = [...days].sort((a, b) => b.dayDate.localeCompare(a.dayDate))
+
   // ── Salary calc for selected month ───────────────────────────────────────────
   const monthDays = days.filter(d => d.dayDate.startsWith(salaryMonth))
   const salary    = calculateAlpheusSalary(monthDays.map(d => ({
@@ -394,7 +412,7 @@ export default function AlpheusDaysPage() {
                           placeholder="e.g. 8" className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-500">Labour excl VAT</label>
+                        <label className="text-[10px] text-gray-500">Revenue excl VAT</label>
                         <div className="mt-0.5 rounded-md border border-gray-100 bg-white px-2.5 py-1.5 text-sm font-semibold text-green-700">
                           R {((parseFloat(c.hoursWorked) || 0) * tlbRateNum).toFixed(2)}
                         </div>
@@ -473,7 +491,7 @@ export default function AlpheusDaysPage() {
                   <th className="px-4 py-3 text-left font-medium">Client(s)</th>
                   <th className="px-4 py-3 text-right font-medium">On-site h</th>
                   <th className="px-4 py-3 text-right font-medium">Off-site h</th>
-                  <th className="px-4 py-3 text-right font-medium">Labour excl VAT</th>
+                  <th className="px-4 py-3 text-right font-medium">Revenue excl VAT</th>
                   <th className="px-4 py-3 text-right font-medium">Diesel (L)</th>
                   <th className="px-4 py-3 text-center font-medium">Matched</th>
                   <th className="px-4 py-3 text-center font-medium w-10"></th>
@@ -481,16 +499,31 @@ export default function AlpheusDaysPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {days.map(d => {
+                {(() => {
+                  let lastMonth = ''
+                  return sortedDays.flatMap(d => {
                   const offHrs  = d.clients.reduce((s, c) => s + parseFloat(c.hoursWorked), 0)
                   const onHrs   = parseFloat(d.onsiteHours ?? '0')
                   const labour  = offHrs * tlbRateNum
                   const diesel  = d.linkedAllocations.reduce((s, a) => s + parseFloat(a.litres), 0)
                   const matched = d.linkedAllocations.length > 0
 
+                  const month = d.dayDate.slice(0, 7)
+                  const isNewMonth = month !== lastMonth
+                  lastMonth = month
+                  const totals = monthTotals.get(month)!
+                  const headerRow = isNewMonth ? (
+                    <tr key={`month-${month}`} className="bg-gray-100">
+                      <td colSpan={10} className="px-4 py-2 text-xs font-semibold text-gray-600">
+                        {monthLabel(month)} — {totals.count} day{totals.count !== 1 ? 's' : ''} · R {totals.revenue.toFixed(2)} revenue excl VAT
+                        {totals.diesel > 0 ? ` · ${totals.diesel.toFixed(0)} L diesel` : ''}
+                      </td>
+                    </tr>
+                  ) : null
+
                   if (editId === d.id) {
                     // ── Inline edit row ──────────────────────────────────────
-                    return (
+                    return [headerRow, (
                       <tr key={d.id} className="bg-amber-50">
                         <td colSpan={10} className="px-4 py-4">
                           <div className="space-y-3">
@@ -562,10 +595,10 @@ export default function AlpheusDaysPage() {
                           </div>
                         </td>
                       </tr>
-                    )
+                    )].filter(Boolean)
                   }
 
-                  return (
+                  return [headerRow, (
                     <tr key={d.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{fmtDate(d.dayDate)}</td>
                       <td className="px-4 py-3">
@@ -623,8 +656,9 @@ export default function AlpheusDaysPage() {
                         )}
                       </td>
                     </tr>
-                  )
-                })}
+                  )].filter(Boolean)
+                })
+                })()}
               </tbody>
             </table>
           )}
