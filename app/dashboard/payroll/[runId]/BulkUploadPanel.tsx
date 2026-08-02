@@ -30,6 +30,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
   // null = explicitly skipped; number = assigned worker id
   const [overrides,  setOverrides]  = useState<Record<string, number | null>>({})
   const [imported,   setImported]   = useState<{ name: string; days: number; deds: number }[] | null>(null)
+  const [importErrors, setImportErrors] = useState<string[]>([])
   const [existingMap, setExistingMap] = useState<ExistingMap>({})
 
   // ── helpers to mutate results in place ──────────────────────────────────────
@@ -130,6 +131,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
   async function confirmImport() {
     if (!results) return
     setImporting(true)
+    const failures: string[] = []
 
     for (const result of results) {
       const wid = getWid(result)
@@ -139,7 +141,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
       const workerIsHourly = !worker || worker.payStructure === 'hourly'
 
       // Save attendance days in parallel
-      await Promise.all(result.days.map(day =>
+      const dayResults = await Promise.all(result.days.map(day =>
         fetch(`/api/payroll/${runId}/attendance/${wid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -157,11 +159,14 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
           }),
         })
       ))
+      dayResults.forEach((res, i) => {
+        if (!res.ok) failures.push(`${result.workerName} — ${fmtDate(result.days[i].date)}: attendance not saved`)
+      })
 
       // Save shop deductions in parallel
-      await Promise.all(result.shop_deductions
-        .filter(ded => ded.amount > 0)
-        .map(ded => fetch(`/api/payroll/${runId}/advances/${wid}`, {
+      const filteredDeds = result.shop_deductions.filter(ded => ded.amount > 0)
+      const dedResults = await Promise.all(filteredDeds.map(ded =>
+        fetch(`/api/payroll/${runId}/advances/${wid}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -170,11 +175,15 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
             advanceType: 'shop_deduction',
             note:        ded.note || 'from timesheet',
           }),
-        }))
-      )
+        })
+      ))
+      dedResults.forEach((res, i) => {
+        if (!res.ok) failures.push(`${result.workerName} — R${filteredDeds[i].amount} deduction on ${fmtDate(filteredDeds[i].date)}: not saved`)
+      })
 
       // Recalculate payroll entry from saved attendance + advances
-      await fetch(`/api/payroll/${runId}/attendance/${wid}/sync`, { method: 'POST' })
+      const syncRes = await fetch(`/api/payroll/${runId}/attendance/${wid}/sync`, { method: 'POST' })
+      if (!syncRes.ok) failures.push(`${result.workerName}: payslip recalculation failed — figures may be stale`)
     }
 
     // Build success summary before clearing
@@ -183,13 +192,14 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
       const worker = allWorkers.find(w => w.id === wid)
       return {
         name: worker?.name ?? r.workerName,
-        days: r.days.filter(d => d.present).length,
+        days: r.days.length,
         deds: r.shop_deductions.filter(d => d.amount > 0).length,
       }
     })
 
     setResults(null); setImporting(false)
     setImported(summary)
+    setImportErrors(failures)
     onDone()
   }
 
@@ -201,7 +211,7 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
   const matched    = results?.filter(r => !r.error && getWid(r) != null) ?? []
   const unmatched  = results?.filter(r => !r.error && getWid(r) == null && !r.matched) ?? []
   const errored    = results?.filter(r => !!r.error) ?? []
-  const totalDays  = matched.reduce((s, r) => s + r.days.filter(d => d.present).length, 0)
+  const totalDays  = matched.reduce((s, r) => s + r.days.length, 0)
   const totalDeds  = matched.reduce((s, r) => s + r.shop_deductions.filter(d => d.amount > 0).length, 0)
 
   // Need period start for new deduction date default
@@ -223,23 +233,33 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
 
       {imported && (
         <div className="space-y-2">
-          <p className="text-sm font-medium text-green-800 flex items-center gap-2">
-            <Check size={15} className="text-green-600" /> Imported successfully
+          <p className={`text-sm font-medium flex items-center gap-2 ${importErrors.length ? 'text-amber-800' : 'text-green-800'}`}>
+            {importErrors.length
+              ? <><AlertTriangle size={15} className="text-amber-600" /> Imported with {importErrors.length} error{importErrors.length > 1 ? 's' : ''}</>
+              : <><Check size={15} className="text-green-600" /> Imported successfully</>}
           </p>
           <div className="rounded-lg bg-white border border-green-100 divide-y divide-gray-50">
             {imported.map((r, i) => (
               <div key={i} className="flex items-center justify-between px-3 py-2 text-xs">
                 <span className="font-medium text-gray-800">{r.name}</span>
                 <span className="text-gray-400">
-                  {r.days > 0 && `${r.days}d attendance`}
+                  {r.days > 0 && `${r.days} attendance day${r.days > 1 ? 's' : ''}`}
                   {r.days > 0 && r.deds > 0 && ' · '}
-                  {r.deds > 0 && `${r.deds} deduction${r.deds > 1 ? 's' : ''}`}
+                  {r.deds > 0 && `${r.deds} shop deduction${r.deds > 1 ? 's' : ''}`}
                   {r.days === 0 && r.deds === 0 && 'skipped'}
                 </span>
               </div>
             ))}
           </div>
-          <button onClick={() => setImported(null)}
+          {importErrors.length > 0 && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-1">
+              <p className="text-xs font-semibold text-amber-800">Some records failed to save — please review and retry:</p>
+              {importErrors.map((e, i) => (
+                <p key={i} className="text-xs text-amber-700">⚠ {e}</p>
+              ))}
+            </div>
+          )}
+          <button onClick={() => { setImported(null); setImportErrors([]) }}
             className="flex items-center gap-2 rounded-lg border border-dashed border-indigo-300 px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-100 transition-colors">
             <Upload size={14} /> Upload more timesheets
           </button>
@@ -276,6 +296,12 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
             <span className="text-green-700 font-medium">{matched.length} matched</span>
             {unmatched.length > 0 && <span className="text-amber-700 font-medium">{unmatched.length} unmatched</span>}
             {errored.length  > 0 && <span className="text-red-600 font-medium">{errored.length} errors</span>}
+            {matched.length > 0 && (
+              <span className="text-gray-400">
+                {totalDays} attendance day{totalDays === 1 ? '' : 's'}
+                {totalDeds > 0 && ` · ${totalDeds} shop deduction${totalDeds > 1 ? 's' : ''}`}
+              </span>
+            )}
           </div>
 
           {/* Unmatched — assign worker */}
@@ -326,9 +352,9 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${wid ? 'bg-green-500' : 'bg-amber-400'}`} />
                       <span className="text-sm font-medium text-gray-800">{r.workerName || '(unknown)'}</span>
                       <span className="text-xs text-gray-400">
-                        {dPresent > 0 && `${dPresent}d present`}
-                        {dAbsent  > 0 && ` · ${dAbsent}d absent`}
-                        {deds.length  > 0 && ` · ${deds.length} deduction${deds.length > 1 ? 's' : ''}`}
+                        {dPresent > 0 && `${dPresent} present`}
+                        {dAbsent  > 0 && ` · ${dAbsent} absent`}
+                        {deds.length  > 0 && ` · ${deds.length} shop deduction${deds.length > 1 ? 's' : ''}`}
                       </span>
                       {hasExisting && (
                         <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 flex-shrink-0">
@@ -515,8 +541,8 @@ export default function BulkUploadPanel({ runId, onDone }: { runId: string; onDo
                     {importing
                       ? <><Loader size={14} className="animate-spin" /> Importing…</>
                       : hasOverrides
-                      ? <><AlertTriangle size={14} /> Override &amp; Import {matched.length} workers · {totalDays} days{totalDeds > 0 ? ` + ${totalDeds} deductions` : ''}</>
-                      : <><Check size={14} /> Import {matched.length} workers · {totalDays} days{totalDeds > 0 ? ` + ${totalDeds} deductions` : ''}</>}
+                      ? <><AlertTriangle size={14} /> Override &amp; Import {matched.length} workers · {totalDays} attendance days{totalDeds > 0 ? ` + ${totalDeds} shop deductions` : ''}</>
+                      : <><Check size={14} /> Import {matched.length} workers · {totalDays} attendance days{totalDeds > 0 ? ` + ${totalDeds} shop deductions` : ''}</>}
                   </button>
                   <button onClick={() => fileRef.current?.click()} disabled={processing}
                     className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
