@@ -199,8 +199,13 @@ export default function PayslipPage() {
         {/* Net pay */}
         <div className="px-8 py-6 border-t-2 border-gray-900 flex justify-between items-baseline">
           <span className="text-base font-bold text-gray-900">{isContractor ? 'Total due' : 'Net pay'}</span>
-          <span className="text-3xl font-bold text-gray-900">{r(entry.netPay)}</span>
+          <span className={`text-3xl font-bold ${parseFloat(entry.netPay) < 0 ? 'text-red-700' : 'text-gray-900'}`}>{r(entry.netPay)}</span>
         </div>
+        {parseFloat(entry.netPay) < 0 && (
+          <p className="px-8 pb-4 -mt-2 text-xs font-medium text-red-700">
+            ⚠ Deductions exceed earnings this period — resolve before paying out.
+          </p>
+        )}
 
         {/* Employer UIF info line */}
         {!isContractor && parseFloat(entry.uifEmployer) > 0 && (

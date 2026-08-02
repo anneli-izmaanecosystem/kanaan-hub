@@ -89,8 +89,9 @@ const UIF_CAP  = 177.12  // 1% of R17,712 ceiling wage
 const NMW_HOURLY = 30.23  // effective 1 March 2026
 const PAYE_ANNUAL_THRESHOLD = 95750  // 2025/26 tax year
 
-// Saturday multiplier for hourly workers (BCEA s.10)
-const SAT_MULTIPLIER = 1.5
+// Saturdays are paid at normal rate, not the BCEA s.10 1.5x premium — the farm
+// keeps weekly hours within the 45h/week (3-month average) threshold so no
+// overtime premium is owed; this is a deliberate policy, not an oversight.
 // PH multiplier for employees (BCEA s.18)
 const PH_MULTIPLIER  = 2.0
 
@@ -118,6 +119,7 @@ export interface EntryInput {
   // days-based (daily & floor workers)
   daysWorked:    number
   saturdayDays:  number
+  phDays:        number   // public holiday days — daily workers only, if confirmed double
   unpaidLeaveDays: number  // floor workers: days to deduct from floor
   // additions
   bonus:          number
@@ -161,8 +163,8 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
     const rate = parseFloat(worker.dailyRate ?? '0')
     basicPay    = entry.daysWorked    * rate
     saturdayPay = entry.saturdayDays  * rate  // flat day rate on Saturdays (per actual practice)
-    // PH: double for employees, zero for contractors
-    phPay = 0  // PH days captured separately via phHours if needed
+    // PH: double day rate for employees once confirmed, zero for contractors (BCEA s.18)
+    phPay = isEmployee ? entry.phDays * rate * PH_MULTIPLIER : 0
 
   } else if (worker.payStructure === 'floor') {
     // Floor absorbs all ordinary weekdays. Deduct unpaid leave at daily equivalent.
@@ -211,6 +213,7 @@ export function defaultEntry(): EntryInput {
     phHours:              0,
     daysWorked:           0,
     saturdayDays:         0,
+    phDays:               0,
     unpaidLeaveDays:      0,
     bonus:                0,
     otherAdditions:       0,

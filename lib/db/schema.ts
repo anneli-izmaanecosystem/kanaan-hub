@@ -169,7 +169,7 @@ export const attendanceDays = pgTable('attendance_days', {
   phDoubleConfirmed: boolean('ph_double_confirmed'), // null=pending, true=pay double, false=normal
   source:            dataSourceEnum('source').notNull().default('manual'),
   note:              text('note'),
-})
+}, t => [unique('attendance_days_worker_run_date_unique').on(t.workerId, t.runId, t.date)])
 
 // ── Advances & shop deductions (running ledger per worker) ────────────────────
 export const advances = pgTable('advances', {

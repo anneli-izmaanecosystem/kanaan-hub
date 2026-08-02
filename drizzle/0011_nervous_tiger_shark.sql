@@ -1,0 +1,1 @@
+ALTER TABLE "attendance_days" ADD CONSTRAINT "attendance_days_worker_run_date_unique" UNIQUE("worker_id","run_id","date");

@@ -78,6 +78,13 @@
       "when": 1783264020404,
       "tag": "0010_room_pricelist_and_multi_room_bookings",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785701029640,
+      "tag": "0011_nervous_tiger_shark",
+      "breakpoints": true
     }
   ]
 }

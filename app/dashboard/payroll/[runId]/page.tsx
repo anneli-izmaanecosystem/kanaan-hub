@@ -207,7 +207,8 @@ function WorkerRow({ entry, worker, runId, locked }: {
   const net      = parseFloat(entry.netPay      || '0')
   const advances = parseFloat(entry.salaryAdvance  || '0')
   const shop     = parseFloat(entry.shopDeductions || '0')
-  const payeFlag = entry.payeTaxableAmount != null && parseFloat(entry.payeTaxableAmount) * 12 > 95750
+  const payeFlag  = entry.payeTaxableAmount != null && parseFloat(entry.payeTaxableAmount) * 12 > 95750
+  const negNetPay = net < 0
 
   return (
     <div className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
@@ -217,6 +218,11 @@ function WorkerRow({ entry, worker, runId, locked }: {
           {payeFlag && (
             <span className="flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
               <AlertTriangle size={10} /> PAYE watch
+            </span>
+          )}
+          {negNetPay && (
+            <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+              <AlertTriangle size={10} /> Negative net pay
             </span>
           )}
         </div>
@@ -234,7 +240,7 @@ function WorkerRow({ entry, worker, runId, locked }: {
         </div>
         <div>
           <p className="text-xs text-gray-400">Net Pay</p>
-          <p className="text-sm font-semibold text-green-700">{fmt(net)}</p>
+          <p className={`text-sm font-semibold ${negNetPay ? 'text-red-700' : 'text-green-700'}`}>{fmt(net)}</p>
         </div>
       </div>
 

@@ -110,7 +110,7 @@ export default function StaffLogReviewPage() {
     if (!row) return
     setProcessing(prev => ({ ...prev, [entry.id]: true }))
 
-    await fetch(`/api/payroll/${runId}/staff-log`, {
+    const res = await fetch(`/api/payroll/${runId}/staff-log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -123,9 +123,17 @@ export default function StaffLogReviewPage() {
         absenceReason: row.action === 'attendance' && row.absent ? row.absenceReason : undefined,
       }),
     })
+    const data = await res.json().catch(() => ({}))
 
     setProcessing(prev => ({ ...prev, [entry.id]: false }))
-    setDone(prev => new Set(prev).add(entry.id))
+
+    if (data.remaining > 0) {
+      // Only part of the logged amount was applied to this run — the entry stays
+      // pending with the reduced remaining amount, so refresh instead of marking it done.
+      load()
+    } else {
+      setDone(prev => new Set(prev).add(entry.id))
+    }
   }
 
   async function processAll() {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, payrollEntries, workers } from '@/lib/db'
+import { db, payrollEntries, workers, payrollRuns } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { calculatePayroll } from '@/lib/payroll'
 
@@ -11,8 +11,13 @@ export async function PATCH(
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const { entryId } = await params
+  const { runId, entryId } = await params
   try {
+    const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, parseInt(runId)))
+    if (!run) return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+    if (run.status === 'finalised')
+      return NextResponse.json({ error: 'Run is finalised — entries can no longer change' }, { status: 403 })
+
     const body = await req.json()
 
     const [entry] = await db
@@ -35,6 +40,7 @@ export async function PATCH(
       phHours:              p('phHours',              '0'),
       daysWorked:           p('daysWorked',           '0'),
       saturdayDays:         p('saturdayDays',         '0'),
+      phDays:               p('phDays',               '0'),
       unpaidLeaveDays:      p('unpaidLeaveDays',      '0'),
       bonus:                p('bonus',                '0'),
       otherAdditions:       p('otherAdditions',       '0'),

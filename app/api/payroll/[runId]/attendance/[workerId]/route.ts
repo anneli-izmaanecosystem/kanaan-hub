@@ -129,7 +129,15 @@ export async function POST(req: NextRequest, { params }: Params) {
       .returning()
     return NextResponse.json(updated)
   } else {
-    const [created] = await db.insert(attendanceDays).values(values).returning()
-    return NextResponse.json(created, { status: 201 })
+    try {
+      const [created] = await db.insert(attendanceDays).values(values).returning()
+      return NextResponse.json(created, { status: 201 })
+    } catch (err: any) {
+      // Unique violation (worker_id, run_id, date) — a concurrent request already
+      // created this day's row. Ask the client to reload rather than surface a raw 500.
+      if (err?.code === '23505')
+        return NextResponse.json({ error: 'This day was just saved by another request — please refresh and retry' }, { status: 409 })
+      throw err
+    }
   }
 }

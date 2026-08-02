@@ -66,5 +66,14 @@ export async function POST() {
     SELECT "id", "room_id" FROM "bookings"
     ON CONFLICT ("booking_id", "room_id") DO NOTHING`
 
+  // 0011: prevent duplicate attendance rows for the same worker/run/day (concurrent
+  // or duplicate writes previously could create more than one row silently).
+  // NOTE: if any duplicate (worker_id, run_id, date) rows already exist, this will
+  // fail with a unique-violation (not the duplicate_object case caught below) —
+  // check for and de-duplicate any existing conflicts before re-running this route.
+  await sql`DO $$ BEGIN
+    ALTER TABLE "attendance_days" ADD CONSTRAINT "attendance_days_worker_run_date_unique" UNIQUE("worker_id","run_id","date");
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+
   return NextResponse.json({ ok: true })
 }

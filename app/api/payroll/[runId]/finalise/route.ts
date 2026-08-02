@@ -37,6 +37,15 @@ export async function POST(
         { status: 422 },
       )
     }
+
+    const negativePay = entries.filter(({ entry }) => parseFloat(entry.netPay ?? '0') < 0)
+    if (negativePay.length > 0) {
+      const names = negativePay.map(({ worker }) => worker.name).join(', ')
+      return NextResponse.json(
+        { error: `The following workers have negative net pay — deductions exceed earnings, check advances/deductions first: ${names}` },
+        { status: 422 },
+      )
+    }
   }
 
   const year = new Date(run.periodEnd).getFullYear()
