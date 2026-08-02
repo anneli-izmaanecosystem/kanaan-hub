@@ -9,9 +9,12 @@ export async function POST() {
   await sql`ALTER TABLE "payroll_entries" ADD COLUMN IF NOT EXISTS "marked_ready_at" timestamp`
   await sql`ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "ical_url" text`
   await sql`ALTER TABLE "bookings" ADD COLUMN IF NOT EXISTS "external_id" text`
+  // A UNIQUE constraint implicitly creates a backing index with the same name, so
+  // re-running this on an already-migrated DB raises duplicate_table (42P07), not
+  // duplicate_object (42710) — catch both so idempotent re-runs actually no-op.
   await sql`DO $$ BEGIN
     ALTER TABLE "bookings" ADD CONSTRAINT "bookings_external_id_unique" UNIQUE("external_id");
-  EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+  EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$`
 
   // 0010: room pricelist + multi-room bookings
   await sql`DO $$ BEGIN
@@ -44,7 +47,7 @@ export async function POST() {
   EXCEPTION WHEN duplicate_object THEN NULL; END $$`
   await sql`DO $$ BEGIN
     ALTER TABLE "room_combo_members" ADD CONSTRAINT "room_combo_members_combo_id_room_id_unique" UNIQUE("combo_id","room_id");
-  EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+  EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$`
 
   await sql`CREATE TABLE IF NOT EXISTS "booking_rooms" (
     "id" serial PRIMARY KEY NOT NULL,
@@ -59,7 +62,7 @@ export async function POST() {
   EXCEPTION WHEN duplicate_object THEN NULL; END $$`
   await sql`DO $$ BEGIN
     ALTER TABLE "booking_rooms" ADD CONSTRAINT "booking_rooms_booking_id_room_id_unique" UNIQUE("booking_id","room_id");
-  EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+  EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$`
 
   // Backfill: every existing booking occupies (at least) its primary room
   await sql`INSERT INTO "booking_rooms" ("booking_id", "room_id")
@@ -69,11 +72,12 @@ export async function POST() {
   // 0011: prevent duplicate attendance rows for the same worker/run/day (concurrent
   // or duplicate writes previously could create more than one row silently).
   // NOTE: if any duplicate (worker_id, run_id, date) rows already exist, this will
-  // fail with a unique-violation (not the duplicate_object case caught below) —
-  // check for and de-duplicate any existing conflicts before re-running this route.
+  // fail with a unique-violation (not the duplicate_object/duplicate_table cases
+  // caught below) — check for and de-duplicate any existing conflicts first.
+  // (Confirmed zero existing duplicates in production as of 2026-08-02.)
   await sql`DO $$ BEGIN
     ALTER TABLE "attendance_days" ADD CONSTRAINT "attendance_days_worker_run_date_unique" UNIQUE("worker_id","run_id","date");
-  EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+  EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$`
 
   return NextResponse.json({ ok: true })
 }
