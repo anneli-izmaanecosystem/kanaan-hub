@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, bookings, rooms, bookingRooms } from '@/lib/db'
-import { eq, and, gt, gte, lte, sql, inArray } from 'drizzle-orm'
+import { eq, and, gt, gte, lt, lte, sql, inArray } from 'drizzle-orm'
 import { checkRatelimit } from '@/lib/ratelimit'
 import { monthEndDate } from '@/lib/date-sa'
 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       .innerJoin(bookings, eq(bookingRooms.bookingId, bookings.id))
       .where(and(
         inArray(bookingRooms.roomId, selectedRoomIds),
-        lte(bookings.checkIn, checkOut),
+        lt(bookings.checkIn, checkOut),
         gt(bookings.checkOut, checkIn),
         sql`${bookings.status} != 'cancelled'`,
       ))
@@ -86,8 +86,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'One or more rooms are not available for those dates' }, { status: 409 })
 
     const nights  = checkOut ? Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 86_400_000) : 0
-    const deposit = parseFloat(depositPaid ?? '0')
-    const total   = parseFloat(totalAmount ?? '0')
+    // '??' doesn't catch an empty string — an unset amount field must fall back to '0'
+    // too, or parseFloat('') produces NaN, which Postgres numeric happily stores as-is.
+    const deposit = parseFloat(depositPaid || '0')
+    const total   = parseFloat(totalAmount || '0')
 
     const [booking] = await db.insert(bookings).values({
       roomId:   selectedRoomIds[0] ?? null,
@@ -96,8 +98,8 @@ export async function POST(req: NextRequest) {
       idNumber: idNumber ?? null,
       checkIn,
       checkOut: checkOut || checkIn,
-      adults:   parseInt(adults ?? '1'),
-      children: parseInt(children ?? '0'),
+      adults:   parseInt(adults || '1'),
+      children: parseInt(children || '0'),
       nights,
       totalAmount:  String(total),
       depositPaid:  String(deposit),

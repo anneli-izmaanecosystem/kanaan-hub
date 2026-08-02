@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkMobileAuth } from '@/lib/mobile-auth'
 import { db, bookings, bookingRooms } from '@/lib/db'
-import { eq, and, gt, lte, sql, inArray, ne } from 'drizzle-orm'
+import { eq, and, gt, lt, sql, inArray, ne } from 'drizzle-orm'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .where(and(
           inArray(bookingRooms.roomId, selectedRoomIds),
           ne(bookings.id, bookingId),
-          lte(bookings.checkIn, rest.checkOut),
+          lt(bookings.checkIn, rest.checkOut),
           gt(bookings.checkOut, rest.checkIn),
           sql`${bookings.status} != 'cancelled'`,
         ))
