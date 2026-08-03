@@ -11,7 +11,7 @@ async function seed() {
     {
       name: 'Kanaan Guest Farm', tradingName: 'Kanaan Guest Farm',
       uifRef: '2880303/3', entityType: 'kanaan' as const,
-      address: 'Kanaan Guest Farm, Limpopo',
+      address: 'PTN 4 Farm Glencairn 8, Hazyview, 1242',
     },
     { name: 'Plant Hire', tradingName: 'Kanaan Plant Hire', entityType: 'plant_hire' as const },
     { name: 'Investment Project', tradingName: 'Investment Project', entityType: 'investment_project' as const },
