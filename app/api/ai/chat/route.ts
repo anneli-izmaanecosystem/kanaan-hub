@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { db, bookings, rooms, workers } from '@/lib/db'
-import { eq, gte, and } from 'drizzle-orm'
+import { eq, gte, and, ne } from 'drizzle-orm'
 import { checkRatelimit } from '@/lib/ratelimit'
 
 const client = new Anthropic()
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     db.select({ id: bookings.id, guestName: bookings.guestName, checkIn: bookings.checkIn,
                 checkOut: bookings.checkOut, roomId: bookings.roomId, status: bookings.status })
       .from(bookings)
-      .where(and(gte(bookings.checkIn, today), eq(bookings.status, 'confirmed')))
+      .where(and(gte(bookings.checkIn, today), ne(bookings.status, 'cancelled')))
       .orderBy(bookings.checkIn)
       .limit(20),
     db.select().from(rooms).where(eq(rooms.active, true)),
@@ -35,7 +35,7 @@ Today is ${today}.
 
 Active rooms: ${activeRooms.map(r => `${r.name} (${r.type}, R${r.ratePp}/pp/night)`).join(', ')}
 
-Upcoming confirmed bookings (next 20):
+Upcoming bookings (next 20, excluding cancelled):
 ${upcomingBookings.map(b => `- Booking #${b.id}: ${b.guestName}, Room ${b.roomId}, ${b.checkIn}→${b.checkOut}`).join('\n')}
 
 Active staff: ${activeStaff.map(w => `${w.name} (${w.department || 'Staff'})`).join(', ')}

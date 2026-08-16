@@ -84,16 +84,18 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   ])
 
   // KPI calculations
-  // Exclude quote_sent — unconfirmed quotes should not count as revenue
-  const confirmedBookings = monthBookings.filter(b => b.status !== 'quote_sent')
-  const bookingCount = confirmedBookings.length
+  // Streamlined 2026-08: the old 'quote_sent' status (excluded from revenue) was folded into
+  // 'unpaid_quoted' along with real-but-unpaid bookings, so quotes can no longer be told apart
+  // from confirmed-unpaid stays. Revenue now counts every non-cancelled booking for the month.
+  const revenueBookings = monthBookings
+  const bookingCount = revenueBookings.length
 
   // Pro-rate revenue and occupancy by nights within the month.
   // A booking spanning a month boundary (e.g. Jun 28 → Jul 5) contributes only its
   // in-month fraction to this month's revenue, avoiding double-counting.
   let totalRevenue = 0
   let occupiedRoomNights = 0
-  for (const b of confirmedBookings) {
+  for (const b of revenueBookings) {
     const checkInMs  = new Date(b.checkIn).getTime()
     const checkOutMs = new Date(b.checkOut).getTime()
     const s = Math.max(checkInMs, new Date(monthStart).getTime())
@@ -110,14 +112,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const months = surroundingMonths(currentYM)
 
   const statusDot: Record<string, string> = {
+    booking_site:   'bg-blue-500',
+    unpaid_quoted:  'bg-gray-400',
+    deposit_paid:   'bg-purple-500',
     fully_paid:     'bg-green-500',
-    confirmed:      'bg-green-400',
-    partially_paid: 'bg-yellow-400',
-    quote_sent:     'bg-gray-400',
-    unpaid:         'bg-orange-400',
-    pending:        'bg-yellow-300',
-    checked_in:     'bg-blue-400',
-    checked_out:    'bg-gray-300',
+    cancelled:      'bg-red-400',
   }
 
   return (

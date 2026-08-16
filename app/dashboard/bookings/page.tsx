@@ -11,41 +11,47 @@ type Booking = {
   booking: {
     id: number; guestName: string; checkIn: string; checkOut: string
     status: string; adults: number; totalAmount: string; balanceDue: string
-    paymentMethod: string | null; source: string | null
+    paymentMethod: string | null; source: string | null; sourceOther: string | null
   }
   room: Room       // primary room — kept for legacy display
   rooms: Room[]    // all rooms occupied by this booking
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  booking_site:   'bg-blue-100 text-blue-800',
+  unpaid_quoted:  'bg-gray-100 text-gray-700',
+  deposit_paid:   'bg-purple-100 text-purple-800',
   fully_paid:     'bg-green-100 text-green-800',
-  confirmed:      'bg-green-100 text-green-800',
-  partially_paid: 'bg-yellow-100 text-yellow-800',
-  unpaid:         'bg-orange-100 text-orange-800',
-  quote_sent:     'bg-gray-100 text-gray-700',
-  pending:        'bg-yellow-100 text-yellow-800',
-  checked_in:     'bg-blue-100 text-blue-800',
-  checked_out:    'bg-gray-100 text-gray-700',
   cancelled:      'bg-red-100 text-red-700',
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  fully_paid: 'Fully Paid', confirmed: 'Confirmed', partially_paid: 'Partial',
-  unpaid: 'Unpaid', quote_sent: 'Quote', pending: 'Pending',
-  checked_in: 'In', checked_out: 'Out', cancelled: 'Cancelled',
+  booking_site:  'Booking Site',
+  unpaid_quoted: 'Unpaid / Quoted',
+  deposit_paid:  'Deposit Paid',
+  fully_paid:    'Fully Paid',
+  cancelled:     'Cancelled',
 }
 
-// Grid cell colours matching original
 const GRID_CELL: Record<string, string> = {
+  booking_site:   'bg-blue-100 text-blue-900',
+  unpaid_quoted:  'bg-gray-100 text-gray-700',
+  deposit_paid:   'bg-purple-100 text-purple-900',
   fully_paid:     'bg-green-100 text-green-900',
-  confirmed:      'bg-green-100 text-green-900',
-  partially_paid: 'bg-yellow-100 text-yellow-900',
-  unpaid:         'bg-orange-100 text-orange-900',
-  quote_sent:     'bg-gray-100 text-gray-700',
-  pending:        'bg-yellow-100 text-yellow-900',
-  checked_in:     'bg-blue-100 text-blue-900',
-  checked_out:    'bg-gray-50 text-gray-500',
   cancelled:      'bg-red-50 text-red-400',
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  direct_walkin: 'Direct/Walk-in',
+  booking_com:   'Booking.com',
+  lekkaslaap:    'Lekkaslaap',
+  other:         'Other',
+}
+
+function sourceLabel(source: string | null, sourceOther: string | null): string {
+  if (!source) return '—'
+  if (source === 'other') return sourceOther || 'Other'
+  return SOURCE_LABEL[source] ?? source
 }
 
 type AccomTab = 'lodge' | 'backpackers' | 'camping'
@@ -168,8 +174,8 @@ export default function BookingsPage() {
       {/* Legend */}
       <div className="flex gap-4 mb-4 text-xs text-gray-500 flex-wrap">
         {[
-          ['fully_paid','Fully Paid'], ['partially_paid','Partially Paid'],
-          ['unpaid','Unpaid'], ['quote_sent','Quote Sent'],
+          ['booking_site','Booking Site'], ['unpaid_quoted','Unpaid / Quoted'],
+          ['deposit_paid','Deposit Paid'], ['fully_paid','Fully Paid'],
         ].map(([k, label]) => (
           <span key={k} className="flex items-center gap-1">
             <span className={cn('w-3 h-3 rounded-sm inline-block', GRID_CELL[k]?.split(' ')[0])} />
@@ -185,7 +191,7 @@ export default function BookingsPage() {
       ) : (
         <BookingList bookings={bookings} onTogglePaid={async (id, totalAmount, currentlyPaid) => {
           const patch = currentlyPaid
-            ? { status: 'confirmed', depositPaid: '0', balanceDue: totalAmount }
+            ? { status: 'unpaid_quoted', depositPaid: '0', balanceDue: totalAmount }
             : { status: 'fully_paid', depositPaid: totalAmount, balanceDue: '0' }
           await fetch(`/api/bookings/${id}`, {
             method: 'PATCH',
@@ -360,7 +366,7 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
         return (
           booking.guestName.toLowerCase().includes(q) ||
           bookingRooms.some(r => r.name.toLowerCase().includes(q)) ||
-          (booking.source ?? '').toLowerCase().includes(q)
+          sourceLabel(booking.source, booking.sourceOther).toLowerCase().includes(q)
         )
       }
       return true
@@ -488,7 +494,7 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                       {STATUS_LABEL[booking.status] ?? booking.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.source ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{sourceLabel(booking.source, booking.sourceOther)}</td>
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}

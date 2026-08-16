@@ -6,9 +6,16 @@ import {
 // ── Unchanged enums ───────────────────────────────────────────────────────────
 export const roomTypeEnum  = pgEnum('room_type',  ['premium', 'budget', 'dorm', 'camping'])
 export const pricingModeEnum = pgEnum('pricing_mode', ['flat', 'per_pax'])
+// Streamlined 2026-08: collapsed from 9 workflow/payment statuses down to a single
+// payment-stage status, plus 'cancelled'. 'booking_site' marks a booking taken over an
+// OTA (Booking.com / Lekkaslaap) where payment is handled externally.
 export const bookingStatus = pgEnum('booking_status', [
-  'confirmed', 'pending', 'cancelled', 'checked_in', 'checked_out',
-  'fully_paid', 'partially_paid', 'quote_sent', 'unpaid',
+  'booking_site', 'unpaid_quoted', 'deposit_paid', 'fully_paid', 'cancelled',
+])
+// Streamlined 2026-08: replaces the old free-text source field. 'other' pairs with
+// bookings.sourceOther for a free-text value the front desk can enter.
+export const bookingSourceEnum = pgEnum('booking_source', [
+  'direct_walkin', 'booking_com', 'lekkaslaap', 'other',
 ])
 export const payrollStatus = pgEnum('payroll_status', ['draft', 'finalised'])
 
@@ -69,8 +76,9 @@ export const bookings = pgTable('bookings', {
   depositPaid:     numeric('deposit_paid',  { precision: 10, scale: 2 }).notNull().default('0'),
   balanceDue:      numeric('balance_due',   { precision: 10, scale: 2 }).notNull(),
   specialRequests: text('special_requests'),
-  status:          bookingStatus('status').notNull().default('confirmed'),
-  source:          text('source'),
+  status:          bookingStatus('status').notNull().default('unpaid_quoted'),
+  source:          bookingSourceEnum('source'),
+  sourceOther:     text('source_other'), // free-text value when source = 'other'
   paymentMethod:   text('payment_method'),
   invoiceNumber:   text('invoice_number'),
   payDate:         date('pay_date'),

@@ -69,7 +69,7 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
   const existing = await db
     .select({ id: bookings.id, externalId: bookings.externalId })
     .from(bookings)
-    .where(and(eq(bookings.roomId, room.id), eq(bookings.source, 'Booking.com')))
+    .where(and(eq(bookings.roomId, room.id), eq(bookings.source, 'booking_com')))
 
   const existingByUid = new Map(existing.map(b => [b.externalId, b.id]))
   const seenUids = events.map(e => e.uid)
@@ -95,8 +95,8 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
         totalAmount: '0',
         depositPaid: '0',
         balanceDue: '0',
-        status: 'confirmed',
-        source: 'Booking.com',
+        status: 'booking_site',
+        source: 'booking_com',
         notes: event.summary || null,
         externalId: event.uid,
       }).returning()
@@ -113,7 +113,7 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
     .from(bookings)
     .where(and(
       eq(bookings.roomId, room.id),
-      eq(bookings.source, 'Booking.com'),
+      eq(bookings.source, 'booking_com'),
       gte(bookings.checkOut, today),
       seenUids.length > 0 ? notInArray(bookings.externalId, seenUids) : undefined,
     ))

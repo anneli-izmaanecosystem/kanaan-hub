@@ -13,15 +13,18 @@ type Room = {
 type Combo = PriceCombo & { name: string }
 
 const STATUS_OPTIONS = [
-  { value: 'confirmed',      label: 'Confirmed' },
-  { value: 'fully_paid',     label: 'Fully Paid' },
-  { value: 'partially_paid', label: 'Partially Paid' },
-  { value: 'unpaid',         label: 'Unpaid' },
-  { value: 'quote_sent',     label: 'Quote Sent' },
-  { value: 'pending',        label: 'Pending' },
-  { value: 'checked_in',     label: 'Checked In' },
-  { value: 'checked_out',    label: 'Checked Out' },
-  { value: 'cancelled',      label: 'Cancelled' },
+  { value: 'unpaid_quoted', label: 'Unpaid / Quoted' },
+  { value: 'deposit_paid',  label: 'Deposit Paid' },
+  { value: 'fully_paid',    label: 'Fully Paid' },
+  { value: 'booking_site',  label: 'Booking Site' },
+  { value: 'cancelled',     label: 'Cancelled' },
+]
+
+const SOURCE_OPTIONS = [
+  { value: 'direct_walkin', label: 'Direct/Walk-in' },
+  { value: 'booking_com',   label: 'Booking.com' },
+  { value: 'lekkaslaap',    label: 'Lekkaslaap' },
+  { value: 'other',         label: 'Other' },
 ]
 
 export default function BookingDetailPage() {
@@ -40,7 +43,7 @@ export default function BookingDetailPage() {
     roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
     checkIn: '', checkOut: '', adults: '1', children: '0',
     totalAmount: '', depositPaid: '0', balanceDue: '0',
-    status: 'confirmed', source: '', paymentMethod: '', invoiceNumber: '', payDate: '',
+    status: 'unpaid_quoted', source: '', sourceOther: '', paymentMethod: '', invoiceNumber: '', payDate: '',
     specialRequests: '', notes: '',
   })
 
@@ -65,8 +68,9 @@ export default function BookingDetailPage() {
           totalAmount:     b.totalAmount          ?? '',
           depositPaid:     b.depositPaid          ?? '0',
           balanceDue:      b.balanceDue           ?? '0',
-          status:          b.status               ?? 'confirmed',
+          status:          b.status               ?? 'unpaid_quoted',
           source:          b.source               ?? '',
+          sourceOther:     b.sourceOther           ?? '',
           paymentMethod:   b.paymentMethod        ?? '',
           invoiceNumber:   b.invoiceNumber        ?? '',
           payDate:         b.payDate              ?? '',
@@ -128,10 +132,11 @@ export default function BookingDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          roomIds:  form.roomIds.map(rid => parseInt(rid)),
-          adults:   parseInt(form.adults)   || 1,
-          children: parseInt(form.children) || 0,
-          contact:  form.contact || form.guestName,
+          roomIds:     form.roomIds.map(rid => parseInt(rid)),
+          adults:      parseInt(form.adults)   || 1,
+          children:    parseInt(form.children) || 0,
+          contact:     form.contact || form.guestName,
+          sourceOther: form.source === 'other' ? form.sourceOther : null,
           nights:   form.checkIn && form.checkOut
             ? Math.ceil((new Date(form.checkOut).getTime() - new Date(form.checkIn).getTime()) / 86_400_000)
             : undefined,
@@ -249,14 +254,16 @@ export default function BookingDetailPage() {
             <label className={lbl}>Source</label>
             <select className={inp} value={form.source} onChange={e => set('source', e.target.value)}>
               <option value="">— Select —</option>
-              <option value="Walk-in">Walk-in</option>
-              <option value="Online">Online</option>
-              <option value="Booking Site">Booking Site</option>
-              <option value="Direct">Direct</option>
-              <option value="WhatsApp">WhatsApp</option>
-              <option value="Phone">Phone</option>
-              <option value="mobile">Mobile App</option>
+              {SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            {form.source === 'other' && (
+              <input
+                className={cn(inp, 'mt-2')}
+                placeholder="Describe the source"
+                value={form.sourceOther}
+                onChange={e => set('sourceOther', e.target.value)}
+              />
+            )}
           </div>
         </div>
 

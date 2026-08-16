@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { roomIds, guestName, contact, idNumber, checkIn, checkOut, adults, children,
-            totalAmount, depositPaid, specialRequests, status, source, paymentMethod,
+            totalAmount, depositPaid, specialRequests, status, source, sourceOther, paymentMethod,
             invoiceNumber, payDate, notes } = body
 
     const selectedRoomIds: number[] = Array.isArray(roomIds) ? roomIds.map((rid: any) => parseInt(rid)) : []
@@ -100,8 +100,10 @@ export async function POST(req: NextRequest) {
       totalAmount:  String(total),
       depositPaid:  String(deposit),
       balanceDue:   String(Math.max(0, total - deposit)),
-      specialRequests, source: source || 'mobile', notes,
-      status:        status ?? 'confirmed',
+      specialRequests, notes,
+      source:        source || 'direct_walkin',
+      sourceOther:   source === 'other' ? (sourceOther || null) : null,
+      status:        status ?? 'unpaid_quoted',
       paymentMethod: paymentMethod ?? null,
       invoiceNumber: invoiceNumber ?? null,
       payDate:       payDate || null,

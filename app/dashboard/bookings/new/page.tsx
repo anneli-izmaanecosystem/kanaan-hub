@@ -13,15 +13,18 @@ type Room = {
 type Combo = PriceCombo & { name: string }
 
 const STATUS_OPTIONS = [
-  { value: 'confirmed',       label: 'Confirmed' },
-  { value: 'fully_paid',      label: 'Fully Paid' },
-  { value: 'partially_paid',  label: 'Partially Paid' },
-  { value: 'unpaid',          label: 'Unpaid' },
-  { value: 'quote_sent',      label: 'Quote Sent' },
-  { value: 'pending',         label: 'Pending' },
-  { value: 'cancelled',       label: 'Cancelled' },
-  { value: 'checked_in',      label: 'Checked In' },
-  { value: 'checked_out',     label: 'Checked Out' },
+  { value: 'unpaid_quoted', label: 'Unpaid / Quoted' },
+  { value: 'deposit_paid',  label: 'Deposit Paid' },
+  { value: 'fully_paid',    label: 'Fully Paid' },
+  { value: 'booking_site',  label: 'Booking Site' },
+  { value: 'cancelled',     label: 'Cancelled' },
+]
+
+const SOURCE_OPTIONS = [
+  { value: 'direct_walkin', label: 'Direct/Walk-in' },
+  { value: 'booking_com',   label: 'Booking.com' },
+  { value: 'lekkaslaap',    label: 'Lekkaslaap' },
+  { value: 'other',         label: 'Other' },
 ]
 
 export default function NewBookingPage() {
@@ -38,7 +41,7 @@ export default function NewBookingPage() {
     roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
     checkIn: '', checkOut: '', adults: '1', children: '0',
     totalAmount: '', depositPaid: '0',
-    status: 'confirmed', source: '', paymentMethod: '', invoiceNumber: '', payDate: '',
+    status: 'unpaid_quoted', source: '', sourceOther: '', paymentMethod: '', invoiceNumber: '', payDate: '',
     specialRequests: '', notes: '',
   })
 
@@ -119,7 +122,11 @@ export default function NewBookingPage() {
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, roomIds: form.roomIds.map(id => parseInt(id)) }),
+        body: JSON.stringify({
+          ...form,
+          roomIds: form.roomIds.map(id => parseInt(id)),
+          sourceOther: form.source === 'other' ? form.sourceOther : null,
+        }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed'); setSaving(false); return }
       router.push('/dashboard/bookings')
@@ -241,13 +248,16 @@ export default function NewBookingPage() {
             <label className={label}>Source</label>
             <select className={input} value={form.source} onChange={e => set('source', e.target.value)}>
               <option value="">— Select —</option>
-              <option value="Walk-in">Walk-in</option>
-              <option value="Online">Online</option>
-              <option value="Booking Site">Booking Site</option>
-              <option value="Direct">Direct</option>
-              <option value="WhatsApp">WhatsApp</option>
-              <option value="Phone">Phone</option>
+              {SOURCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            {form.source === 'other' && (
+              <input
+                className={cn(input, 'mt-2')}
+                placeholder="Describe the source"
+                value={form.sourceOther}
+                onChange={e => set('sourceOther', e.target.value)}
+              />
+            )}
           </div>
         </div>
 

@@ -32,6 +32,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Empty strings from the edit form aren't valid Postgres date literals — treat as "unset".
     if (rest.payDate === '') rest.payDate = null
+    // '' isn't a valid booking_source enum value — an unset dropdown means "no source".
+    // Only touch sourceOther when this request is actually changing source.
+    if ('source' in rest) {
+      if (rest.source === '') rest.source = null
+      if (rest.source !== 'other') rest.sourceOther = null
+    }
 
     const selectedRoomIds: number[] | undefined = Array.isArray(roomIds) && roomIds.length
       ? roomIds.map((rid: any) => parseInt(rid))

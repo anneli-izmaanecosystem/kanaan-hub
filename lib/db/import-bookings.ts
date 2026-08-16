@@ -20,14 +20,25 @@ function normalizeRoomName(name: string): string {
   return n
 }
 
-function normalizeStatus(s: string): 'confirmed' | 'pending' | 'cancelled' | 'checked_in' | 'checked_out' | 'fully_paid' | 'partially_paid' | 'quote_sent' | 'unpaid' {
+function normalizeStatus(s: string): 'booking_site' | 'unpaid_quoted' | 'deposit_paid' | 'fully_paid' | 'cancelled' {
   switch ((s ?? '').toLowerCase().trim()) {
-    case 'fully paid':    return 'fully_paid'
-    case 'partially paid': return 'partially_paid'
-    case 'quote sent':    return 'quote_sent'
-    case 'unpaid':        return 'unpaid'
-    default:              return 'confirmed'
+    case 'cancelled':      return 'cancelled'
+    case 'fully paid':     return 'fully_paid'
+    case 'partially paid': return 'deposit_paid'
+    case 'quote sent':
+    case 'unpaid':
+    default:               return 'unpaid_quoted'
   }
+}
+
+function normalizeSource(s: string): { source: 'direct_walkin' | 'booking_com' | 'lekkaslaap' | 'other' | null; sourceOther: string | null } {
+  const v = (s ?? '').trim()
+  if (!v) return { source: null, sourceOther: null }
+  const lower = v.toLowerCase()
+  if (lower.startsWith('booking.com') || lower === 'booking site') return { source: 'booking_com', sourceOther: null }
+  if (lower.startsWith('lekkaslaap'))                              return { source: 'lekkaslaap', sourceOther: null }
+  if (['walk-in', 'direct', 'phone', 'mobile'].includes(lower))    return { source: 'direct_walkin', sourceOther: null }
+  return { source: 'other', sourceOther: v }
 }
 
 function parseDate(val: string): string | null {
@@ -108,7 +119,7 @@ async function main() {
         depositPaid:   deposit,
         balanceDue:    balance,
         status:        normalizeStatus(row['Status']),
-        source:        row['Source']?.trim() || null,
+        ...normalizeSource(row['Source']),
         paymentMethod: row['Payment']?.trim() || null,
         invoiceNumber: row['Invoice']?.trim() || null,
         payDate:       payDate,
