@@ -9,13 +9,20 @@ export async function GET(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const month = req.nextUrl.searchParams.get('month') // YYYY-MM
+  const from  = req.nextUrl.searchParams.get('from') // YYYY-MM-DD
+  const to    = req.nextUrl.searchParams.get('to')    // YYYY-MM-DD
+  const month = req.nextUrl.searchParams.get('month') // YYYY-MM — kept for any other caller
   let query = db
     .select({ booking: bookings, room: rooms })
     .from(bookings)
     .innerJoin(rooms, eq(bookings.roomId, rooms.id))
 
-  if (month) {
+  if (from && to) {
+    query = query.where(and(
+      lte(bookings.checkIn, to),
+      gte(bookings.checkOut, from),
+    )) as typeof query
+  } else if (month) {
     const start = `${month}-01`
     const end   = monthEndDate(month)
     query = query.where(and(

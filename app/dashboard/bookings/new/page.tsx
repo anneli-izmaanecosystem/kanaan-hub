@@ -287,11 +287,11 @@ export default function NewBookingPage() {
           </div>
           <div>
             <label className={label}>Total Amount (R) * {autoTotal && <span className="text-gray-400 font-normal">(auto)</span>}</label>
-            <input type="number" step="0.01" className={input} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
           </div>
           <div>
             <label className={label}>Deposit Paid (R)</label>
-            <input type="number" step="0.01" className={input} value={form.depositPaid} onChange={e => set('depositPaid', e.target.value)} />
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.depositPaid} onChange={e => set('depositPaid', e.target.value)} />
           </div>
         </div>
 

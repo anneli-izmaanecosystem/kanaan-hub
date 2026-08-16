@@ -2,9 +2,13 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, FileText, RefreshCw, Tag } from 'lucide-react'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, RefreshCw, Tag } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
-import { todaySA, currentMonthSA } from '@/lib/date-sa'
+import { todaySA, addDaysSA } from '@/lib/date-sa'
+
+const WINDOW_DAYS = 120            // total rendered day-columns (~4 calendar months) — plain table, fine at this scale
+const INITIAL_BACKWARD_DAYS = 14   // default rangeStart = today - 14, so "today" isn't pinned to the very left edge
+const JUMP_DAYS = 30               // increment for the back/today/forward nav buttons
 
 type Room = { id: number; name: string; type: string }
 type Booking = {
@@ -12,6 +16,7 @@ type Booking = {
     id: number; guestName: string; checkIn: string; checkOut: string
     status: string; adults: number; totalAmount: string; balanceDue: string
     paymentMethod: string | null; source: string | null; sourceOther: string | null
+    invoiceNumber: string | null
   }
   room: Room       // primary room — kept for legacy display
   rooms: Room[]    // all rooms occupied by this booking
@@ -67,12 +72,15 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms]       = useState<Room[]>([])
   const [loading, setLoading]   = useState(true)
-  const [month, setMonth]       = useState(() => currentMonthSA())
+  const [rangeStart, setRangeStart] = useState(() => addDaysSA(todaySA(), -INITIAL_BACKWARD_DAYS))
   const [showAll, setShowAll]   = useState(false)
+  const rangeEnd = addDaysSA(rangeStart, WINDOW_DAYS - 1)
 
   useEffect(() => {
     setLoading(true)
-    const url = showAll ? '/api/bookings' : `/api/bookings?month=${month}`
+    const url = (view === 'list' && showAll)
+      ? '/api/bookings'
+      : `/api/bookings?from=${rangeStart}&to=${rangeEnd}`
     Promise.all([
       fetch(url, { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/rooms', { cache: 'no-store' }).then(r => r.json()),
@@ -81,19 +89,11 @@ export default function BookingsPage() {
       setRooms(Array.isArray(r) ? r : [])
       setLoading(false)
     }).catch(() => setLoading(false))
-  }, [month, showAll])
+  }, [view, rangeStart, showAll])
 
-  function prevMonth() {
-    const [y, m] = month.split('-').map(Number)
-    setMonth(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`)
-  }
-  function nextMonth() {
-    const [y, m] = month.split('-').map(Number)
-    setMonth(m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`)
-  }
-
-  const [_ly, _lm] = month.split('-').map(Number)
-  const monthLabel = new Date(_ly, _lm - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+  function jumpBack()    { setRangeStart(r => addDaysSA(r, -JUMP_DAYS)) }
+  function jumpForward() { setRangeStart(r => addDaysSA(r, JUMP_DAYS)) }
+  function jumpToday()   { setRangeStart(addDaysSA(todaySA(), -INITIAL_BACKWARD_DAYS)) }
 
   const tabRooms = rooms.filter(r => {
     if (tab === 'lodge')       return r.type === 'premium' || r.type === 'budget'
@@ -149,27 +149,34 @@ export default function BookingsPage() {
         </div>
       )}
 
-      {/* Month navigator */}
-      <div className="flex items-center gap-3 mb-4">
-        {!showAll && (
-          <>
-            <button onClick={prevMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronLeft size={18} /></button>
-            <span className="text-sm font-medium text-gray-700 w-40 text-center">{monthLabel}</span>
-            <button onClick={nextMonth} className="rounded-md p-1 hover:bg-gray-100"><ChevronRight size={18} /></button>
-          </>
-        )}
-        <button
-          onClick={() => setShowAll(v => !v)}
-          className={cn(
-            'rounded-lg border px-3 py-1 text-xs font-medium transition-colors',
-            showAll
-              ? 'border-gray-900 bg-gray-900 text-white'
-              : 'border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
-          )}
-        >
-          All bookings
-        </button>
-      </div>
+      {/* Grid navigator: slide the loaded window back/forward, or jump to today */}
+      {view === 'grid' && (
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={jumpBack} title="Back 30 days" className="rounded-md p-1 hover:bg-gray-100"><ChevronLeft size={18} /></button>
+          <button onClick={jumpToday} className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors">
+            Today
+          </button>
+          <button onClick={jumpForward} title="Forward 30 days" className="rounded-md p-1 hover:bg-gray-100"><ChevronRight size={18} /></button>
+          <span className="text-sm text-gray-500">{fmtDate(rangeStart)} – {fmtDate(rangeEnd)}</span>
+        </div>
+      )}
+
+      {/* List navigator: toggle between the current rolling window and full history */}
+      {view === 'list' && (
+        <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={() => setShowAll(v => !v)}
+            className={cn(
+              'rounded-lg border px-3 py-1 text-xs font-medium transition-colors',
+              showAll
+                ? 'border-gray-900 bg-gray-900 text-white'
+                : 'border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
+            )}
+          >
+            All bookings
+          </button>
+        </div>
+      )}
 
       {/* Legend */}
       <div className="flex gap-4 mb-4 text-xs text-gray-500 flex-wrap">
@@ -187,7 +194,7 @@ export default function BookingsPage() {
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : view === 'grid' ? (
-        <RoomGrid bookings={bookings} rooms={tabRooms} month={month} />
+        <RoomGrid bookings={bookings} rooms={tabRooms} rangeStart={rangeStart} rangeEnd={rangeEnd} />
       ) : (
         <BookingList bookings={bookings} onTogglePaid={async (id, totalAmount, currentlyPaid) => {
           const patch = currentlyPaid
@@ -209,37 +216,60 @@ export default function BookingsPage() {
   )
 }
 
-function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room[]; month: string }) {
-  const [selYear, selMon] = month.split('-').map(Number)
-  const daysInMonth = new Date(selYear, selMon, 0).getDate()
+type DayCol = { date: string; day: number; month: number; year: number; dow: number }
+
+function buildDays(rangeStart: string, count: number): DayCol[] {
+  return Array.from({ length: count }, (_, i) => {
+    const dateStr = addDaysSA(rangeStart, i)
+    const d = new Date(dateStr + 'T12:00:00Z')
+    return { date: dateStr, day: d.getUTCDate(), month: d.getUTCMonth(), year: d.getUTCFullYear(), dow: d.getUTCDay() }
+  })
+}
+
+function groupByMonth(days: DayCol[]) {
+  const groups: { key: string; label: string; span: number }[] = []
+  for (const d of days) {
+    const key = `${d.year}-${d.month}`
+    const last = groups[groups.length - 1]
+    if (last?.key === key) last.span++
+    else groups.push({
+      key,
+      label: new Date(d.year, d.month, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' }),
+      span: 1,
+    })
+  }
+  return groups
+}
+
+function RoomGrid({ bookings, rooms, rangeStart, rangeEnd }: { bookings: Booking[]; rooms: Room[]; rangeStart: string; rangeEnd: string }) {
   const today = todaySA()
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+  const days = buildDays(rangeStart, WINDOW_DAYS)
+  const monthGroups = groupByMonth(days)
   const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa']
   const scrollRef = useRef<HTMLDivElement>(null)
   const todayColRef = useRef<HTMLTableCellElement>(null)
 
   useEffect(() => {
-    if (todayColRef.current && scrollRef.current) {
-      const col = todayColRef.current
-      const container = scrollRef.current
-      const colLeft = col.offsetLeft
-      const colWidth = col.offsetWidth
-      const containerWidth = container.clientWidth
-      container.scrollLeft = colLeft - 90 // offset by sticky room-name column width
+    const container = scrollRef.current
+    if (!container) return
+    if (todayColRef.current) {
+      container.scrollLeft = todayColRef.current.offsetLeft - 90 // offset by sticky room-name column width
+    } else {
+      container.scrollLeft = 0 // today isn't in this window (user jumped away) — show window start
     }
-  }, [month])
+  }, [rangeStart])
 
   // Build a map: roomId-date → booking (plotted once per room it occupies)
   const cellMap = new Map<string, Booking['booking'] & { roomName: string }>()
   for (const { booking, rooms: bookingRooms } of bookings) {
     if (booking.status === 'cancelled') continue
-    const start = new Date(Math.max(new Date(booking.checkIn).getTime(), new Date(month + '-01').getTime()))
+    const start = new Date(Math.max(new Date(booking.checkIn).getTime(), new Date(rangeStart + 'T00:00:00Z').getTime()))
     // Use inclusive end when checkIn === checkOut (no checkout specified → API defaults to checkIn)
     const endMs = new Date(booking.checkOut).getTime() + (booking.checkIn === booking.checkOut ? 86_400_000 : 0)
     for (const room of bookingRooms) {
       for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
         const dateStr = d.toISOString().split('T')[0]
-        if (dateStr.slice(0, 7) !== month) continue
+        if (dateStr < rangeStart || dateStr > rangeEnd) continue
         cellMap.set(`${room.id}-${dateStr}`, { ...booking, roomName: room.name })
       }
     }
@@ -247,27 +277,33 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
 
   return (
     <div ref={scrollRef} className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-      <table className="border-collapse text-xs" style={{ minWidth: `${90 + daysInMonth * 36}px` }}>
+      <table className="border-collapse text-xs" style={{ minWidth: `${90 + days.length * 36}px` }}>
         <thead>
           <tr>
-            <th className="sticky left-0 z-20 bg-gray-800 text-white px-3 py-2 text-left text-xs font-medium min-w-[90px]">
+            <th rowSpan={2} className="sticky left-0 z-20 bg-gray-800 text-white px-3 py-2 text-left text-xs font-medium min-w-[90px] align-bottom">
               Room
             </th>
+            {monthGroups.map(g => (
+              <th key={g.key} colSpan={g.span}
+                className="text-center py-1 font-semibold border-l border-gray-700 bg-gray-900 text-gray-200 text-xs">
+                {g.label}
+              </th>
+            ))}
+          </tr>
+          <tr>
             {days.map(d => {
-              const dateStr = `${month}-${String(d).padStart(2, '0')}`
-              const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay()
-              const isToday = dateStr === today
-              const isWeekend = dow === 0 || dow === 6
+              const isToday = d.date === today
+              const isWeekend = d.dow === 0 || d.dow === 6
               return (
-                <th key={d}
+                <th key={d.date}
                   ref={isToday ? todayColRef : undefined}
                   className={cn(
                     'text-center py-1 font-normal border-l border-gray-200 w-9',
                     isToday ? 'bg-blue-700 text-white' : isWeekend ? 'bg-gray-700 text-gray-200' : 'bg-gray-800 text-gray-300'
                   )}
                 >
-                  <div className="font-semibold">{d}</div>
-                  <div className="text-[9px] opacity-70">{DOW[dow]}</div>
+                  <div className="font-semibold">{d.day}</div>
+                  <div className="text-[9px] opacity-70">{DOW[d.dow]}</div>
                 </th>
               )
             })}
@@ -280,15 +316,13 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
                 {room.name}
               </td>
               {days.map(d => {
-                const dateStr = `${month}-${String(d).padStart(2, '0')}`
-                const booking = cellMap.get(`${room.id}-${dateStr}`)
-                const isToday = dateStr === today
-                const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay()
-                const isWeekend = dow === 0 || dow === 6
+                const booking = cellMap.get(`${room.id}-${d.date}`)
+                const isToday = d.date === today
+                const isWeekend = d.dow === 0 || d.dow === 6
 
                 if (booking) {
                   return (
-                    <td key={d}
+                    <td key={d.date}
                       className={cn(
                         'border-l border-gray-100 h-8 px-1 overflow-hidden',
                         GRID_CELL[booking.status] ?? 'bg-green-100',
@@ -305,7 +339,7 @@ function RoomGrid({ bookings, rooms, month }: { bookings: Booking[]; rooms: Room
                 }
 
                 return (
-                  <td key={d}
+                  <td key={d.date}
                     className={cn(
                       'border-l border-gray-100 h-8',
                       isToday ? 'bg-blue-50' : isWeekend ? 'bg-gray-50' : ''
@@ -335,6 +369,7 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
   const [sort, setSort]               = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
   const [search, setSearch]           = useState('')
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set())
+  const [paymentMethodFilters, setPaymentMethodFilters] = useState<Set<string>>(new Set())
   const [showCancelled, setShowCancelled] = useState(false)
   const [paying, setPaying]           = useState<number | null>(null)
 
@@ -355,12 +390,27 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
     })
   }
 
+  const paymentMethods = Array.from(
+    new Set(bookings.map(b => b.booking.paymentMethod).filter((m): m is string => !!m))
+  ).sort()
+
+  function togglePaymentMethod(m: string) {
+    setPaymentMethodFilters(prev => {
+      const next = new Set(prev)
+      if (next.has(m)) next.delete(m)
+      else next.add(m)
+      return next
+    })
+  }
+
   const isAll = statusFilters.size === 0
+  const isAllPayment = paymentMethodFilters.size === 0
 
   const filtered = bookings
     .filter(({ booking, rooms: bookingRooms }) => {
       if (booking.status === 'cancelled' && !showCancelled) return false
       if (!isAll && !statusFilters.has(booking.status)) return false
+      if (!isAllPayment && !paymentMethodFilters.has(booking.paymentMethod ?? '')) return false
       if (search) {
         const q = search.toLowerCase()
         return (
@@ -461,6 +511,38 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
             {showCancelled ? 'Hide Cancelled' : 'Show Cancelled'}
           </button>
         </div>
+
+        {/* Payment method chips */}
+        {paymentMethods.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-gray-400">Payment:</span>
+            <button
+              onClick={() => setPaymentMethodFilters(new Set())}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                isAllPayment
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+              )}
+            >
+              All
+            </button>
+            {paymentMethods.map(m => (
+              <button
+                key={m}
+                onClick={() => togglePaymentMethod(m)}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium border transition-colors',
+                  paymentMethodFilters.has(m)
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+                )}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -476,6 +558,8 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                 {th('Check-out', 'checkOut')}
                 {th('Status', 'status')}
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Source</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-medium">Payment</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-medium">Invoice #</th>
                 {th('Total', 'totalAmount', 'right')}
                 {th('Balance', 'balanceDue', 'right')}
                 <th className="px-3 py-3 text-center text-gray-500 font-medium text-xs">Paid</th>
@@ -495,6 +579,8 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{sourceLabel(booking.source, booking.sourceOther)}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.paymentMethod ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.invoiceNumber ?? '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}
@@ -522,15 +608,6 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                     })()}
                   </td>
                   <td className="px-3 py-3 flex items-center gap-1.5">
-                    <a
-                      href={`/api/bookings/${booking.id}/invoice`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 whitespace-nowrap"
-                      title="Download cash invoice"
-                    >
-                      <FileText size={11} /> Invoice
-                    </a>
                     <Link href={`/dashboard/bookings/${booking.id}`}
                       className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 whitespace-nowrap">
                       <Pencil size={11} /> Edit

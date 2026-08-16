@@ -293,11 +293,11 @@ export default function BookingDetailPage() {
           </div>
           <div>
             <label className={lbl}>Total (R)</label>
-            <input type="number" step="0.01" className={inp} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={inp} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
           </div>
           <div>
             <label className={lbl}>Deposit Paid (R)</label>
-            <input type="number" step="0.01" className={inp} value={form.depositPaid} onChange={e => set('depositPaid', e.target.value)} />
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={inp} value={form.depositPaid} onChange={e => set('depositPaid', e.target.value)} />
           </div>
         </div>
 
