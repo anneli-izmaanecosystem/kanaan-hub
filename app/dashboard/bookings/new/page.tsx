@@ -12,6 +12,11 @@ type Room = {
 }
 type Combo = PriceCombo & { name: string }
 
+// Sentinel stored in invoiceNumber when explicitly marked "No Invoice" — distinct from a
+// blank/unset field, which just means nobody has decided yet. Only this value renders
+// as #N/A on the bookings List view.
+const NO_INVOICE = 'N/A'
+
 const STATUS_OPTIONS = [
   { value: 'unpaid_quoted', label: 'Unpaid / Quoted' },
   { value: 'deposit_paid',  label: 'Deposit Paid' },
@@ -283,7 +288,21 @@ export default function NewBookingPage() {
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className={label}>Invoice #</label>
-            <input className={input} value={form.invoiceNumber} onChange={e => set('invoiceNumber', e.target.value)} />
+            <input
+              className={input}
+              value={form.invoiceNumber === NO_INVOICE ? '' : form.invoiceNumber}
+              onChange={e => set('invoiceNumber', e.target.value)}
+              disabled={form.invoiceNumber === NO_INVOICE}
+              placeholder={form.invoiceNumber === NO_INVOICE ? 'No Invoice' : ''}
+            />
+            <label className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+              <input
+                type="checkbox"
+                checked={form.invoiceNumber === NO_INVOICE}
+                onChange={e => set('invoiceNumber', e.target.checked ? NO_INVOICE : '')}
+              />
+              No Invoice
+            </label>
           </div>
           <div>
             <label className={label}>Total Amount (R) * {autoTotal && <span className="text-gray-400 font-normal">(auto)</span>}</label>

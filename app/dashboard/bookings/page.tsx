@@ -580,7 +580,9 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{sourceLabel(booking.source, booking.sourceOther)}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{booking.paymentMethod ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.invoiceNumber || '#N/A'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">
+                    {booking.invoiceNumber === 'N/A' ? '#N/A' : (booking.invoiceNumber || '—')}
+                  </td>
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}
