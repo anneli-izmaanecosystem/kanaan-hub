@@ -92,6 +92,13 @@
       "when": 1786870520597,
       "tag": "0012_streamline_booking_status_source",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787482640156,
+      "tag": "0013_add_fuel_allocation_paid_flag",
+      "breakpoints": true
     }
   ]
 }

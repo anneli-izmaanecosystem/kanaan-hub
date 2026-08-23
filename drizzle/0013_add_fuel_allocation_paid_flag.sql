@@ -1,0 +1,1 @@
+ALTER TABLE "fuel_allocations" ADD COLUMN "paid" boolean DEFAULT false NOT NULL;

@@ -13,6 +13,7 @@ type Alloc = {
   hoursWorked: string | null
   litres: string
   cost: string
+  paid: boolean
   fillDate?: string
   ratePerLitre?: string
 }
@@ -56,7 +57,7 @@ type ClientSummary = {
   totalLitres: number
   totalDieselCost: number
   totalLabour: number
-  entries: Array<{ date: string; hours: number; litres: number; cost: number; rate: number }>
+  entries: Array<{ id: number; date: string; hours: number; litres: number; cost: number; rate: number; paid: boolean }>
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -340,6 +341,28 @@ export default function OffsiteSummaryPage() {
 
   useEffect(() => { load() }, [load])
 
+  async function toggleJobPaid(allocId: number, currentPaid: boolean) {
+    const nextPaid = !currentPaid
+    setFills(prev => prev.map(f => ({
+      ...f,
+      allocations: f.allocations.map(a => a.id === allocId ? { ...a, paid: nextPaid } : a),
+    })))
+    try {
+      const res = await fetch(`/api/fuel-allocations/${allocId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paid: nextPaid }),
+      })
+      if (!res.ok) throw new Error('Failed to update')
+    } catch {
+      // revert the optimistic update on failure
+      setFills(prev => prev.map(f => ({
+        ...f,
+        allocations: f.allocations.map(a => a.id === allocId ? { ...a, paid: currentPaid } : a),
+      })))
+    }
+  }
+
   // Group offsite allocations by client
   const clientMap = new Map<string, ClientSummary>()
 
@@ -371,7 +394,7 @@ export default function OffsiteSummaryPage() {
       c.totalLitres     += litres
       c.totalDieselCost += cost
       c.totalLabour     += hrs * tlbRateNum
-      c.entries.push({ date: fill.fillDate, hours: hrs, litres, cost, rate })
+      c.entries.push({ id: alloc.id, date: fill.fillDate, hours: hrs, litres, cost, rate, paid: alloc.paid })
     }
   }
 
@@ -479,16 +502,25 @@ export default function OffsiteSummaryPage() {
                             <th className="text-right py-2 font-semibold">Labour</th>
                             <th className="text-right py-2 font-semibold">Diesel (L)</th>
                             <th className="text-right py-2 font-semibold">Diesel Cost</th>
+                            <th className="text-center py-2 font-semibold">Paid</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {client.entries.map((e, i) => (
-                            <tr key={i} className="text-gray-700">
+                          {client.entries.map(e => (
+                            <tr key={e.id} className="text-gray-700">
                               <td className="py-2">{fmtShort(e.date)}</td>
                               <td className="text-right py-2">{e.hours.toFixed(1)}</td>
                               <td className="text-right py-2">{fmtZAR(e.hours * tlbRateNum)}</td>
                               <td className="text-right py-2">{e.litres.toFixed(1)}</td>
                               <td className="text-right py-2">{fmtZAR(e.cost)}</td>
+                              <td className="text-center py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={e.paid}
+                                  onChange={() => toggleJobPaid(e.id, e.paid)}
+                                  title={e.paid ? 'Job paid' : 'Mark job as paid'}
+                                />
+                              </td>
                             </tr>
                           ))}
                           <tr className="font-bold text-gray-900 border-t border-gray-300">
@@ -497,6 +529,7 @@ export default function OffsiteSummaryPage() {
                             <td className="text-right pt-3">{fmtZAR(client.totalLabour)}</td>
                             <td className="text-right pt-3">{client.totalLitres.toFixed(1)}</td>
                             <td className="text-right pt-3">{fmtZAR(client.totalDieselCost)}</td>
+                            <td className="pt-3" />
                           </tr>
                         </tbody>
                       </table>

@@ -4,13 +4,12 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sparkles, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { totalForBooking, minOccupancy, type PriceCombo } from '@/lib/pricing'
+import { minOccupancy } from '@/lib/pricing'
 
 type Room = {
   id: number; name: string; type: string; ratePp: string; rateSolo: string | null
   capacity: number; pricingMode: 'flat' | 'per_pax'
 }
-type Combo = PriceCombo & { name: string }
 
 // Sentinel stored in invoiceNumber when explicitly marked "No Invoice" — distinct from a
 // blank/unset field, which just means nobody has decided yet. Only this value renders
@@ -35,12 +34,10 @@ const SOURCE_OPTIONS = [
 export default function NewBookingPage() {
   const router = useRouter()
   const [rooms, setRooms]   = useState<Room[]>([])
-  const [combos, setCombos] = useState<Combo[]>([])
   const [aiText, setAiText]   = useState('')
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
-  const [autoTotal, setAutoTotal] = useState(true) // false once the user hand-edits totalAmount
 
   const [form, setForm] = useState({
     roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
@@ -51,40 +48,19 @@ export default function NewBookingPage() {
   })
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/rooms').then(r => r.json()),
-      fetch('/api/room-combos').then(r => r.json()),
-    ]).then(([r, c]) => {
-      setRooms(Array.isArray(r) ? r : [])
-      setCombos(Array.isArray(c) ? c : [])
-    }).catch(() => {})
+    fetch('/api/rooms').then(r => r.json()).then(r => setRooms(Array.isArray(r) ? r : [])).catch(() => {})
   }, [])
 
-  function recalcTotal(next: typeof form) {
-    if (!autoTotal || !next.checkIn || !next.checkOut || next.roomIds.length === 0) return next
-    const nights = Math.ceil((new Date(next.checkOut).getTime() - new Date(next.checkIn).getTime()) / 86_400_000)
-    if (nights <= 0) return next
-    const adults = parseInt(next.adults) || 1
-    const roomIds = next.roomIds.map(id => parseInt(id))
-    const total = totalForBooking(roomIds, rooms, combos, adults, nights)
-    return { ...next, totalAmount: String(total) }
-  }
-
   function set(k: string, v: string) {
-    setForm(f => recalcTotal({ ...f, [k]: v }))
+    setForm(f => ({ ...f, [k]: v }))
   }
 
   function toggleRoom(id: number) {
     setForm(f => {
       const idStr = String(id)
       const roomIds = f.roomIds.includes(idStr) ? f.roomIds.filter(r => r !== idStr) : [...f.roomIds, idStr]
-      return recalcTotal({ ...f, roomIds })
+      return { ...f, roomIds }
     })
-  }
-
-  function onTotalEdited(v: string) {
-    setAutoTotal(false)
-    setForm(f => ({ ...f, totalAmount: v }))
   }
 
   async function parseWithAI() {
@@ -102,7 +78,7 @@ export default function NewBookingPage() {
         if (match) roomIds = [String(match.id)]
       }
 
-      setForm(f => recalcTotal({
+      setForm(f => ({
         ...f,
         roomIds,
         guestName:       data.guestName       ?? f.guestName,
@@ -114,7 +90,6 @@ export default function NewBookingPage() {
         specialRequests: data.specialRequests ?? f.specialRequests,
         totalAmount:     data.estimatedTotal  ? String(data.estimatedTotal) : f.totalAmount,
       }))
-      if (data.estimatedTotal) setAutoTotal(false)
     } catch { setError('Network error — could not reach AI') }
     setParsing(false)
   }
@@ -134,7 +109,7 @@ export default function NewBookingPage() {
         }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed'); setSaving(false); return }
-      router.push('/dashboard/bookings')
+      router.back() // returns to the bookings list at whatever view/window it was showing
     } catch { setError('Network error'); setSaving(false) }
   }
 
@@ -189,12 +164,13 @@ export default function NewBookingPage() {
                       {group.map(r => (
                         <button type="button" key={r.id} onClick={() => toggleRoom(r.id)}
                           className={cn(
-                            'rounded-full px-2.5 py-1 text-xs border transition-colors',
+                            'rounded-lg px-2.5 py-1 text-xs border transition-colors leading-tight',
                             form.roomIds.includes(String(r.id))
                               ? 'bg-gray-900 text-white border-gray-900'
                               : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
                           )}>
-                          {r.name}
+                          <div>{r.name}</div>
+                          <div className="text-[9px] opacity-70">R{r.ratePp}/pp{r.rateSolo ? ` · R${r.rateSolo} solo` : ''}</div>
                         </button>
                       ))}
                     </div>
@@ -305,8 +281,8 @@ export default function NewBookingPage() {
             </label>
           </div>
           <div>
-            <label className={label}>Total Amount (R) * {autoTotal && <span className="text-gray-400 font-normal">(auto)</span>}</label>
-            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
+            <label className={label}>Total Amount (R) *</label>
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} />
           </div>
           <div>
             <label className={label}>Deposit Paid (R)</label>

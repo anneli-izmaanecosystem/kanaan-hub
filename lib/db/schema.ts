@@ -330,6 +330,7 @@ export const fuelAllocations = pgTable('fuel_allocations', {
   litres:      numeric('litres',       { precision: 8, scale: 2 }).notNull(),
   cost:        numeric('cost',         { precision: 10, scale: 2 }).notNull(), // litres * rate snapshotted
   notes:       text('notes'),
+  paid:        boolean('paid').notNull().default(false), // per-job "cash received" flag, separate from the client invoice's own payment status
 })
 
 // Alpheus's working days — captured by manager.

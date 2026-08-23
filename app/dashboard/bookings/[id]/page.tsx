@@ -4,13 +4,12 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ChevronLeft, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { totalForBooking, minOccupancy, type PriceCombo } from '@/lib/pricing'
+import { minOccupancy } from '@/lib/pricing'
 
 type Room = {
   id: number; name: string; type: string; ratePp: string; rateSolo: string | null
   capacity: number; pricingMode: 'flat' | 'per_pax'
 }
-type Combo = PriceCombo & { name: string }
 
 // Sentinel stored in invoiceNumber when explicitly marked "No Invoice" — distinct from a
 // blank/unset field, which just means nobody has decided yet. Only this value renders
@@ -37,12 +36,10 @@ export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>()
 
   const [rooms, setRooms]       = useState<Room[]>([])
-  const [combos, setCombos]     = useState<Combo[]>([])
   const [saving, setSaving]     = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError]       = useState('')
   const [loaded, setLoaded]     = useState(false)
-  const [autoTotal, setAutoTotal] = useState(false) // editing an existing booking — don't clobber a saved total until rooms/dates/adults change
 
   const [form, setForm] = useState({
     roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
@@ -56,10 +53,8 @@ export default function BookingDetailPage() {
     Promise.all([
       fetch(`/api/bookings/${id}`).then(r => r.json()),
       fetch('/api/rooms').then(r => r.json()),
-      fetch('/api/room-combos').then(r => r.json()),
-    ]).then(([b, r, c]) => {
+    ]).then(([b, r]) => {
       setRooms(Array.isArray(r) ? r : [])
-      setCombos(Array.isArray(c) ? c : [])
       if (b?.id) {
         setForm({
           roomIds:         Array.isArray(b.roomIds) ? b.roomIds.map(String) : (b.roomId ? [String(b.roomId)] : []),
@@ -87,17 +82,6 @@ export default function BookingDetailPage() {
     }).catch(() => setLoaded(true))
   }, [id])
 
-  function recalcTotal(next: typeof form) {
-    if (!autoTotal || !next.checkIn || !next.checkOut || next.roomIds.length === 0) return next
-    const nights = Math.ceil((new Date(next.checkOut).getTime() - new Date(next.checkIn).getTime()) / 86_400_000)
-    if (nights <= 0) return next
-    const adults = parseInt(next.adults) || 1
-    const roomIds = next.roomIds.map(rid => parseInt(rid))
-    const total = totalForBooking(roomIds, rooms, combos, adults, nights)
-    const deposit = parseFloat(next.depositPaid) || 0
-    return { ...next, totalAmount: String(total), balanceDue: String(Math.max(0, total - deposit)) }
-  }
-
   function set(k: string, v: string) {
     setForm(f => {
       const next = { ...f, [k]: v }
@@ -106,23 +90,16 @@ export default function BookingDetailPage() {
         const deposit = parseFloat(next.depositPaid)  || 0
         next.balanceDue = String(Math.max(0, total - deposit))
       }
-      if (['checkIn', 'checkOut', 'adults'].includes(k)) return recalcTotal(next)
       return next
     })
   }
 
   function toggleRoom(id: number) {
-    setAutoTotal(true)
     setForm(f => {
       const idStr = String(id)
       const roomIds = f.roomIds.includes(idStr) ? f.roomIds.filter(r => r !== idStr) : [...f.roomIds, idStr]
-      return recalcTotal({ ...f, roomIds })
+      return { ...f, roomIds }
     })
-  }
-
-  function onTotalEdited(v: string) {
-    setAutoTotal(false)
-    set('totalAmount', v)
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -148,7 +125,7 @@ export default function BookingDetailPage() {
         }),
       })
       if (!res.ok) { const d = await res.json(); setError(d.error ?? 'Failed to save'); setSaving(false); return }
-      router.push('/dashboard/bookings')
+      router.back() // returns to the bookings list at whatever view/window it was showing
     } catch { setError('Network error'); setSaving(false) }
   }
 
@@ -156,7 +133,7 @@ export default function BookingDetailPage() {
     if (!confirm('Mark this booking as cancelled?')) return
     setDeleting(true)
     await fetch(`/api/bookings/${id}`, { method: 'DELETE' })
-    router.push('/dashboard/bookings')
+    router.back() // returns to the bookings list at whatever view/window it was showing
   }
 
   const inp = 'w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300'
@@ -168,6 +145,12 @@ export default function BookingDetailPage() {
   const adults = parseInt(form.adults) || 1
   const combinedCapacity = selectedRooms.reduce((s, r) => s + r.capacity, 0)
   const underMin = selectedRooms.length === 1 && adults < minOccupancy(selectedRooms[0].capacity)
+
+  const roomGroups: { label: string; filter: (r: Room) => boolean }[] = [
+    { label: 'Lodge',       filter: (r: Room) => r.type === 'premium' || r.type === 'budget' },
+    { label: 'Backpackers', filter: (r: Room) => r.type === 'dorm' },
+    { label: 'Camping',     filter: (r: Room) => r.type === 'camping' },
+  ]
 
   return (
     <div className="p-8 max-w-2xl">
@@ -202,20 +185,30 @@ export default function BookingDetailPage() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={lbl}>Rooms {selectedRooms.length > 1 && <span className="text-gray-400 font-normal">({selectedRooms.length} selected)</span>}</label>
-            <div className="rounded-lg border border-gray-200 p-2 max-h-40 overflow-y-auto">
-              <div className="flex flex-wrap gap-1.5">
-                {rooms.map(r => (
-                  <button type="button" key={r.id} onClick={() => toggleRoom(r.id)}
-                    className={cn(
-                      'rounded-full px-2.5 py-1 text-xs border transition-colors',
-                      form.roomIds.includes(String(r.id))
-                        ? 'bg-gray-900 text-white border-gray-900'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
-                    )}>
-                    {r.name}
-                  </button>
-                ))}
-              </div>
+            <div className="rounded-lg border border-gray-200 p-2 max-h-40 overflow-y-auto space-y-2">
+              {roomGroups.map(({ label: groupLabel, filter }) => {
+                const group = rooms.filter(filter)
+                if (group.length === 0) return null
+                return (
+                  <div key={groupLabel}>
+                    <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">{groupLabel}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.map(r => (
+                        <button type="button" key={r.id} onClick={() => toggleRoom(r.id)}
+                          className={cn(
+                            'rounded-lg px-2.5 py-1 text-xs border transition-colors leading-tight',
+                            form.roomIds.includes(String(r.id))
+                              ? 'bg-gray-900 text-white border-gray-900'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                          )}>
+                          <div>{r.name}</div>
+                          <div className="text-[9px] opacity-70">R{r.ratePp}/pp{r.rateSolo ? ` · R${r.rateSolo} solo` : ''}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -312,7 +305,7 @@ export default function BookingDetailPage() {
           </div>
           <div>
             <label className={lbl}>Total (R)</label>
-            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={inp} value={form.totalAmount} onChange={e => onTotalEdited(e.target.value)} />
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={inp} value={form.totalAmount} onChange={e => set('totalAmount', e.target.value)} />
           </div>
           <div>
             <label className={lbl}>Deposit Paid (R)</label>

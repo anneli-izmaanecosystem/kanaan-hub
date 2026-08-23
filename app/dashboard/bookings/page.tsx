@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, RefreshCw, Tag } from 'lucide-react'
 import { fmtDate, cn } from '@/lib/utils'
 import { todaySA, addDaysSA } from '@/lib/date-sa'
+import { isBookingIncomplete, missingBookingFields, FIELD_LABELS } from '@/lib/booking-completeness'
 
 const WINDOW_DAYS = 120            // total rendered day-columns (~4 calendar months) — plain table, fine at this scale
 const INITIAL_BACKWARD_DAYS = 14   // default rangeStart = today - 14, so "today" isn't pinned to the very left edge
@@ -66,15 +68,41 @@ const ACCOM_TABS: { key: AccomTab; label: string }[] = [
   { key: 'camping',     label: 'Camping' },
 ]
 
+const DEFAULT_RANGE_START = () => addDaysSA(todaySA(), -INITIAL_BACKWARD_DAYS)
+
 export default function BookingsPage() {
-  const [view, setView]         = useState<'grid' | 'list'>('grid')
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-400">Loading…</div>}>
+      <BookingsPageContent />
+    </Suspense>
+  )
+}
+
+function BookingsPageContent() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  const [view, setView]         = useState<'grid' | 'list'>(() => searchParams.get('view') === 'list' ? 'list' : 'grid')
   const [tab, setTab]           = useState<AccomTab>('lodge')
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms]       = useState<Room[]>([])
   const [loading, setLoading]   = useState(true)
-  const [rangeStart, setRangeStart] = useState(() => addDaysSA(todaySA(), -INITIAL_BACKWARD_DAYS))
-  const [showAll, setShowAll]   = useState(false)
+  const [rangeStart, setRangeStart] = useState(() => searchParams.get('rangeStart') || DEFAULT_RANGE_START())
+  const [showAll, setShowAll]   = useState(() => searchParams.get('all') === '1')
   const rangeEnd = addDaysSA(rangeStart, WINDOW_DAYS - 1)
+
+  // Keep the URL in sync with the current view/window so navigating away (e.g. to edit a
+  // booking) and coming back via router.back() restores exactly where the user was, instead
+  // of always landing back on today's default grid window.
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (view !== 'grid') params.set('view', view)
+    if (rangeStart !== DEFAULT_RANGE_START()) params.set('rangeStart', rangeStart)
+    if (showAll) params.set('all', '1')
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }, [view, rangeStart, showAll])
 
   useEffect(() => {
     setLoading(true)
@@ -372,6 +400,7 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
   const [paymentMethodFilters, setPaymentMethodFilters] = useState<Set<string>>(new Set())
   const [showCancelled, setShowCancelled] = useState(false)
   const [paying, setPaying]           = useState<number | null>(null)
+  const today = todaySA()
 
   function toggleSort(key: SortKey) {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
@@ -574,9 +603,19 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkIn)}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(booking.checkOut)}</td>
                   <td className="px-4 py-3">
-                    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_COLORS[booking.status] ?? 'bg-gray-100')}>
-                      {STATUS_LABEL[booking.status] ?? booking.status}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_COLORS[booking.status] ?? 'bg-gray-100')}>
+                        {STATUS_LABEL[booking.status] ?? booking.status}
+                      </span>
+                      {isBookingIncomplete(booking, today) && (
+                        <span
+                          className="rounded-full px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700"
+                          title={`Missing: ${missingBookingFields(booking).map(f => FIELD_LABELS[f]).join(', ')}`}
+                        >
+                          Needs Info
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{sourceLabel(booking.source, booking.sourceOther)}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{booking.paymentMethod ?? '—'}</td>
