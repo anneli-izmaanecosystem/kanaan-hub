@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { roomId, roomIds, guestName, contact, idNumber, checkIn, checkOut, adults, children,
-            totalAmount, depositPaid, specialRequests, status, source, sourceOther,
+            totalAmount, depositPaid, vatIncluded, commissionAmount, specialRequests, status, source, sourceOther,
             paymentMethod, invoiceNumber, payDate, notes } = body
 
     const selectedRoomIds: number[] = Array.isArray(roomIds) && roomIds.length
@@ -111,6 +111,8 @@ export async function POST(req: NextRequest) {
       totalAmount:  String(total),
       depositPaid:  String(deposit),
       balanceDue:   String(total - deposit),
+      vatIncluded:  vatIncluded ?? true,
+      commissionAmount: commissionAmount || null,
       specialRequests, notes,
       source:        source || null,
       sourceOther:   source === 'other' ? (sourceOther || null) : null,

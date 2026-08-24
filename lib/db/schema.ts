@@ -75,6 +75,8 @@ export const bookings = pgTable('bookings', {
   totalAmount:     numeric('total_amount',  { precision: 10, scale: 2 }).notNull(),
   depositPaid:     numeric('deposit_paid',  { precision: 10, scale: 2 }).notNull().default('0'),
   balanceDue:      numeric('balance_due',   { precision: 10, scale: 2 }).notNull(),
+  vatIncluded:     boolean('vat_included').notNull().default(true), // whether totalAmount already includes VAT
+  commissionAmount: numeric('commission_amount', { precision: 10, scale: 2 }), // OTA/booking-site commission, incl. VAT
   specialRequests: text('special_requests'),
   status:          bookingStatus('status').notNull().default('unpaid_quoted'),
   source:          bookingSourceEnum('source'),
@@ -426,4 +428,16 @@ export const leaveBalances = pgTable('leave_balances', {
   annualDaysTaken:   numeric('annual_days_taken',   { precision: 5, scale: 2 }).notNull().default('0'),
   sickDaysTaken:     numeric('sick_days_taken',     { precision: 5, scale: 2 }).notNull().default('0'),
   toilHours:         numeric('toil_hours',           { precision: 6, scale: 2 }).notNull().default('0'),
+})
+
+// ── Invoice photo inbox (mobile: field capture of paper invoices) ────────────
+export const invoiceUploadStatusEnum = pgEnum('invoice_upload_status', ['pending', 'processed'])
+
+export const invoiceUploads = pgTable('invoice_uploads', {
+  id:          serial('id').primaryKey(),
+  imageUrl:    text('image_url').notNull(),
+  note:        text('note'),
+  status:      invoiceUploadStatusEnum('status').notNull().default('pending'),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  processedAt: timestamp('processed_at'),
 })

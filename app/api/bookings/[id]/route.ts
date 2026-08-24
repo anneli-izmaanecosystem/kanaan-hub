@@ -40,6 +40,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (rest.totalAmount === '') rest.totalAmount = '0'
     if (rest.depositPaid === '') rest.depositPaid = '0'
     if (rest.balanceDue === '') rest.balanceDue = '0'
+    // commissionAmount is nullable (unlike the amounts above) — an empty field means "none".
+    if (rest.commissionAmount === '') rest.commissionAmount = null
     // '' isn't a valid booking_source enum value — an unset dropdown means "no source".
     // Only touch sourceOther when this request is actually changing source (e.g. the
     // pay-toggle button only patches status/depositPaid/balanceDue and must leave it alone).

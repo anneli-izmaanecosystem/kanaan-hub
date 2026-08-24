@@ -42,7 +42,7 @@ export default function NewBookingPage() {
   const [form, setForm] = useState({
     roomIds: [] as string[], guestName: '', contact: '', idNumber: '',
     checkIn: '', checkOut: '', adults: '1', children: '0',
-    totalAmount: '', depositPaid: '0',
+    totalAmount: '', depositPaid: '0', vatIncluded: true, commissionAmount: '',
     status: 'unpaid_quoted', source: '', sourceOther: '', paymentMethod: '', invoiceNumber: '', payDate: '',
     specialRequests: '', notes: '',
   })
@@ -287,6 +287,24 @@ export default function NewBookingPage() {
           <div>
             <label className={label}>Deposit Paid (R)</label>
             <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.depositPaid} onChange={e => set('depositPaid', e.target.value)} />
+          </div>
+        </div>
+
+        {/* VAT + Commission */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="mt-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+              <input
+                type="checkbox"
+                checked={form.vatIncluded}
+                onChange={e => setForm(f => ({ ...f, vatIncluded: e.target.checked }))}
+              />
+              Amount Includes VAT
+            </label>
+          </div>
+          <div>
+            <label className={label}>Commission (R) <span className="text-gray-400 font-normal">— booking sites</span></label>
+            <input type="number" step="0.01" inputMode="decimal" onFocus={e => e.target.select()} className={input} value={form.commissionAmount} onChange={e => set('commissionAmount', e.target.value)} />
           </div>
         </div>
 

@@ -6,7 +6,9 @@ import { eq, gte, lte, and, count, ne } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
 import Link from 'next/link'
-import { CalendarDays, Users, TrendingUp, Home, BarChart3 } from 'lucide-react'
+import { CalendarDays, Users, TrendingUp, Home, BarChart3, Receipt, Percent } from 'lucide-react'
+
+const VAT_RATE = 0.15 // South Africa standard rate
 
 function monthLabel(ym: string) {
   return new Date(ym + '-01').toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
@@ -74,6 +76,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       totalAmount: bookings.totalAmount,
       status:      bookings.status,
       roomId:      bookings.roomId,
+      vatIncluded: bookings.vatIncluded,
+      commissionAmount: bookings.commissionAmount,
     })
       .from(bookings)
       .where(and(
@@ -93,7 +97,9 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // Pro-rate revenue and occupancy by nights within the month.
   // A booking spanning a month boundary (e.g. Jun 28 → Jul 5) contributes only its
   // in-month fraction to this month's revenue, avoiding double-counting.
-  let totalRevenue = 0
+  let totalRevenueExclVat = 0
+  let totalVat = 0
+  let totalCommission = 0
   let occupiedRoomNights = 0
   for (const b of revenueBookings) {
     const checkInMs  = new Date(b.checkIn).getTime()
@@ -102,12 +108,21 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const e = Math.min(checkOutMs, new Date(monthEnd).getTime() + 86_400_000)
     const nightsInMonth = Math.max(0, (e - s) / 86_400_000)
     const totalNights   = Math.max(1, (checkOutMs - checkInMs) / 86_400_000)
-    occupiedRoomNights += nightsInMonth
-    totalRevenue       += parseFloat(b.totalAmount || '0') * (nightsInMonth / totalNights)
+    const fraction = nightsInMonth / totalNights
+
+    const total    = parseFloat(b.totalAmount || '0')
+    const exclVat  = b.vatIncluded ? total / (1 + VAT_RATE) : total
+    const vat      = b.vatIncluded ? total - exclVat : 0
+    const commission = parseFloat(b.commissionAmount || '0')
+
+    occupiedRoomNights  += nightsInMonth
+    totalRevenueExclVat += exclVat * fraction
+    totalVat            += vat * fraction
+    totalCommission     += commission * fraction
   }
   const totalRoomNights = totalRooms * daysInMonth
   const occupancyRate  = totalRoomNights > 0 ? (occupiedRoomNights / totalRoomNights) * 100 : 0
-  const adr            = occupiedRoomNights > 0 ? totalRevenue / occupiedRoomNights : 0
+  const adr            = occupiedRoomNights > 0 ? totalRevenueExclVat / occupiedRoomNights : 0
 
   const months = surroundingMonths(currentYM)
 
@@ -148,7 +163,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-green-50 p-2"><TrendingUp size={18} className="text-green-600" /></div>
@@ -163,8 +178,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-blue-50 p-2"><BarChart3 size={18} className="text-blue-600" /></div>
             <div>
-              <p className="text-xs text-gray-500">Monthly Revenue</p>
-              <p className="text-2xl font-semibold text-gray-900">{fmt(totalRevenue)}</p>
+              <p className="text-xs text-gray-500">Revenue (excl VAT)</p>
+              <p className="text-2xl font-semibold text-gray-900">{fmt(totalRevenueExclVat)}</p>
               <p className="text-xs text-gray-400">{bookingCount} bookings</p>
             </div>
           </div>
@@ -176,6 +191,26 @@ export default async function DashboardContent({ searchParamsPromise }: { search
               <p className="text-xs text-gray-500">Avg Daily Rate</p>
               <p className="text-2xl font-semibold text-gray-900">{fmt(adr)}</p>
               <p className="text-xs text-gray-400">per room-night</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-amber-50 p-2"><Receipt size={18} className="text-amber-600" /></div>
+            <div>
+              <p className="text-xs text-gray-500">VAT Amount</p>
+              <p className="text-2xl font-semibold text-gray-900">{fmt(totalVat)}</p>
+              <p className="text-xs text-gray-400">15% of VAT-inclusive bookings</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-orange-50 p-2"><Percent size={18} className="text-orange-600" /></div>
+            <div>
+              <p className="text-xs text-gray-500">Commission</p>
+              <p className="text-2xl font-semibold text-gray-900">{fmt(totalCommission)}</p>
+              <p className="text-xs text-gray-400">incl. VAT, booking sites</p>
             </div>
           </div>
         </div>
