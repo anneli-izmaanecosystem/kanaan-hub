@@ -11,13 +11,15 @@
     "db:seed": "tsx lib/db/seed.ts",
     "db:seed:employees": "tsx lib/db/seed-employees.ts",
     "db:seed:pricelist": "tsx lib/db/seed-room-pricelist.ts",
-    "db:import:bookings": "tsx lib/db/import-bookings.ts"
+    "db:import:bookings": "tsx lib/db/import-bookings.ts",
+    "db:import:payroll-history": "tsx lib/db/import-historical-payroll.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
     "@clerk/nextjs": "^7.3.3",
     "@neondatabase/serverless": "^1.1.0",
     "@react-pdf/renderer": "^4.5.1",
+    "@supabase/supabase-js": "^2.112.3",
     "@types/adm-zip": "^0.5.8",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
@@ -39,6 +41,7 @@
     "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "xlsx": "^0.18.5"
   }
 }

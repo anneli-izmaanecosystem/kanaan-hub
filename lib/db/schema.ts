@@ -26,6 +26,7 @@ export const payStructureEnum = pgEnum('pay_structure', ['hourly', 'daily', 'flo
 export const dayTypeEnum      = pgEnum('day_type',      ['weekday', 'saturday', 'sunday', 'public_holiday'])
 export const advanceTypeEnum  = pgEnum('advance_type',  ['cash_advance', 'shop_deduction'])
 export const dataSourceEnum   = pgEnum('data_source',   ['whatsapp', 'photo_timesheet', 'manual'])
+export const documentCategoryEnum = pgEnum('document_category', ['coida', 'uif', 'payroll', 'other'])
 
 // ── Rooms & Bookings (unchanged) ──────────────────────────────────────────────
 export const rooms = pgTable('rooms', {
@@ -106,6 +107,7 @@ export const entities = pgTable('entities', {
   registrationNo: text('registration_no'),
   uifRef:         text('uif_ref'),
   payeRef:        text('paye_ref'),
+  coidRef:        text('coid_ref'),  // Compensation Fund (COIDA) registration number
   entityType:     entityTypeEnum('entity_type').notNull(),
   address:        text('address'),
   active:         boolean('active').notNull().default(true),
@@ -440,4 +442,22 @@ export const invoiceUploads = pgTable('invoice_uploads', {
   status:      invoiceUploadStatusEnum('status').notNull().default('pending'),
   createdAt:   timestamp('created_at').notNull().defaultNow(),
   processedAt: timestamp('processed_at'),
+})
+
+// ── Compliance documents (COIDA / UIF certificates, filings, etc.) ───────────
+// Actual filed/received paperwork — distinct from payrollEntries, which holds the
+// numbers those documents are based on. Filed under an entity, optionally tagged
+// with the period the document covers.
+export const documents = pgTable('documents', {
+  id:          serial('id').primaryKey(),
+  entityId:    integer('entity_id').notNull().references(() => entities.id),
+  category:    documentCategoryEnum('category').notNull().default('other'),
+  title:       text('title').notNull(),
+  periodLabel: text('period_label'),  // free text, e.g. 'Aug 2025 – Feb 2026' or 'FY2026'
+  fileUrl:     text('file_url').notNull(),
+  fileName:    text('file_name').notNull(),
+  fileType:    text('file_type'),
+  notes:       text('notes'),
+  uploadedBy:  text('uploaded_by'),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
 })

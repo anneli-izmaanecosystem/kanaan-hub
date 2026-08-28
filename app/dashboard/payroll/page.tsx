@@ -4,7 +4,7 @@ import { db, payrollRuns, payrollEntries, entities } from '@/lib/db'
 import { desc, eq, sum } from 'drizzle-orm'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Plus, Users } from 'lucide-react'
+import { Plus, Users, FileText, FileCheck2 } from 'lucide-react'
 
 const ENTITY_COLOURS: Record<string, string> = {
   kanaan:             'bg-blue-100 text-blue-800',
@@ -32,6 +32,14 @@ export default async function PayrollPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Payroll</h1>
         <div className="flex gap-3">
+          <Link href="/dashboard/payroll/documents"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            <FileText size={15} /> Documents
+          </Link>
+          <Link href="/dashboard/payroll/coida-summary"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            <FileCheck2 size={15} /> COIDA Summary
+          </Link>
           <Link href="/dashboard/payroll/employees"
             className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
             <Users size={15} /> Workers
