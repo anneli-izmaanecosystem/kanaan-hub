@@ -78,6 +78,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       roomId:      bookings.roomId,
       vatIncluded: bookings.vatIncluded,
       commissionAmount: bookings.commissionAmount,
+      adults:      bookings.adults,
+      children:    bookings.children,
     })
       .from(bookings)
       .where(and(
@@ -101,6 +103,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   let totalVat = 0
   let totalCommission = 0
   let occupiedRoomNights = 0
+  let occupiedGuestNights = 0
   for (const b of revenueBookings) {
     const checkInMs  = new Date(b.checkIn).getTime()
     const checkOutMs = new Date(b.checkOut).getTime()
@@ -109,6 +112,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const nightsInMonth = Math.max(0, (e - s) / 86_400_000)
     const totalNights   = Math.max(1, (checkOutMs - checkInMs) / 86_400_000)
     const fraction = nightsInMonth / totalNights
+    const guests = (b.adults ?? 1) + (b.children ?? 0)
 
     const total    = parseFloat(b.totalAmount || '0')
     const exclVat  = b.vatIncluded ? total / (1 + VAT_RATE) : total
@@ -116,13 +120,14 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const commission = parseFloat(b.commissionAmount || '0')
 
     occupiedRoomNights  += nightsInMonth
+    occupiedGuestNights += nightsInMonth * guests
     totalRevenueExclVat += exclVat * fraction
     totalVat            += vat * fraction
     totalCommission     += commission * fraction
   }
   const totalRoomNights = totalRooms * daysInMonth
   const occupancyRate  = totalRoomNights > 0 ? (occupiedRoomNights / totalRoomNights) * 100 : 0
-  const adr            = occupiedRoomNights > 0 ? totalRevenueExclVat / occupiedRoomNights : 0
+  const adr            = occupiedGuestNights > 0 ? totalRevenueExclVat / occupiedGuestNights : 0
 
   const months = surroundingMonths(currentYM)
 
@@ -190,7 +195,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             <div>
               <p className="text-xs text-gray-500">Avg Daily Rate</p>
               <p className="text-2xl font-semibold text-gray-900">{fmt(adr)}</p>
-              <p className="text-xs text-gray-400">per room-night</p>
+              <p className="text-xs text-gray-400">per person, per night</p>
             </div>
           </div>
         </div>
