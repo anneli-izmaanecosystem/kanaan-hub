@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
 import { bookings, payrollRuns, workers, rooms } from '@/lib/db/schema'
-import { eq, gte, lte, and, count, ne } from 'drizzle-orm'
+import { eq, gte, lte, and, count, ne, sql } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
 import Link from 'next/link'
@@ -14,17 +14,22 @@ function monthLabel(ym: string) {
   return new Date(ym + '-01').toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
 }
 
-function surroundingMonths(current: string, n = 6): string[] {
+// Month chips span from `earliest` (or 6 months back, whichever is further back) through
+// 2 months ahead of `current` — so older backfilled data stays reachable instead of being
+// hidden behind a fixed 6-month lookback.
+function surroundingMonths(current: string, earliest: string): string[] {
+  const [cy, cm] = current.split('-').map(Number)
+  const sixBack = new Date(cy, cm - 1 - 5, 1)
+  const [ey, em] = earliest.split('-').map(Number)
+  const earliestDate = new Date(ey, em - 1, 1)
+  const start = earliestDate < sixBack ? earliestDate : sixBack
+  const end = new Date(cy, cm - 1 + 2, 1)
+
   const months: string[] = []
-  const [y, m] = current.split('-').map(Number)
-  for (let i = -(n - 1); i <= 0; i++) {
-    const d = new Date(y, m - 1 + i, 1)
+  const d = new Date(start)
+  while (d <= end) {
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-  }
-  // add next 2 months
-  for (let i = 1; i <= 2; i++) {
-    const d = new Date(y, m - 1 + i, 1)
-    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    d.setMonth(d.getMonth() + 1)
   }
   return months
 }
@@ -39,13 +44,14 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const monthStart = `${selectedMonth}-01`
   const daysInMonth = new Date(selYear, selMon, 0).getDate()
   const monthEnd   = `${selectedMonth}-${String(daysInMonth).padStart(2, '0')}`
-  const totalRooms = 25
 
   const [
     activeEmployees,
     upcomingBookings,
     draftRuns,
     monthBookings,
+    earliestBookingRow,
+    activeRoomCount,
   ] = await Promise.all([
     db.select({ count: count() }).from(workers).where(eq(workers.active, true)),
     db.select({
@@ -87,7 +93,14 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         gte(bookings.checkOut, monthStart),
         ne(bookings.status, 'cancelled'),
       )),
+    db.select({ minCheckIn: sql<string | null>`MIN(${bookings.checkIn})` })
+      .from(bookings)
+      .where(ne(bookings.status, 'cancelled')),
+    db.select({ count: count() }).from(rooms).where(eq(rooms.active, true)),
   ])
+  // Total accommodation-unit count for occupancy — was hardcoded to 25, which went stale once
+  // dorm beds and camp sites were added as separately-bookable rooms (now 29 active units).
+  const totalRooms = activeRoomCount[0]?.count ?? 0
 
   // KPI calculations
   // Streamlined 2026-08: the old 'quote_sent' status (excluded from revenue) was folded into
@@ -129,7 +142,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const occupancyRate  = totalRoomNights > 0 ? (occupiedRoomNights / totalRoomNights) * 100 : 0
   const adr            = occupiedGuestNights > 0 ? totalRevenueExclVat / occupiedGuestNights : 0
 
-  const months = surroundingMonths(currentYM)
+  const earliestMonth = earliestBookingRow[0]?.minCheckIn?.slice(0, 7) ?? currentYM
+  const months = surroundingMonths(currentYM, earliestMonth)
 
   const statusDot: Record<string, string> = {
     booking_site:   'bg-blue-500',
