@@ -11,7 +11,10 @@ import { CalendarDays, Users, TrendingUp, Home, BarChart3, Receipt, Percent } fr
 const VAT_RATE = 0.15 // South Africa standard rate
 
 function monthLabel(ym: string) {
-  return new Date(ym + '-01').toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+  // Construct from local-time components (not `new Date(ym + '-01')`, which parses as
+  // UTC midnight) so viewers west of UTC don't see the label roll back a month.
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
 }
 
 // Month chips span from `earliest` (or 6 months back, whichever is further back) through
