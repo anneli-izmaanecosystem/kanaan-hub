@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
-import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel, Users, Tag, AlertTriangle } from 'lucide-react'
+import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel, Users, Tag, AlertTriangle, Receipt } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
@@ -14,6 +14,7 @@ const nav = [
   { href: '/dashboard/payroll',   label: 'Payroll',      icon: DollarSign },
   { href: '/dashboard/staff',    label: 'Staff',        icon: Users },
   { href: '/dashboard/fuel',     label: 'Fuel Log',     icon: Fuel },
+  { href: '/dashboard/invoices-inbox', label: 'Invoices Inbox', icon: Receipt },
   { href: '/dashboard/ai',       label: 'AI Assistant', icon: MessageSquare },
 ]
 

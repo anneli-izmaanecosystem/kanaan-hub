@@ -2,10 +2,18 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Pencil } from 'lucide-react'
+import { Pencil, X } from 'lucide-react'
 import { fmtDate } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
 import { isBookingIncomplete, missingBookingFields, FIELD_LABELS } from '@/lib/booking-completeness'
+
+// Persisted across reloads/navigation so the filter stays applied until the user
+// explicitly clears it — matches the "leave filter intact until cleared" behavior.
+const MONTH_FILTER_KEY = 'kanaan-hub:actions-month-filter'
+
+function monthLabel(ym: string) {
+  return new Date(ym + '-01').toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+}
 
 type Room = { id: number; name: string }
 type Booking = {
@@ -19,6 +27,7 @@ type Booking = {
 export default function ActionsPage() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading]   = useState(true)
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/bookings', { cache: 'no-store' })
@@ -28,10 +37,36 @@ export default function ActionsPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Restore a previously-set month filter on load; stays applied across reloads
+  // and navigation until the user clicks Clear.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MONTH_FILTER_KEY)
+      if (saved) setSelectedMonth(saved)
+    } catch {}
+  }, [])
+
+  function selectMonth(m: string) {
+    setSelectedMonth(m)
+    try { localStorage.setItem(MONTH_FILTER_KEY, m) } catch {}
+  }
+
+  function clearMonthFilter() {
+    setSelectedMonth(null)
+    try { localStorage.removeItem(MONTH_FILTER_KEY) } catch {}
+  }
+
   const today = todaySA()
-  const flagged = bookings
+  const allFlagged = bookings
     .filter(({ booking }) => isBookingIncomplete(booking, today))
     .sort((a, b) => a.booking.checkOut.localeCompare(b.booking.checkOut))
+
+  const months = Array.from(new Set(allFlagged.map(({ booking }) => booking.checkOut.slice(0, 7))))
+    .sort((a, b) => b.localeCompare(a))
+
+  const flagged = selectedMonth
+    ? allFlagged.filter(({ booking }) => booking.checkOut.slice(0, 7) === selectedMonth)
+    : allFlagged
 
   return (
     <div className="p-6">
@@ -42,10 +77,38 @@ export default function ActionsPage() {
         </p>
       </div>
 
+      {months.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap mb-5">
+          {months.map(m => (
+            <button
+              key={m}
+              onClick={() => selectMonth(m)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                m === selectedMonth
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'border-gray-200 text-gray-600 hover:border-gray-400'
+              }`}
+            >
+              {monthLabel(m)}
+            </button>
+          ))}
+          {selectedMonth && (
+            <button
+              onClick={clearMonthFilter}
+              className="flex items-center gap-1 rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-500 hover:border-gray-400 hover:text-gray-700"
+            >
+              <X size={11} /> Clear
+            </button>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : flagged.length === 0 ? (
-        <p className="text-sm text-gray-400 py-6 text-center">Nothing needs attention — all caught up.</p>
+        <p className="text-sm text-gray-400 py-6 text-center">
+          {selectedMonth ? `Nothing needs attention for ${monthLabel(selectedMonth)}.` : 'Nothing needs attention — all caught up.'}
+        </p>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
           <table className="w-full text-sm">

@@ -399,6 +399,7 @@ export default function AttendancePage() {
   const pendingPH = days.filter(d => d.dayType === 'public_holiday' && !d.absent && d.phDoubleConfirmed === null && worker.workerType === 'employee')
 
   const inp = 'rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-300'
+  const tableInp = inp.replace('text-xs', 'text-sm')
 
   const wid = parseInt(workerId)
   const workerIdx  = runWorkers.findIndex(w => w.id === wid)
@@ -776,20 +777,20 @@ export default function AttendancePage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Attendance</p>
             </div>
             <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-400 border-b border-gray-100">
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Day</th>
-                  <th className="px-3 py-2 text-center">
+                  <th className="px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Day</th>
+                  <th className="px-4 py-3 text-center">
                     {worker.payStructure === 'hourly' ? 'Hours' : 'Present'}
                   </th>
-                  <th className="px-3 py-2 text-center">Absent</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2 text-left">Note</th>
+                  <th className="px-4 py-3 text-center">Absent</th>
+                  <th className="px-4 py-3 text-right">Amount</th>
+                  <th className="px-4 py-3 text-left">Note</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-gray-100">
                 {days.map(day => {
                   const isSat = day.dayType === 'saturday'
                   const isPH  = day.dayType === 'public_holiday'
@@ -810,7 +811,7 @@ export default function AttendancePage() {
 
                   return (
                     <tr key={`${day.date}-${day.hoursWorked ?? 'null'}-${day.id ?? 0}`} className={rowCls}>
-                      <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">
                         {fmtDate(day.date)}
                         {isPH && (
                           <span className="ml-1 text-orange-600">
@@ -823,10 +824,10 @@ export default function AttendancePage() {
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-gray-500">
+                      <td className="px-4 py-3 text-gray-500">
                         {new Date(day.date + 'T12:00:00').toLocaleDateString('en-ZA', { weekday: 'short' })}
                         {DAY_LABELS[day.dayType] && (
-                          <span className={`ml-1 rounded-full px-1.5 py-0.5 text-xs font-medium ${
+                          <span className={`ml-1 rounded-full px-1.5 py-0.5 text-sm font-medium ${
                             isPH ? 'bg-orange-200 text-orange-800' :
                             isSat ? 'bg-blue-200 text-blue-800' :
                             'bg-red-200 text-red-800'
@@ -837,7 +838,7 @@ export default function AttendancePage() {
                       </td>
 
                       {/* Hours or present toggle */}
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-4 py-3 text-center">
                         {isLocked ? (
                           <span className="text-gray-600">
                             {worker.payStructure === 'hourly'
@@ -849,7 +850,7 @@ export default function AttendancePage() {
                             type="number" step="0.25" min="0" max="24"
                             disabled={day.absent}
                             defaultValue={day.hoursWorked ?? (isSun || isSat ? '' : worker.stdHoursPerDay ?? '')}
-                            className={`${inp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'border-dashed text-gray-400' : ''}`}
+                            className={`${tableInp} w-16 text-center disabled:opacity-30 ${excludedByTimesheet ? 'border-dashed text-gray-400' : ''}`}
                             onBlur={e => {
                               if (e.target.value !== (day.hoursWorked ?? (isSun || isSat ? '' : worker.stdHoursPerDay))) {
                                 saveDay(day, { hoursWorked: e.target.value })
@@ -857,7 +858,7 @@ export default function AttendancePage() {
                             }}
                           />
                         ) : isFloor && !isSat ? (
-                          <span className="text-gray-400 text-xs">Floor</span>
+                          <span className="text-gray-400 text-sm">Floor</span>
                         ) : (
                           <input type="checkbox"
                             checked={!day.absent}
@@ -868,9 +869,9 @@ export default function AttendancePage() {
                       </td>
 
                       {/* Absent */}
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-4 py-3 text-center">
                         {isLocked ? (
-                          day.absent ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 text-xs">{day.absenceReason ?? 'absent'}</span> : null
+                          day.absent ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 text-sm">{day.absenceReason ?? 'absent'}</span> : null
                         ) : (
                           day.absent ? (
                             <div className="flex items-center gap-1">
@@ -878,7 +879,7 @@ export default function AttendancePage() {
                                 value={day.absenceReason ?? 'unpaid'}
                                 disabled={isLocked}
                                 onChange={e => saveDay(day, { absent: true, absenceReason: e.target.value })}
-                                className={`${inp} w-28`}>
+                                className={`${tableInp} w-28`}>
                                 {ABSENCE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                               </select>
                               <button
@@ -890,7 +891,7 @@ export default function AttendancePage() {
                             </div>
                           ) : (
                             <button onClick={() => saveDay(day, { absent: true, absenceReason: 'unpaid' })}
-                              className="rounded px-2 py-0.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-xs">
+                              className="rounded px-2 py-0.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-sm">
                               Mark absent
                             </button>
                           )
@@ -898,22 +899,22 @@ export default function AttendancePage() {
                       </td>
 
                       {/* Amount */}
-                      <td className="px-3 py-2 text-right font-medium">
+                      <td className="px-4 py-3 text-right font-medium">
                         {day.absent ? <span className="text-gray-300">—</span>
                           : excludedByTimesheet ? <span className="text-gray-300">—</span>
-                          : isFloor && !isSat && !day.note?.startsWith('[Fuel]') ? <span className="text-gray-400 text-xs">in floor</span>
+                          : isFloor && !isSat && !day.note?.startsWith('[Fuel]') ? <span className="text-gray-400 text-sm">in floor</span>
                           : <span className={amount > 0 ? 'text-gray-800' : 'text-gray-300'}>{amount > 0 ? fmt(amount) : '—'}</span>}
                       </td>
 
                       {/* Note */}
-                      <td className="px-3 py-2 min-w-[7rem]">
+                      <td className="px-4 py-3 min-w-[7rem]">
                         {isLocked ? (
                           <span className="text-gray-400">{day.note ?? ''}</span>
                         ) : (
                           <input
                             type="text" placeholder="note…"
                             defaultValue={day.note ?? ''}
-                            className={`${inp} w-28`}
+                            className={`${tableInp} w-28`}
                             onBlur={e => { if (e.target.value !== (day.note ?? '')) saveDay(day, { note: e.target.value }) }}
                           />
                         )}
