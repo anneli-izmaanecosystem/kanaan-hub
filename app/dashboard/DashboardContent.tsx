@@ -48,13 +48,30 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const daysInMonth = new Date(selYear, selMon, 0).getDate()
   const monthEnd   = `${selectedMonth}-${String(daysInMonth).padStart(2, '0')}`
 
+  // Bed-night occupancy trend covers a fixed 12-month window ending this month, independent
+  // of the selected-month KPI filter above — one wide query, bucketed by month in JS below,
+  // instead of 12 separate round-trips.
+  const [curY, curM] = currentYM.split('-').map(Number)
+  const trendMonths: string[] = []
+  {
+    const d = new Date(curY, curM - 1 - 11, 1)
+    for (let i = 0; i < 12; i++) {
+      trendMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      d.setMonth(d.getMonth() + 1)
+    }
+  }
+  const trendRangeStart = `${trendMonths[0]}-01`
+  const [lastTrendY, lastTrendM] = trendMonths[trendMonths.length - 1].split('-').map(Number)
+  const trendRangeEnd = `${trendMonths[trendMonths.length - 1]}-${String(new Date(lastTrendY, lastTrendM, 0).getDate()).padStart(2, '0')}`
+
   const [
     activeEmployees,
     upcomingBookings,
     draftRuns,
     monthBookings,
     earliestBookingRow,
-    activeRoomCount,
+    activeRooms,
+    trendBookings,
   ] = await Promise.all([
     db.select({ count: count() }).from(workers).where(eq(workers.active, true)),
     db.select({
@@ -99,11 +116,48 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     db.select({ minCheckIn: sql<string | null>`MIN(${bookings.checkIn})` })
       .from(bookings)
       .where(ne(bookings.status, 'cancelled')),
-    db.select({ count: count() }).from(rooms).where(eq(rooms.active, true)),
+    db.select({ id: rooms.id, type: rooms.type, capacity: rooms.capacity })
+      .from(rooms).where(eq(rooms.active, true)),
+    db.select({ roomId: bookings.roomId, checkIn: bookings.checkIn, checkOut: bookings.checkOut })
+      .from(bookings)
+      .where(and(
+        lte(bookings.checkIn, trendRangeEnd),
+        gte(bookings.checkOut, trendRangeStart),
+        ne(bookings.status, 'cancelled'),
+      )),
   ])
-  // Total accommodation-unit count for occupancy — was hardcoded to 25, which went stale once
-  // dorm beds and camp sites were added as separately-bookable rooms (now 29 active units).
-  const totalRooms = activeRoomCount[0]?.count ?? 0
+  // Occupancy is measured in bed-nights, not room-nights: room types range from a 2-sleeper
+  // twin to an 8-sleeper family unit, so counting each as "1 room" understates how full the
+  // property actually is. Bookings block the whole room (the API 409s on any overlap), so a
+  // booking occupies its room's full capacity in beds regardless of actual guest headcount.
+  // NOTE: room capacities are as entered in Settings — Room 8 (cap 8), Room 9 (cap 6), and
+  // Dorm B - Bed 1 (cap 2) look anomalous next to their peers and may need correcting; that
+  // would change totalSleepers and every occupancy % below.
+  const roomCapacity = new Map(activeRooms.map(r => [r.id, r.capacity]))
+  const roomType     = new Map(activeRooms.map(r => [r.id, r.type]))
+  const totalSleepers = activeRooms.reduce((s, r) => s + r.capacity, 0)
+  const sleepersByType = new Map<string, number>()
+  for (const r of activeRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
+  const totalRooms = activeRooms.length
+
+  function bedNightsInRange(rows: { roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
+    const rangeStartMs = new Date(rangeStart).getTime()
+    const rangeEndMs   = new Date(rangeEnd).getTime() + 86_400_000 // checkOut is exclusive
+    let total = 0
+    const byType = new Map<string, number>()
+    for (const b of rows) {
+      const capacity = roomCapacity.get(b.roomId)
+      if (capacity === undefined) continue // room since deactivated — excluded from both sides of the ratio
+      const s = Math.max(new Date(b.checkIn).getTime(), rangeStartMs)
+      const e = Math.min(new Date(b.checkOut).getTime(), rangeEndMs)
+      const nights = Math.max(0, (e - s) / 86_400_000)
+      const bedNights = nights * capacity
+      total += bedNights
+      const type = roomType.get(b.roomId)!
+      byType.set(type, (byType.get(type) ?? 0) + bedNights)
+    }
+    return { total, byType }
+  }
 
   // KPI calculations
   // Streamlined 2026-08: the old 'quote_sent' status (excluded from revenue) was folded into
@@ -118,7 +172,6 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   let totalRevenueExclVat = 0
   let totalVat = 0
   let totalCommission = 0
-  let occupiedRoomNights = 0
   let occupiedGuestNights = 0
   for (const b of revenueBookings) {
     const checkInMs  = new Date(b.checkIn).getTime()
@@ -135,15 +188,62 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const vat      = b.vatIncluded ? total - exclVat : 0
     const commission = parseFloat(b.commissionAmount || '0')
 
-    occupiedRoomNights  += nightsInMonth
     occupiedGuestNights += nightsInMonth * guests
     totalRevenueExclVat += exclVat * fraction
     totalVat            += vat * fraction
     totalCommission     += commission * fraction
   }
-  const totalRoomNights = totalRooms * daysInMonth
-  const occupancyRate  = totalRoomNights > 0 ? (occupiedRoomNights / totalRoomNights) * 100 : 0
-  const adr            = occupiedGuestNights > 0 ? totalRevenueExclVat / occupiedGuestNights : 0
+  const adr = occupiedGuestNights > 0 ? totalRevenueExclVat / occupiedGuestNights : 0
+
+  // Bed-night occupancy: beds_occupied = room.capacity (a booking blocks its whole room, per
+  // the 409 conflict check in the booking API), not guest headcount — a couple in an 8-sleeper
+  // family unit still occupies all 8 beds as far as saleable inventory is concerned.
+  const availableBedNights = totalSleepers * daysInMonth
+  const monthBedNights = bedNightsInRange(monthBookings, monthStart, monthEnd)
+  const occupancyRate = availableBedNights > 0 ? (monthBedNights.total / availableBedNights) * 100 : 0
+  const occupancyByType = ['premium', 'budget', 'dorm', 'camping'].map(type => {
+    const sleepers = sleepersByType.get(type) ?? 0
+    const available = sleepers * daysInMonth
+    const booked = monthBedNights.byType.get(type) ?? 0
+    return { type, sleepers, rate: available > 0 ? (booked / available) * 100 : 0 }
+  }).filter(t => t.sleepers > 0)
+
+  // Trend: bed-night occupancy for each of the last 12 months, bucketed from one wide query.
+  const occupancyTrend = trendMonths.map(ym => {
+    const [y, m] = ym.split('-').map(Number)
+    const mStart = `${ym}-01`
+    const mDays = new Date(y, m, 0).getDate()
+    const mEnd = `${ym}-${String(mDays).padStart(2, '0')}`
+    const { total } = bedNightsInRange(trendBookings, mStart, mEnd)
+    const available = totalSleepers * mDays
+    return { ym, bedNights: total, rate: available > 0 ? (total / available) * 100 : 0 }
+  })
+
+  // Breakeven model — Kanaan Guest Farm Unit Economics (excl. VAT), per Anneli's 2026-09-01
+  // costing doc. Occupied bed-nights come from real bookings (actual room capacity), but every
+  // Rand figure below is that doc's fixed model, calibrated against its own 54-sleeper/30-day
+  // baseline (1,620 bed-nights/month) — independent of whatever totalSleepers resolves to above.
+  const ADR_EXCL_VAT             = 252.17 // short-term rate, R290 incl. VAT
+  const AVG_LENGTH_OF_STAY       = 2      // nights per stay — sets how often a bed's laundry turns over
+  const LAUNDRY_PER_STAY_EXCL_VAT = 31.64 // per single-bed set, net + 10%
+  const FIXED_COSTS_EXCL_VAT     = 42_565.22 // electricity + wifi/DStv + cleaning products + gardening
+  const DEPRECIATION_EXCL_VAT    = 6_712.92  // linen + kitchen equipment + bathrooms + beds
+  const HOUSEKEEPING_FLAT        = 6_240.00  // 1 lady x R240/day x 26 days — no VAT, wages aren't VATable
+  const CONTINGENCY_RATE         = 0.05
+  const FIXED_MONTHLY_BASE = FIXED_COSTS_EXCL_VAT + DEPRECIATION_EXCL_VAT + HOUSEKEEPING_FLAT
+
+  function breakevenPnL(bedNights: number) {
+    const revenue = bedNights * ADR_EXCL_VAT
+    const laundry = (bedNights / AVG_LENGTH_OF_STAY) * LAUNDRY_PER_STAY_EXCL_VAT
+    const totalCost = (FIXED_MONTHLY_BASE + laundry) * (1 + CONTINGENCY_RATE)
+    return { revenue, totalCost, profit: revenue - totalCost }
+  }
+  const breakevenTrend = occupancyTrend.map(t => ({ ym: t.ym, ...breakevenPnL(t.bedNights) }))
+  const breakevenMaxVal = Math.max(...breakevenTrend.map(t => Math.max(t.revenue, t.totalCost)), 1)
+  // Solve revenue(BN) = totalCost(BN) for BN directly, rather than hardcoding the doc's ~15.3% —
+  // ADR·BN = (FIXED_MONTHLY_BASE + BN/ALOS·LAUNDRY)·(1+c)  =>  BN = FIXED_MONTHLY_BASE·(1+c) / (ADR - LAUNDRY·(1+c)/ALOS)
+  const breakevenBedNights = (FIXED_MONTHLY_BASE * (1 + CONTINGENCY_RATE)) / (ADR_EXCL_VAT - (LAUNDRY_PER_STAY_EXCL_VAT * (1 + CONTINGENCY_RATE)) / AVG_LENGTH_OF_STAY)
+  const breakevenOccupancyPct = (breakevenBedNights / 1620) * 100 // doc's own 54-sleeper x 30-day baseline
 
   const earliestMonth = earliestBookingRow[0]?.minCheckIn?.slice(0, 7) ?? currentYM
   const months = surroundingMonths(currentYM, earliestMonth)
@@ -192,7 +292,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             <div>
               <p className="text-xs text-gray-500">Occupancy Rate</p>
               <p className="text-2xl font-semibold text-gray-900">{occupancyRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)}</p>
+              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {totalSleepers} beds, {totalRooms} rooms</p>
             </div>
           </div>
         </div>
@@ -245,6 +345,84 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             </div>
           </div>
         </Link>
+      </div>
+
+      {/* Occupancy breakdown + trend (bed-night basis) */}
+      <div className="grid grid-cols-2 gap-6 mb-8">
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <h2 className="text-sm font-medium text-gray-700 mb-4">Occupancy by Room Type — {monthLabel(selectedMonth)}</h2>
+          <div className="space-y-3">
+            {occupancyByType.map(t => (
+              <div key={t.type}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="capitalize text-gray-600">{t.type} <span className="text-gray-400">({t.sleepers} beds)</span></span>
+                  <span className="font-medium text-gray-900">{t.rate.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-green-500" style={{ width: `${Math.min(100, t.rate)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <h2 className="text-sm font-medium text-gray-700 mb-4">Occupancy Trend — Last 12 Months</h2>
+          <div className="flex items-end gap-1.5 h-32">
+            {occupancyTrend.map(t => {
+              const heightPct = Math.max(2, Math.min(100, t.rate))
+              const isCurrent = t.ym === currentYM
+              return (
+                <div key={t.ym} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                  <span className="text-[10px] text-gray-500 mb-1">{t.rate.toFixed(0)}%</span>
+                  <div
+                    className={`w-full rounded-t ${isCurrent ? 'bg-gray-900' : 'bg-green-400'}`}
+                    style={{ height: `${heightPct}%` }}
+                    title={`${monthLabel(t.ym)}: ${t.rate.toFixed(1)}%`}
+                  />
+                  <span className="text-[10px] text-gray-400 mt-1">{monthLabel(t.ym).slice(0, 3)}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Breakeven analysis */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm mb-8">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-medium text-gray-700">Breakeven Analysis — Last 12 Months (excl. VAT)</h2>
+          <span className="text-xs text-gray-400">
+            Breakeven ≈ {Math.round(breakevenBedNights)} bed-nights/mo (~{breakevenOccupancyPct.toFixed(1)}% occupancy)
+          </span>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">
+          Revenue vs. total cost (fixed + depreciation + housekeeping + laundry, +5% contingency) from actual bookings each month
+        </p>
+        <div className="flex items-end gap-3 h-40">
+          {breakevenTrend.map(t => {
+            const revH  = Math.max(2, (t.revenue   / breakevenMaxVal) * 100)
+            const costH = Math.max(2, (t.totalCost / breakevenMaxVal) * 100)
+            const isProfit = t.profit >= 0
+            return (
+              <div key={t.ym} className="flex-1 flex flex-col items-center justify-end h-full">
+                <span className={`text-[10px] font-medium mb-1 whitespace-nowrap ${isProfit ? 'text-green-600' : 'text-red-600'}`}>
+                  {isProfit ? '+' : '−'}{fmt(Math.abs(t.profit))}
+                </span>
+                <div className="flex items-end gap-0.5 w-full h-full">
+                  <div className="flex-1 rounded-t bg-blue-400" style={{ height: `${revH}%` }} title={`Revenue: ${fmt(t.revenue)}`} />
+                  <div className="flex-1 rounded-t bg-gray-300" style={{ height: `${costH}%` }} title={`Total cost: ${fmt(t.totalCost)}`} />
+                </div>
+                <span className="text-[10px] text-gray-400 mt-1">{monthLabel(t.ym).slice(0, 3)}</span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex items-center gap-4 mt-3 text-[10px] text-gray-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> Revenue</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> Total cost</span>
+          <span>Profit/loss labeled above each month</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-6">
