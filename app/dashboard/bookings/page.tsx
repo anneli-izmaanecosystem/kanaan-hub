@@ -407,7 +407,9 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
   const [payDateFrom, setPayDateFrom] = useState('')
   const [payDateTo, setPayDateTo]     = useState('')
   const [paying, setPaying]           = useState<number | null>(null)
+  const [page, setPage]               = useState(1)
   const today = todaySA()
+  const PAGE_SIZE = 50
 
   // A pay-date filter is a reconciliation query against full history — the rolling
   // checkIn/checkOut window this page normally fetches would silently drop bookings
@@ -416,6 +418,12 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
   useEffect(() => {
     if ((payDateFrom || payDateTo) && !showAll) setShowAll(true)
   }, [payDateFrom, payDateTo])
+
+  // Any change to what's shown should bring the user back to page 1 — otherwise
+  // narrowing a filter can strand them on a now-empty trailing page.
+  useEffect(() => {
+    setPage(1)
+  }, [search, statusFilters, paymentMethodFilters, showCancelled, payDateFrom, payDateTo, sort, bookings])
 
   function toggleSort(key: SortKey) {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
@@ -486,6 +494,13 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
     })
 
   const totalPaid = filtered.reduce((sum, { booking }) => sum + parseFloat(booking.depositPaid || '0'), 0)
+
+  // Pagination applies only to what's rendered in the table — CSV export and the
+  // paid-total summary above always operate on the full `filtered` set.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const pageSafe    = Math.min(page, totalPages)
+  const pageStart   = (pageSafe - 1) * PAGE_SIZE
+  const paged       = filtered.slice(pageStart, pageStart + PAGE_SIZE)
 
   function downloadCsv() {
     const esc = (v: string | number | null | undefined) => {
@@ -686,7 +701,7 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map(({ booking, rooms: bookingRooms }) => (
+              {paged.map(({ booking, rooms: bookingRooms }) => (
                 <tr key={booking.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900">{booking.guestName}</td>
                   <td className="px-4 py-3 text-gray-600">{bookingRooms.map(r => r.name).join(', ')}</td>
@@ -750,6 +765,32 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
               ))}
             </tbody>
           </table>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-200 px-4 py-2.5 text-xs text-gray-500">
+              <span>
+                Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={pageSafe === 1}
+                  className="rounded-md border border-gray-200 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  Previous
+                </button>
+                <span>Page {pageSafe} of {totalPages}</span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={pageSafe === totalPages}
+                  className="rounded-md border border-gray-200 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
