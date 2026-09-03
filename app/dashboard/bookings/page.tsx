@@ -517,7 +517,7 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
     ]
     const rows = filtered.map(({ booking, rooms: bookingRooms }) => [
       booking.guestName,
-      bookingRooms.map(r => r.name).join('; '),
+      bookingRooms.map(r => r.name).join(' / '),
       booking.checkIn,
       booking.checkOut,
       STATUS_LABEL[booking.status] ?? booking.status,

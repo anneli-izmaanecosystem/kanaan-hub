@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feature/bookings-csv-export",
+    "feature/pricelist-and-multi-room-bookings",
+    "main"
+  ],
+  "parent": {
+    "feature/bookings-csv-export": "main",
+    "feature/pricelist-and-multi-room-bookings": "main",
+    "main": null
+  },
+  "order": [
+    "main",
+    "feature/bookings-csv-export",
+    "feature/pricelist-and-multi-room-bookings"
+  ]
+}
