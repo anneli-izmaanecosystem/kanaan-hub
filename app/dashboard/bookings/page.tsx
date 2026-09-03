@@ -505,7 +505,11 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
   function downloadCsv() {
     const esc = (v: string | number | null | undefined) => {
       const s = String(v ?? '')
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+      // Also quote on ';' — the Room(s) column joins multiple rooms with '; ', and
+      // some regional Excel/Sheets configurations (common in ZA/EU locales) treat
+      // semicolon as the CSV delimiter, splitting an unquoted multi-room field
+      // across several columns instead of keeping it as one.
+      return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
     }
     const headers = [
       'Guest', 'Room(s)', 'Check-in', 'Check-out', 'Status', 'Source',
@@ -680,7 +684,8 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
       {filtered.length === 0 ? (
         <p className="text-sm text-gray-400 py-6 text-center">No bookings match your filters.</p>
       ) : (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs border-b border-gray-200">
               <tr>
@@ -765,6 +770,7 @@ function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
               ))}
             </tbody>
           </table>
+          </div>
 
           {/* Pagination */}
           {totalPages > 1 && (
