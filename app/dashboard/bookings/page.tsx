@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, RefreshCw, Tag } from 'lucide-react'
-import { fmtDate, cn } from '@/lib/utils'
+import { Plus, Grid3X3, List, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Search, X, Pencil, CheckCircle, Circle, RefreshCw, Tag, Download } from 'lucide-react'
+import { fmtDate, fmt, cn } from '@/lib/utils'
 import { todaySA, addDaysSA } from '@/lib/date-sa'
 import { isBookingIncomplete, missingBookingFields, FIELD_LABELS } from '@/lib/booking-completeness'
 
@@ -16,9 +16,9 @@ type Room = { id: number; name: string; type: string }
 type Booking = {
   booking: {
     id: number; guestName: string; checkIn: string; checkOut: string
-    status: string; adults: number; totalAmount: string; balanceDue: string
+    status: string; adults: number; totalAmount: string; balanceDue: string; depositPaid: string
     paymentMethod: string | null; source: string | null; sourceOther: string | null
-    invoiceNumber: string | null
+    invoiceNumber: string | null; payDate: string | null
   }
   room: Room       // primary room — kept for legacy display
   rooms: Room[]    // all rooms occupied by this booking
@@ -224,7 +224,7 @@ function BookingsPageContent() {
       ) : view === 'grid' ? (
         <RoomGrid bookings={bookings} rooms={tabRooms} rangeStart={rangeStart} rangeEnd={rangeEnd} />
       ) : (
-        <BookingList bookings={bookings} onTogglePaid={async (id, totalAmount, currentlyPaid) => {
+        <BookingList bookings={bookings} showAll={showAll} setShowAll={setShowAll} onTogglePaid={async (id, totalAmount, currentlyPaid) => {
           const patch = currentlyPaid
             ? { status: 'unpaid_quoted', depositPaid: '0', balanceDue: totalAmount }
             : { status: 'fully_paid', depositPaid: totalAmount, balanceDue: '0' }
@@ -383,7 +383,7 @@ function RoomGrid({ bookings, rooms, rangeStart, rangeEnd }: { bookings: Booking
   )
 }
 
-type SortKey = 'guestName' | 'roomName' | 'checkIn' | 'checkOut' | 'status' | 'totalAmount' | 'balanceDue'
+type SortKey = 'guestName' | 'roomName' | 'checkIn' | 'checkOut' | 'status' | 'totalAmount' | 'balanceDue' | 'payDate' | 'depositPaid'
 type SortDir = 'asc' | 'desc'
 
 function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: SortDir } }) {
@@ -393,14 +393,37 @@ function SortIcon({ col, sort }: { col: SortKey; sort: { key: SortKey; dir: Sort
     : <ChevronDown size={12} className="inline ml-1 text-gray-900" />
 }
 
-function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onTogglePaid: (id: number, totalAmount: string, currentlyPaid: boolean) => Promise<void> }) {
+function BookingList({ bookings, showAll, setShowAll, onTogglePaid }: {
+  bookings: Booking[]
+  showAll: boolean
+  setShowAll: (v: boolean | ((prev: boolean) => boolean)) => void
+  onTogglePaid: (id: number, totalAmount: string, currentlyPaid: boolean) => Promise<void>
+}) {
   const [sort, setSort]               = useState<{ key: SortKey; dir: SortDir }>({ key: 'checkIn', dir: 'asc' })
   const [search, setSearch]           = useState('')
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set())
   const [paymentMethodFilters, setPaymentMethodFilters] = useState<Set<string>>(new Set())
   const [showCancelled, setShowCancelled] = useState(false)
+  const [payDateFrom, setPayDateFrom] = useState('')
+  const [payDateTo, setPayDateTo]     = useState('')
   const [paying, setPaying]           = useState<number | null>(null)
+  const [page, setPage]               = useState(1)
   const today = todaySA()
+  const PAGE_SIZE = 50
+
+  // A pay-date filter is a reconciliation query against full history — the rolling
+  // checkIn/checkOut window this page normally fetches would silently drop bookings
+  // paid in-range but checked in outside it, so force "All bookings" on as soon as
+  // either date is set.
+  useEffect(() => {
+    if ((payDateFrom || payDateTo) && !showAll) setShowAll(true)
+  }, [payDateFrom, payDateTo])
+
+  // Any change to what's shown should bring the user back to page 1 — otherwise
+  // narrowing a filter can strand them on a now-empty trailing page.
+  useEffect(() => {
+    setPage(1)
+  }, [search, statusFilters, paymentMethodFilters, showCancelled, payDateFrom, payDateTo, sort, bookings])
 
   function toggleSort(key: SortKey) {
     setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
@@ -440,6 +463,8 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
       if (booking.status === 'cancelled' && !showCancelled) return false
       if (!isAll && !statusFilters.has(booking.status)) return false
       if (!isAllPayment && !paymentMethodFilters.has(booking.paymentMethod ?? '')) return false
+      if (payDateFrom && (!booking.payDate || booking.payDate < payDateFrom)) return false
+      if (payDateTo && (!booking.payDate || booking.payDate > payDateTo)) return false
       if (search) {
         const q = search.toLowerCase()
         return (
@@ -462,9 +487,60 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
         case 'status':      return dir * a.booking.status.localeCompare(b.booking.status)
         case 'totalAmount': return dir * (parseFloat(a.booking.totalAmount) - parseFloat(b.booking.totalAmount))
         case 'balanceDue':  return dir * (parseFloat(a.booking.balanceDue) - parseFloat(b.booking.balanceDue))
+        case 'depositPaid': return dir * (parseFloat(a.booking.depositPaid) - parseFloat(b.booking.depositPaid))
+        case 'payDate':     return dir * (a.booking.payDate ?? '').localeCompare(b.booking.payDate ?? '')
         default: return 0
       }
     })
+
+  const totalPaid = filtered.reduce((sum, { booking }) => sum + parseFloat(booking.depositPaid || '0'), 0)
+
+  // Pagination applies only to what's rendered in the table — CSV export and the
+  // paid-total summary above always operate on the full `filtered` set.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const pageSafe    = Math.min(page, totalPages)
+  const pageStart   = (pageSafe - 1) * PAGE_SIZE
+  const paged       = filtered.slice(pageStart, pageStart + PAGE_SIZE)
+
+  function downloadCsv() {
+    const esc = (v: string | number | null | undefined) => {
+      const s = String(v ?? '')
+      // Also quote on ';' — the Room(s) column joins multiple rooms with '; ', and
+      // some regional Excel/Sheets configurations (common in ZA/EU locales) treat
+      // semicolon as the CSV delimiter, splitting an unquoted multi-room field
+      // across several columns instead of keeping it as one.
+      return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const headers = [
+      'Guest', 'Room(s)', 'Check-in', 'Check-out', 'Status', 'Source',
+      'Payment Method', 'Invoice #', 'Pay Date', 'Total Amount', 'Amount Paid', 'Balance Due',
+    ]
+    const rows = filtered.map(({ booking, rooms: bookingRooms }) => [
+      booking.guestName,
+      bookingRooms.map(r => r.name).join(' / '),
+      booking.checkIn,
+      booking.checkOut,
+      STATUS_LABEL[booking.status] ?? booking.status,
+      sourceLabel(booking.source, booking.sourceOther),
+      booking.paymentMethod,
+      booking.invoiceNumber,
+      booking.payDate,
+      booking.totalAmount,
+      booking.depositPaid,
+      booking.balanceDue,
+    ])
+    const csv = [headers, ...rows].map(row => row.map(esc).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }) // BOM so Excel reads UTF-8 correctly
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const range = payDateFrom || payDateTo ? `_${payDateFrom || 'start'}_to_${payDateTo || 'now'}` : ''
+    a.href = url
+    a.download = `bookings${range}_${todaySA()}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const th = (label: string, key: SortKey, align = 'left') => (
     <th
@@ -498,7 +574,38 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
               </button>
             )}
           </div>
-          <span className="text-xs text-gray-400 ml-auto">{filtered.length} of {bookings.length}</span>
+          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+            <span>Paid:</span>
+            <input
+              type="date"
+              value={payDateFrom}
+              onChange={e => setPayDateFrom(e.target.value)}
+              className="rounded-md border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-gray-300"
+            />
+            <span>–</span>
+            <input
+              type="date"
+              value={payDateTo}
+              onChange={e => setPayDateTo(e.target.value)}
+              className="rounded-md border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-gray-300"
+            />
+            {(payDateFrom || payDateTo) && (
+              <button onClick={() => { setPayDateFrom(''); setPayDateTo('') }} className="text-gray-400 hover:text-gray-700">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={downloadCsv}
+            disabled={filtered.length === 0}
+            title="Download the filtered list as CSV"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40"
+          >
+            <Download size={13} /> Download CSV
+          </button>
+          <span className="text-xs text-gray-400 ml-auto">
+            {filtered.length} of {bookings.length} · Paid total {fmt(totalPaid)}
+          </span>
         </div>
 
         {/* Status chips */}
@@ -577,7 +684,8 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
       {filtered.length === 0 ? (
         <p className="text-sm text-gray-400 py-6 text-center">No bookings match your filters.</p>
       ) : (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs border-b border-gray-200">
               <tr>
@@ -589,14 +697,16 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Source</th>
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Payment</th>
                 <th className="px-4 py-3 text-left text-gray-500 font-medium">Invoice #</th>
+                {th('Pay Date', 'payDate')}
                 {th('Total', 'totalAmount', 'right')}
+                {th('Paid', 'depositPaid', 'right')}
                 {th('Balance', 'balanceDue', 'right')}
                 <th className="px-3 py-3 text-center text-gray-500 font-medium text-xs">Paid</th>
                 <th className="px-3 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map(({ booking, rooms: bookingRooms }) => (
+              {paged.map(({ booking, rooms: bookingRooms }) => (
                 <tr key={booking.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-medium text-gray-900">{booking.guestName}</td>
                   <td className="px-4 py-3 text-gray-600">{bookingRooms.map(r => r.name).join(', ')}</td>
@@ -622,7 +732,9 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {booking.invoiceNumber === 'N/A' ? '#N/A' : (booking.invoiceNumber || '—')}
                   </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{booking.payDate ? fmtDate(booking.payDate) : '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.totalAmount).toFixed(0)}</td>
+                  <td className="px-4 py-3 text-right text-gray-700">R {parseFloat(booking.depositPaid).toFixed(0)}</td>
                   <td className={cn('px-4 py-3 text-right font-medium text-xs', parseFloat(booking.balanceDue) > 0 ? 'text-red-600' : 'text-green-600')}>
                     R {parseFloat(booking.balanceDue).toFixed(0)}
                   </td>
@@ -658,6 +770,33 @@ function BookingList({ bookings, onTogglePaid }: { bookings: Booking[]; onToggle
               ))}
             </tbody>
           </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-200 px-4 py-2.5 text-xs text-gray-500">
+              <span>
+                Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={pageSafe === 1}
+                  className="rounded-md border border-gray-200 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  Previous
+                </button>
+                <span>Page {pageSafe} of {totalPages}</span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={pageSafe === totalPages}
+                  className="rounded-md border border-gray-200 px-2 py-1 font-medium hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
