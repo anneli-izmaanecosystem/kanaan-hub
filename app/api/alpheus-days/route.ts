@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, alpheusDays, alpheusDayClients, fuelAllocations } from '@/lib/db'
 import { desc, eq } from 'drizzle-orm'
+import { matchFillsToDay } from '@/lib/alpheus-match'
 
 // GET /api/alpheus-days — list all days with clients + linked fill allocations
 export async function GET(req: NextRequest) {
@@ -61,25 +62,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Auto-match: link unmatched offsite allocations whose fill_date = this day
-    // We do this in JS to avoid a complex subquery — volume is always small
-    const { fuelFills } = await import('@/lib/db')
-    const { isNull, inArray } = await import('drizzle-orm')
-
-    const fillsOnDate = await db
-      .select({ id: fuelFills.id })
-      .from(fuelFills)
-      .where(eq(fuelFills.fillDate, dayDate))
-
-    if (fillsOnDate.length) {
-      const fillIds = fillsOnDate.map(f => f.id)
-      await db
-        .update(fuelAllocations)
-        .set({ dayId: day.id })
-        .where(
-          inArray(fuelAllocations.fillId, fillIds)
-        )
-    }
+    // Auto-match: link unmatched off-site allocations from Alpheus's fuel fills whose
+    // fill date falls in this day's matching window (same day, or the day after).
+    await matchFillsToDay(day.id, dayDate)
 
     return NextResponse.json({ day, clients: insertedClients }, { status: 201 })
   } catch (err: any) {

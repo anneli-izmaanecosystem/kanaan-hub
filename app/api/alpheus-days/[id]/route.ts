@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { db, alpheusDays, alpheusDayClients, fuelAllocations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
+import { matchFillsToDay } from '@/lib/alpheus-match'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -33,6 +34,10 @@ export async function PUT(req: NextRequest, { params }: Params) {
       .returning()
 
     if (!day) return NextResponse.json({ error: 'Day not found' }, { status: 404 })
+
+    // Re-run matching in case the date moved — picks up fuel fills that now fall in
+    // this day's window (existing matches to this dayId are left alone).
+    await matchFillsToDay(day.id, dayDate)
 
     // Replace client blocks
     await db.delete(alpheusDayClients).where(eq(alpheusDayClients.dayId, dayId))

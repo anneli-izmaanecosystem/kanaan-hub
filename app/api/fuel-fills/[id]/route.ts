@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { db, fuelFills, fuelAllocations, alpheusDays } from '@/lib/db'
-import { eq, and } from 'drizzle-orm'
+import { db, fuelFills, fuelAllocations } from '@/lib/db'
+import { eq } from 'drizzle-orm'
+import { findDayForFill } from '@/lib/alpheus-match'
 
 // PATCH /api/fuel-fills/[id] — update fill or finalise with allocations
 export async function PATCH(
@@ -37,18 +38,14 @@ export async function PATCH(
       // Wipe existing allocations and re-insert
       await db.delete(fuelAllocations).where(eq(fuelAllocations.fillId, fillId))
 
-      // Auto-match each off-site allocation to an alpheus_days row by date
+      // Auto-match each off-site allocation to an alpheus_days row by date. Alpheus fills
+      // in the morning or evening, so the fill date may be the workday itself or the day after.
       const insertedAllocs = []
       for (const a of allocations) {
         let dayId: number | null = null
 
-        if (a.allocType === 'offsite') {
-          const [matchedDay] = await db
-            .select({ id: alpheusDays.id })
-            .from(alpheusDays)
-            .where(eq(alpheusDays.dayDate, fill.fillDate))
-            .limit(1)
-          dayId = matchedDay?.id ?? null
+        if (a.allocType === 'offsite' && fill.driverName === 'Alpheus') {
+          dayId = await findDayForFill(fill.fillDate)
         }
 
         const cost = parseFloat(a.litres) * parseFloat(String(fill.ratePerLitre))

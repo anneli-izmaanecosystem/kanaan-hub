@@ -338,7 +338,9 @@ export const fuelAllocations = pgTable('fuel_allocations', {
 })
 
 // Alpheus's working days — captured by manager.
-// Matched to fuel fills by fillDate = alpheusDays.dayDate + driverName = 'Alpheus'.
+// Matched to fuel fills where driverName = 'Alpheus' and fillDate is either dayDate
+// or dayDate + 1 (he fills in the morning or evening, so the fill often lands the
+// calendar day after the workday) — see lib/alpheus-match.ts.
 export const alpheusDays = pgTable('alpheus_days', {
   id:          serial('id').primaryKey(),
   dayDate:     date('day_date').notNull(),
