@@ -1,34 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkMobileAuth } from '@/lib/mobile-auth'
 import { db, bookings, rooms, bookingRooms } from '@/lib/db'
-import { eq, and, or, lt, lte, gte, gt, inArray, sql } from 'drizzle-orm'
+import { eq, and, or, lt, lte, gte, gt, desc, inArray, sql } from 'drizzle-orm'
 
-// GET /api/mobile/bookings?days=3  — upcoming check-ins within `days`, plus bookings
-// currently in-house (checkIn <= today <= checkOut), merged into one list.
+// GET /api/mobile/bookings?days=3         — upcoming check-ins within `days`, plus bookings
+//                                            currently in-house (checkIn <= today <= checkOut).
+// GET /api/mobile/bookings?view=past&days=14 — bookings that checked out within the last `days`
+//                                            days (most recent first), for looking back and editing.
 export async function GET(req: NextRequest) {
   if (!checkMobileAuth(req)) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const days = parseInt(req.nextUrl.searchParams.get('days') ?? '3')
+  const view = req.nextUrl.searchParams.get('view') === 'past' ? 'past' : 'upcoming'
+  const days = parseInt(req.nextUrl.searchParams.get('days') ?? (view === 'past' ? '14' : '3'))
+
   const today = new Date()
-  const future = new Date(today)
-  future.setDate(today.getDate() + days)
+  const edge  = new Date(today)
+  edge.setDate(today.getDate() + (view === 'past' ? -days : days))
 
   const toDateStr = (d: Date) => d.toISOString().split('T')[0]
   const todayStr = toDateStr(today)
+  const edgeStr  = toDateStr(edge)
+
+  const whereClause = view === 'past'
+    ? and(
+        // departed within the window, but not still in-house (checkOut <= today already excludes that)
+        gt(bookings.checkOut, edgeStr),
+        lte(bookings.checkOut, todayStr),
+        sql`${bookings.status} != 'cancelled'`,
+      )
+    : and(
+        or(
+          // upcoming: check-in falls within the window
+          and(gte(bookings.checkIn, todayStr), lte(bookings.checkIn, edgeStr)),
+          // present: guest is currently in-house
+          and(lte(bookings.checkIn, todayStr), gt(bookings.checkOut, todayStr)),
+        ),
+        sql`${bookings.status} != 'cancelled'`,
+      )
 
   const rows = await db
     .select({ booking: bookings })
     .from(bookings)
-    .where(and(
-      or(
-        // upcoming: check-in falls within the window
-        and(gte(bookings.checkIn, todayStr), lte(bookings.checkIn, toDateStr(future))),
-        // present: guest is currently in-house
-        and(lte(bookings.checkIn, todayStr), gt(bookings.checkOut, todayStr)),
-      ),
-      sql`${bookings.status} != 'cancelled'`,
-    ))
-    .orderBy(bookings.checkIn)
+    .where(whereClause)
+    .orderBy(view === 'past' ? desc(bookings.checkOut) : bookings.checkIn)
 
   if (rows.length === 0) return NextResponse.json([])
 
