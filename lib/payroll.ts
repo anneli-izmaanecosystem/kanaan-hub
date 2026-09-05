@@ -93,7 +93,12 @@ const PAYE_ANNUAL_THRESHOLD = 95750  // 2025/26 tax year
 // keeps weekly hours within the 45h/week (3-month average) threshold so no
 // overtime premium is owed; this is a deliberate policy, not an oversight.
 // PH multiplier for employees (BCEA s.18)
-const PH_MULTIPLIER  = 2.0
+const PH_MULTIPLIER = 2.0
+// Sunday multiplier for employees not ordinarily rostered on Sundays (BCEA s.16).
+// Unlike Saturdays, this isn't covered by the 45h/week averaging argument above —
+// confirmed 2026-09-05 after a real underpayment was found (attendance-page preview
+// showed 2x, the persisted payroll calc silently paid 1x — see payroll-sync.ts).
+const SUNDAY_MULTIPLIER = 2.0
 
 export type PayStructure = 'hourly' | 'daily' | 'floor'
 export type WorkerType   = 'employee' | 'contractor'
@@ -115,10 +120,12 @@ export interface EntryInput {
   // hours-based (hourly workers)
   ordinaryHours: number
   saturdayHours: number
+  sundayHours:   number   // BCEA s.16 — employees only, paid at SUNDAY_MULTIPLIER
   phHours:       number   // public holiday hours — employee only, if confirmed double
   // days-based (daily & floor workers)
   daysWorked:    number
   saturdayDays:  number
+  sundayDays:    number   // BCEA s.16 — employees only, paid at SUNDAY_MULTIPLIER
   phDays:        number   // public holiday days — daily workers only, if confirmed double
   unpaidLeaveDays: number  // floor workers: days to deduct from floor
   // additions
@@ -136,6 +143,7 @@ export interface EntryInput {
 export interface PayrollResult {
   basicPay:       number
   saturdayPay:    number
+  sundayPay:      number
   phPay:          number
   grossPay:       number
   uifEmployee:    number
@@ -150,12 +158,16 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
   const isEmployee   = worker.workerType === 'employee'
   let basicPay       = 0
   let saturdayPay    = 0
+  let sundayPay      = 0
   let phPay          = 0
 
   if (worker.payStructure === 'hourly') {
     const rate = parseFloat(worker.hourlyRate ?? '0')
     basicPay    = entry.ordinaryHours * rate
     saturdayPay = entry.saturdayHours * rate   // normal rate — hours within 45h/week average
+    // Sunday: double pay for employees only (BCEA s.16), zero for contractors —
+    // mirrors the PH treatment below rather than folding into ordinaryHours at 1x.
+    sundayPay = isEmployee ? entry.sundayHours * rate * SUNDAY_MULTIPLIER : 0
     // PH: double pay for employees only, zero for contractors
     phPay = isEmployee ? entry.phHours * rate * PH_MULTIPLIER : 0
 
@@ -163,6 +175,8 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
     const rate = parseFloat(worker.dailyRate ?? '0')
     basicPay    = entry.daysWorked    * rate
     saturdayPay = entry.saturdayDays  * rate  // flat day rate on Saturdays (per actual practice)
+    // Sunday: double day rate for employees only (BCEA s.16), zero for contractors
+    sundayPay = isEmployee ? entry.sundayDays * rate * SUNDAY_MULTIPLIER : 0
     // PH: double day rate for employees once confirmed, zero for contractors (BCEA s.18)
     phPay = isEmployee ? entry.phDays * rate * PH_MULTIPLIER : 0
 
@@ -176,7 +190,7 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
     saturdayPay = entry.saturdayDays * satR
   }
 
-  const grossPay = basicPay + saturdayPay + phPay + entry.bonus + entry.otherAdditions
+  const grossPay = basicPay + saturdayPay + sundayPay + phPay + entry.bonus + entry.otherAdditions
 
   // UIF: employees only, 1% each side, capped
   const uifEmployee = isEmployee ? Math.min(grossPay * UIF_RATE, UIF_CAP) : 0
@@ -196,6 +210,7 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
   return {
     basicPay:            round2(basicPay),
     saturdayPay:         round2(saturdayPay),
+    sundayPay:           round2(sundayPay),
     phPay:               round2(phPay),
     grossPay:            round2(grossPay),
     uifEmployee:         round2(uifEmployee),
@@ -210,9 +225,11 @@ export function defaultEntry(): EntryInput {
   return {
     ordinaryHours:        0,
     saturdayHours:        0,
+    sundayHours:          0,
     phHours:              0,
     daysWorked:           0,
     saturdayDays:         0,
+    sundayDays:           0,
     phDays:               0,
     unpaidLeaveDays:      0,
     bonus:                0,

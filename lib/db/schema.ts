@@ -226,13 +226,16 @@ export const payrollEntries = pgTable('payroll_entries', {
   // hours / days worked
   ordinaryHours: numeric('ordinary_hours', { precision: 6, scale: 2 }).notNull().default('0'),
   saturdayHours: numeric('saturday_hours', { precision: 6, scale: 2 }).notNull().default('0'),
+  sundayHours:   numeric('sunday_hours',   { precision: 6, scale: 2 }).notNull().default('0'),
   phHours:       numeric('ph_hours',       { precision: 6, scale: 2 }).notNull().default('0'),
   daysWorked:    numeric('days_worked',    { precision: 5, scale: 1 }).notNull().default('0'),
   saturdayDays:  numeric('saturday_days',  { precision: 4, scale: 1 }).notNull().default('0'),
+  sundayDays:    numeric('sunday_days',    { precision: 4, scale: 1 }).notNull().default('0'),
 
   // earnings
   basicPay:       numeric('basic_pay',       { precision: 10, scale: 2 }).notNull().default('0'),
   saturdayPay:    numeric('saturday_pay',    { precision: 10, scale: 2 }).notNull().default('0'),
+  sundayPay:      numeric('sunday_pay',      { precision: 10, scale: 2 }).notNull().default('0'), // BCEA s.16 — 2x for employees not ordinarily rostered on Sundays
   phPay:          numeric('ph_pay',          { precision: 10, scale: 2 }).notNull().default('0'),
   bonus:          numeric('bonus',           { precision: 10, scale: 2 }).notNull().default('0'),
   otherAdditions: numeric('other_additions', { precision: 10, scale: 2 }).notNull().default('0'),

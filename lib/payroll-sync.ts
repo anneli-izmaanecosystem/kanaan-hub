@@ -112,6 +112,9 @@ export async function recalculatePayrollEntry(rid: number, wid: number): Promise
     if (worker.payStructure === 'hourly') {
       const hrs = parseFloat(d.hoursWorked ?? worker.stdHoursPerDay ?? '0')
       if      (d.dayType === 'saturday')       ei.saturdayHours += hrs
+      // Sunday: BCEA s.16 premium (2x for employees) — kept out of ordinaryHours so
+      // it isn't silently paid at 1x. Fixed 2026-09-05 after a real underpayment.
+      else if (d.dayType === 'sunday')         ei.sundayHours   += hrs
       else if (d.dayType === 'public_holiday') {
         // Only accumulate in phHours (×2) when user confirmed double pay
         if (d.phDoubleConfirmed) ei.phHours       += hrs
@@ -121,7 +124,9 @@ export async function recalculatePayrollEntry(rid: number, wid: number): Promise
 
     } else if (worker.payStructure === 'daily') {
       if      (d.dayType === 'saturday')       ei.saturdayDays += 1
-      else if (d.dayType === 'sunday')         { /* no pay */ }
+      // Sunday: BCEA s.16 premium (2x for employees) — previously unpaid entirely.
+      // Fixed 2026-09-05 after a real underpayment was found on the hourly path.
+      else if (d.dayType === 'sunday')         ei.sundayDays   += 1
       else if (d.dayType === 'public_holiday') {
         // Only pay double (BCEA s.18) once confirmed; otherwise normal day rate.
         if (d.phDoubleConfirmed) ei.phDays    += 1
@@ -197,9 +202,11 @@ export async function recalculatePayrollEntry(rid: number, wid: number): Promise
     .set({
       ordinaryHours:        String(ei.ordinaryHours),
       saturdayHours:        String(ei.saturdayHours),
+      sundayHours:          String(ei.sundayHours),
       phHours:              String(ei.phHours),
       daysWorked:           String(ei.daysWorked),
       saturdayDays:         String(ei.saturdayDays),
+      sundayDays:           String(ei.sundayDays),
       salaryAdvance:        String(ei.salaryAdvance),
       shopDeductions:       String(ei.shopDeductions),
       otherDeductions:      String(ei.otherDeductions),
@@ -207,6 +214,7 @@ export async function recalculatePayrollEntry(rid: number, wid: number): Promise
       sickLeaveDaysTaken:   String(ei.sickLeaveDaysTaken),
       basicPay:             String(calc.basicPay),
       saturdayPay:          String(calc.saturdayPay),
+      sundayPay:            String(calc.sundayPay),
       phPay:                String(calc.phPay),
       grossPay:             String(calc.grossPay),
       uifEmployee:          String(calc.uifEmployee),

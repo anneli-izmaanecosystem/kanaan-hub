@@ -17,9 +17,9 @@ type Worker = {
   position: string | null; department: string | null
 }
 type Entry = {
-  ordinaryHours: string; saturdayHours: string; phHours: string
-  daysWorked: string; saturdayDays: string
-  basicPay: string; saturdayPay: string; phPay: string
+  ordinaryHours: string; saturdayHours: string; sundayHours: string; phHours: string
+  daysWorked: string; saturdayDays: string; sundayDays: string
+  basicPay: string; saturdayPay: string; sundayPay: string; phPay: string
   bonus: string; otherAdditions: string
   salaryAdvance: string; shopDeductions: string
   uifEmployee: string; uifEmployer: string; otherDeductions: string
@@ -162,6 +162,12 @@ export default function PayslipPage() {
                       ? `Saturday (${entry.saturdayDays} day${parseInt(entry.saturdayDays) !== 1 ? 's' : ''})`
                       : `Saturday on-site (${entry.saturdayDays} day(s))`
                 } value={entry.saturdayPay} />
+              )}
+              {parseFloat(entry.sundayPay)       > 0 && (
+                <Row label={
+                  worker.payStructure === 'hourly' ? `Sunday pay (${entry.sundayHours} hrs × 2)`
+                    : `Sunday (${entry.sundayDays} day(s) × 2)`
+                } value={entry.sundayPay} />
               )}
               {parseFloat(entry.phPay)          > 0 && <Row label="Public holiday pay (× 2.0)"  value={entry.phPay} />}
               {parseFloat(entry.bonus)           > 0 && <Row label="Bonus"                       value={entry.bonus} />}
