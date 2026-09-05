@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
-import { bookings, payrollRuns, workers, rooms } from '@/lib/db/schema'
+import { bookings, payrollRuns, payrollEntries, workers, rooms, entities } from '@/lib/db/schema'
 import { eq, gte, lte, and, count, ne, sql } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
@@ -72,6 +72,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     earliestBookingRow,
     activeRooms,
     trendBookings,
+    housekeepingPayroll,
   ] = await Promise.all([
     db.select({ count: count() }).from(workers).where(eq(workers.active, true)),
     db.select({
@@ -124,6 +125,25 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         lte(bookings.checkIn, trendRangeEnd),
         gte(bookings.checkOut, trendRangeStart),
         ne(bookings.status, 'cancelled'),
+      )),
+    // Real Housekeeping department payroll cost (gross pay + employer UIF) per finalised
+    // run, Kanaan entity only — replaces the flat "1 lady" estimate below wherever a
+    // finalised run exists for that month; months with no run yet fall back to the estimate.
+    db.select({
+      periodStart: payrollRuns.periodStart,
+      grossPay:    payrollEntries.grossPay,
+      uifEmployer: payrollEntries.uifEmployer,
+    })
+      .from(payrollEntries)
+      .innerJoin(payrollRuns, eq(payrollEntries.runId, payrollRuns.id))
+      .innerJoin(workers, eq(payrollEntries.workerId, workers.id))
+      .innerJoin(entities, eq(payrollRuns.entityId, entities.id))
+      .where(and(
+        eq(entities.entityType, 'kanaan'),
+        eq(workers.department, 'Housekeeping'),
+        eq(payrollRuns.status, 'finalised'),
+        gte(payrollRuns.periodStart, trendRangeStart),
+        lte(payrollRuns.periodStart, trendRangeEnd),
       )),
   ])
   // Occupancy is measured in bed-nights, not room-nights: room types range from a 2-sleeper
@@ -228,17 +248,36 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const LAUNDRY_PER_STAY_EXCL_VAT = 31.64 // per single-bed set, net + 10%
   const FIXED_COSTS_EXCL_VAT     = 42_565.22 // electricity + wifi/DStv + cleaning products + gardening
   const DEPRECIATION_EXCL_VAT    = 6_712.92  // linen + kitchen equipment + bathrooms + beds
-  const HOUSEKEEPING_FLAT        = 6_240.00  // 1 lady x R240/day x 26 days — no VAT, wages aren't VATable
+  const HOUSEKEEPING_FLAT        = 6_240.00  // 1 lady x R240/day x 26 days — doc's estimate; used only
+                                              // as a fallback for months with no finalised payroll run yet
   const CONTINGENCY_RATE         = 0.05
   const FIXED_MONTHLY_BASE = FIXED_COSTS_EXCL_VAT + DEPRECIATION_EXCL_VAT + HOUSEKEEPING_FLAT
 
-  function breakevenPnL(bedNights: number) {
+  // Actual Housekeeping payroll cost (gross pay + employer UIF) per month, from the real
+  // payroll module — supersedes HOUSEKEEPING_FLAT above wherever a finalised run exists.
+  const housekeepingCostByMonth = new Map<string, number>()
+  for (const row of housekeepingPayroll) {
+    const ym = row.periodStart.slice(0, 7)
+    const cost = parseFloat(row.grossPay) + parseFloat(row.uifEmployer)
+    housekeepingCostByMonth.set(ym, (housekeepingCostByMonth.get(ym) ?? 0) + cost)
+  }
+
+  function breakevenPnL(bedNights: number, actualHousekeeping?: number) {
+    const housekeeping = actualHousekeeping ?? HOUSEKEEPING_FLAT
+    const fixedBase = FIXED_COSTS_EXCL_VAT + DEPRECIATION_EXCL_VAT + housekeeping
     const revenue = bedNights * ADR_EXCL_VAT
     const laundry = (bedNights / AVG_LENGTH_OF_STAY) * LAUNDRY_PER_STAY_EXCL_VAT
-    const totalCost = (FIXED_MONTHLY_BASE + laundry) * (1 + CONTINGENCY_RATE)
+    const totalCost = (fixedBase + laundry) * (1 + CONTINGENCY_RATE)
     return { revenue, totalCost, profit: revenue - totalCost }
   }
-  const breakevenTrend = occupancyTrend.map(t => ({ ym: t.ym, ...breakevenPnL(t.bedNights) }))
+  const breakevenTrend = occupancyTrend.map(t => {
+    const actualHousekeeping = housekeepingCostByMonth.get(t.ym)
+    return {
+      ym: t.ym,
+      ...breakevenPnL(t.bedNights, actualHousekeeping),
+      housekeepingIsActual: actualHousekeeping !== undefined,
+    }
+  })
   const breakevenMaxVal = Math.max(...breakevenTrend.map(t => Math.max(t.revenue, t.totalCost)), 1)
   // Solve revenue(BN) = totalCost(BN) for BN directly, rather than hardcoding the doc's ~15.3% —
   // ADR·BN = (FIXED_MONTHLY_BASE + BN/ALOS·LAUNDRY)·(1+c)  =>  BN = FIXED_MONTHLY_BASE·(1+c) / (ADR - LAUNDRY·(1+c)/ALOS)
@@ -397,7 +436,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
           </span>
         </div>
         <p className="text-xs text-gray-400 mb-4">
-          Revenue vs. total cost (fixed + depreciation + housekeeping + laundry, +5% contingency) from actual bookings each month
+          Revenue vs. total cost (fixed + depreciation + housekeeping + laundry, +5% contingency) from actual bookings each month.
+          Housekeeping cost is actual payroll where a run is finalised, else the doc&apos;s flat estimate (<span className="italic">*</span> below).
         </p>
         <div className="flex items-end gap-3 h-40">
           {breakevenTrend.map(t => {
@@ -411,9 +451,9 @@ export default async function DashboardContent({ searchParamsPromise }: { search
                 </span>
                 <div className="flex items-end gap-0.5 w-full h-full">
                   <div className="flex-1 rounded-t bg-blue-400" style={{ height: `${revH}%` }} title={`Revenue: ${fmt(t.revenue)}`} />
-                  <div className="flex-1 rounded-t bg-gray-300" style={{ height: `${costH}%` }} title={`Total cost: ${fmt(t.totalCost)}`} />
+                  <div className="flex-1 rounded-t bg-gray-300" style={{ height: `${costH}%` }} title={`Total cost: ${fmt(t.totalCost)}${t.housekeepingIsActual ? ' (actual payroll)' : ' (estimated housekeeping)'}`} />
                 </div>
-                <span className="text-[10px] text-gray-400 mt-1">{monthLabel(t.ym).slice(0, 3)}</span>
+                <span className="text-[10px] text-gray-400 mt-1">{monthLabel(t.ym).slice(0, 3)}{!t.housekeepingIsActual && <span className="italic">*</span>}</span>
               </div>
             )
           })}
