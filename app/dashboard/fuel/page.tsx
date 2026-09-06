@@ -84,15 +84,16 @@ export default function FuelReconPage() {
   const offsiteCost  = finals.reduce((s, f) => s + f.allocations.filter(a => a.allocType === 'offsite').reduce((a, al) => a + parseFloat(al.cost), 0), 0)
   const flagCount    = finals.filter(f => f.flag !== 'ok' && f.flag !== 'delivery').length
 
-  // Sort ascending (oldest first, from SORT_FROM_DATE) by fill date, tie-broken by id —
-  // this is also the order continuity is checked in, per vehicle.
-  const sortedFinals = [...finals].sort((a, b) => a.fillDate.localeCompare(b.fillDate) || a.id - b.id)
+  // Continuity (gap) checking still needs oldest-first order per vehicle, including fills
+  // before SORT_FROM_DATE, so the first displayed row can be checked against what came
+  // before the cutoff.
+  const ascFinals = [...finals].sort((a, b) => a.fillDate.localeCompare(b.fillDate) || a.id - b.id)
 
   // Flag rows where a vehicle's Open reading doesn't pick up from the previous entry's
   // Close reading — a gap here means a fill (or a meter reset) is missing from the log.
   const continuityGaps = new Map<number, { expected: number; actual: number }>()
   const lastCloseByVehicle = new Map<string, number>()
-  for (const f of sortedFinals) {
+  for (const f of ascFinals) {
     const open  = f.openReading  != null ? parseFloat(f.openReading)  : null
     const close = f.closeReading != null ? parseFloat(f.closeReading) : null
     const prevClose = lastCloseByVehicle.get(f.vehicle)
@@ -101,6 +102,11 @@ export default function FuelReconPage() {
     }
     if (close != null) lastCloseByVehicle.set(f.vehicle, close)
   }
+
+  // Display: newest first, restricted to fills from SORT_FROM_DATE onward.
+  const sortedFinals = finals
+    .filter(f => f.fillDate >= SORT_FROM_DATE)
+    .sort((a, b) => b.fillDate.localeCompare(a.fillDate) || b.id - a.id)
 
   function usagePerHour(f: Fill): number | null {
     const hours = f.allocations.reduce((s, a) => s + (a.hoursWorked ? parseFloat(a.hoursWorked) : 0), 0)
@@ -183,7 +189,7 @@ export default function FuelReconPage() {
       <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-900">Fill History</h2>
-          <span className="text-xs text-gray-400">{finals.length} finalised entries · sorted oldest → newest from {fmtDate(SORT_FROM_DATE)}</span>
+          <span className="text-xs text-gray-400">{sortedFinals.length} finalised entries from {fmtDate(SORT_FROM_DATE)} · newest first</span>
         </div>
 
         {loading ? (
