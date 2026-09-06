@@ -40,12 +40,18 @@ export async function PATCH(
 
       // Auto-match each off-site allocation to an alpheus_days row by date. Alpheus fills
       // in the morning or evening, so the fill date may be the workday itself or the day after.
+      // A caller can pass an explicit `dayId` (confirming or overriding the auto-match from
+      // the UI) — that always wins over the date-window guess.
       const insertedAllocs = []
       for (const a of allocations) {
         let dayId: number | null = null
 
-        if (a.allocType === 'offsite' && fill.driverName === 'Alpheus') {
-          dayId = await findDayForFill(fill.fillDate)
+        if (a.allocType === 'offsite') {
+          if (a.dayId != null) {
+            dayId = a.dayId
+          } else if (fill.driverName === 'Alpheus') {
+            dayId = await findDayForFill(fill.fillDate)
+          }
         }
 
         const cost = parseFloat(a.litres) * parseFloat(String(fill.ratePerLitre))

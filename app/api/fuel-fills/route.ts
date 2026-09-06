@@ -14,11 +14,15 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(fuelFills.fillDate), desc(fuelFills.createdAt))
 
   const allocations = await db.select().from(fuelAllocations)
+  const days = await db.select({ id: alpheusDays.id, dayDate: alpheusDays.dayDate }).from(alpheusDays)
 
-  // Attach allocations to each fill
+  // Attach allocations (with the Alpheus Day date they're matched to, if any) to each fill
   const result = fills.map(f => ({
     ...f,
-    allocations: allocations.filter(a => a.fillId === f.id),
+    allocations: allocations.filter(a => a.fillId === f.id).map(a => ({
+      ...a,
+      dayDate: a.dayId != null ? days.find(d => d.id === a.dayId)?.dayDate ?? null : null,
+    })),
   }))
 
   return NextResponse.json(result)

@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle, Info, Truck, Clock, ChevronRight, Plus, ReceiptText, Pencil } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Info, Truck, Clock, ChevronRight, Plus, ReceiptText, Pencil, ListChecks } from 'lucide-react'
 import { cn, fmt, fmtDate } from '@/lib/utils'
 
 type Allocation = {
   id: number
   fillId: number
   dayId: number | null
+  dayDate: string | null   // Alpheus Day this offsite allocation is matched to, if any
   allocType: 'onsite' | 'offsite'
   clientName: string | null
   hoursWorked: string | null
@@ -32,6 +33,8 @@ type Fill = {
   allocations: Allocation[]
 }
 
+type AlpheusDayOption = { id: number; dayDate: string; dayType: string }
+
 const FLAG_ICON = {
   ok:       <CheckCircle size={14} className="text-green-500" />,
   estimated:<AlertTriangle size={14} className="text-amber-500" />,
@@ -53,8 +56,12 @@ const FLAG_BADGE: Record<string, string> = {
   shortage: 'bg-red-50 text-red-700',
 }
 
+const CONTINUITY_TOLERANCE_L = 0.5
+const SORT_FROM_DATE = '2026-07-18'
+
 export default function FuelReconPage() {
   const [fills, setFills]   = useState<Fill[]>([])
+  const [alpheusDays, setAlpheusDays] = useState<AlpheusDayOption[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -62,6 +69,10 @@ export default function FuelReconPage() {
       setFills(Array.isArray(d) ? d : [])
       setLoading(false)
     }).catch(() => setLoading(false))
+
+    fetch('/api/alpheus-days').then(r => r.json()).then(d => {
+      setAlpheusDays(Array.isArray(d) ? d.map((day: any) => ({ id: day.id, dayDate: day.dayDate, dayType: day.dayType })) : [])
+    }).catch(() => {})
   }, [])
 
   const drafts  = fills.filter(f => f.status === 'draft')
@@ -72,6 +83,30 @@ export default function FuelReconPage() {
   const offsiteLitres= finals.reduce((s, f) => s + f.allocations.filter(a => a.allocType === 'offsite').reduce((a, al) => a + parseFloat(al.litres), 0), 0)
   const offsiteCost  = finals.reduce((s, f) => s + f.allocations.filter(a => a.allocType === 'offsite').reduce((a, al) => a + parseFloat(al.cost), 0), 0)
   const flagCount    = finals.filter(f => f.flag !== 'ok' && f.flag !== 'delivery').length
+
+  // Sort ascending (oldest first, from SORT_FROM_DATE) by fill date, tie-broken by id —
+  // this is also the order continuity is checked in, per vehicle.
+  const sortedFinals = [...finals].sort((a, b) => a.fillDate.localeCompare(b.fillDate) || a.id - b.id)
+
+  // Flag rows where a vehicle's Open reading doesn't pick up from the previous entry's
+  // Close reading — a gap here means a fill (or a meter reset) is missing from the log.
+  const continuityGaps = new Map<number, { expected: number; actual: number }>()
+  const lastCloseByVehicle = new Map<string, number>()
+  for (const f of sortedFinals) {
+    const open  = f.openReading  != null ? parseFloat(f.openReading)  : null
+    const close = f.closeReading != null ? parseFloat(f.closeReading) : null
+    const prevClose = lastCloseByVehicle.get(f.vehicle)
+    if (open != null && prevClose != null && Math.abs(open - prevClose) > CONTINUITY_TOLERANCE_L) {
+      continuityGaps.set(f.id, { expected: prevClose, actual: open })
+    }
+    if (close != null) lastCloseByVehicle.set(f.vehicle, close)
+  }
+
+  function usagePerHour(f: Fill): number | null {
+    const hours = f.allocations.reduce((s, a) => s + (a.hoursWorked ? parseFloat(a.hoursWorked) : 0), 0)
+    if (hours <= 0) return null
+    return parseFloat(f.litres) / hours
+  }
 
   return (
     <div className="p-6">
@@ -131,7 +166,12 @@ export default function FuelReconPage() {
                 </div>
                 <div className="flex items-center gap-4">
                   <span className="text-lg font-bold text-blue-700">{parseFloat(f.litres).toFixed(0)} L</span>
-                  <AllocateButton fill={f} onDone={updated => setFills(prev => prev.map(x => x.id === updated.fill.id ? { ...updated.fill, allocations: updated.allocations } : x))} />
+                  <AllocationModal
+                    mode="new"
+                    fill={f}
+                    alpheusDays={alpheusDays}
+                    onDone={updated => setFills(prev => prev.map(x => x.id === updated.fill.id ? { ...updated.fill, allocations: updated.allocations } : x))}
+                  />
                 </div>
               </div>
             ))}
@@ -143,7 +183,7 @@ export default function FuelReconPage() {
       <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-900">Fill History</h2>
-          <span className="text-xs text-gray-400">{finals.length} finalised entries</span>
+          <span className="text-xs text-gray-400">{finals.length} finalised entries · sorted oldest → newest from {fmtDate(SORT_FROM_DATE)}</span>
         </div>
 
         {loading ? (
@@ -165,6 +205,7 @@ export default function FuelReconPage() {
                   <th className="px-4 py-3 text-right font-medium">Close (L)</th>
                   <th className="px-4 py-3 text-right font-medium">Litres</th>
                   <th className="px-4 py-3 text-right font-medium">R/L</th>
+                  <th className="px-4 py-3 text-right font-medium">Usage/Hr</th>
                   <th className="px-4 py-3 text-left font-medium">Allocation</th>
                   <th className="px-4 py-3 text-right font-medium">Cost (R)</th>
                   <th className="px-4 py-3 text-center font-medium">Flag</th>
@@ -172,30 +213,48 @@ export default function FuelReconPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {finals.map(f => {
+                {sortedFinals.map(f => {
                   const totalCostRow = f.allocations.reduce((s, a) => s + parseFloat(a.cost), 0)
                   const offsite = f.allocations.filter(a => a.allocType === 'offsite')
                   const onsite  = f.allocations.filter(a => a.allocType === 'onsite')
+                  const gap = continuityGaps.get(f.id)
+                  const perHour = usagePerHour(f)
 
                   return (
-                    <tr key={f.id} className={cn('hover:bg-gray-50', f.flag === 'estimated' && 'bg-amber-50/40', f.flag === 'delivery' && 'bg-blue-50/40')}>
+                    <tr key={f.id} className={cn('hover:bg-gray-50', f.flag === 'estimated' && 'bg-amber-50/40', f.flag === 'delivery' && 'bg-blue-50/40', gap && 'bg-red-50/40')}>
                       <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{fmtDate(f.fillDate)}</td>
                       <td className="px-4 py-3 text-gray-700">{f.driverName}</td>
                       <td className="px-4 py-3 text-gray-600">{f.vehicle}</td>
-                      <td className="px-4 py-3 text-right text-gray-500 tabular-nums">{f.openReading ? Number(f.openReading).toLocaleString('en-ZA') : '—'}</td>
+                      <td className="px-4 py-3 text-right text-gray-500 tabular-nums">
+                        {f.openReading ? Number(f.openReading).toLocaleString('en-ZA') : '—'}
+                        {gap && (
+                          <span
+                            title={`Expected to open at ${gap.expected}L (previous ${f.vehicle} entry closed there) — got ${gap.actual}L. A fill may be missing.`}
+                            className="ml-1 inline-flex items-center text-red-500"
+                          >
+                            <AlertTriangle size={12} />
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right text-gray-500 tabular-nums">{f.closeReading ? Number(f.closeReading).toLocaleString('en-ZA') : '—'}</td>
                       <td className="px-4 py-3 text-right font-semibold tabular-nums">{parseFloat(f.litres).toFixed(0)}</td>
                       <td className="px-4 py-3 text-right text-gray-500 tabular-nums">{parseFloat(f.ratePerLitre).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-gray-500 tabular-nums">{perHour != null ? `${perHour.toFixed(1)} L/h` : '—'}</td>
                       <td className="px-4 py-3">
                         {f.allocations.length === 0 ? (
                           <span className="text-gray-400 text-xs">—</span>
                         ) : (
                           <div className="flex flex-col gap-0.5">
                             {offsite.map(a => (
-                              <span key={a.id} className="inline-flex items-center gap-1 text-xs">
+                              <span key={a.id} className="inline-flex items-center gap-1 text-xs flex-wrap">
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                                 <span className="text-blue-700 font-medium">{a.clientName ?? 'Off-site'}</span>
                                 <span className="text-gray-400">{parseFloat(a.litres).toFixed(0)}L{a.hoursWorked ? ` · ${a.hoursWorked}hr` : ''}</span>
+                                {f.driverName === 'Alpheus' && (
+                                  a.dayDate
+                                    ? <span className="text-gray-400">· matched to {fmtDate(a.dayDate)}</span>
+                                    : <span className="text-amber-500">· ⚠ unmatched day</span>
+                                )}
                               </span>
                             ))}
                             {onsite.map(a => (
@@ -218,11 +277,19 @@ export default function FuelReconPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <EditFillButton fill={f} onDone={updated =>
-                          setFills(prev => prev.map(x => x.id === updated.fill.id
-                            ? { ...updated.fill, allocations: updated.allocations }
-                            : x))
-                        } />
+                        <div className="flex items-center justify-center gap-1.5">
+                          <EditFillButton fill={f} onDone={updated =>
+                            setFills(prev => prev.map(x => x.id === updated.fill.id
+                              ? { ...updated.fill, allocations: updated.allocations }
+                              : x))
+                          } />
+                          <AllocationModal
+                            mode="edit"
+                            fill={f}
+                            alpheusDays={alpheusDays}
+                            onDone={updated => setFills(prev => prev.map(x => x.id === updated.fill.id ? { ...updated.fill, allocations: updated.allocations } : x))}
+                          />
+                        </div>
                       </td>
                     </tr>
                   )
@@ -232,6 +299,7 @@ export default function FuelReconPage() {
                 <tr>
                   <td colSpan={5} className="px-4 py-3 text-gray-500">TOTALS</td>
                   <td className="px-4 py-3 text-right tabular-nums">{totalLitres.toFixed(0)}</td>
+                  <td />
                   <td />
                   <td className="px-4 py-3 text-xs text-gray-500">
                     <span className="inline-flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-500" />{offsiteLitres.toFixed(0)}L recoverable</span>
@@ -410,17 +478,36 @@ function EditFillButton({ fill, onDone }: { fill: Fill; onDone: (updated: { fill
   )
 }
 
-// ── Inline allocate modal ─────────────────────────────────────────────────────
+// ── Allocate / Edit Allocation modal ──────────────────────────────────────────
+// Shared between first-time allocation of a draft fill and re-editing a finalised
+// fill's allocation — both PATCH the same `finalise` action, which wipes and
+// re-inserts the fill's allocations.
 
-type AllocBlock = { allocType: 'onsite' | 'offsite'; clientName: string; hoursWorked: string; litres: string }
+type AllocBlock = { allocType: 'onsite' | 'offsite'; clientName: string; hoursWorked: string; litres: string; dayId: string }
 
-function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) => void }) {
+function blocksFromFill(fill: Fill): AllocBlock[] {
+  if (!fill.allocations.length) {
+    return [{ allocType: 'offsite', clientName: '', hoursWorked: '', litres: fill.litres, dayId: '' }]
+  }
+  return fill.allocations.map(a => ({
+    allocType:   a.allocType,
+    clientName:  a.clientName ?? '',
+    hoursWorked: a.hoursWorked ?? '',
+    litres:      a.litres,
+    dayId:       a.dayId != null ? String(a.dayId) : '',
+  }))
+}
+
+function AllocationModal({ mode, fill, alpheusDays, onDone }: {
+  mode: 'new' | 'edit'
+  fill: Fill
+  alpheusDays: AlpheusDayOption[]
+  onDone: (updated: { fill: Fill; allocations: Allocation[] }) => void
+}) {
   const [open, setOpen]       = useState(false)
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
-  const [blocks, setBlocks]   = useState<AllocBlock[]>([
-    { allocType: 'offsite', clientName: '', hoursWorked: '', litres: fill.litres },
-  ])
+  const [blocks, setBlocks]   = useState<AllocBlock[]>(() => blocksFromFill(fill))
 
   const totalFill   = parseFloat(fill.litres)
   const allocated   = blocks.reduce((s, b) => s + (parseFloat(b.litres) || 0), 0)
@@ -446,7 +533,7 @@ function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) =
   }
 
   function addBlock(type: 'onsite' | 'offsite') {
-    setBlocks(prev => [...prev, { allocType: type, clientName: '', hoursWorked: '', litres: '0' }])
+    setBlocks(prev => [...prev, { allocType: type, clientName: '', hoursWorked: '', litres: '0', dayId: '' }])
   }
 
   async function save() {
@@ -463,6 +550,7 @@ function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) =
             clientName:  b.clientName || null,
             hoursWorked: b.hoursWorked ? parseFloat(b.hoursWorked) : null,
             litres:      parseFloat(b.litres),
+            dayId:       b.allocType === 'offsite' && b.dayId ? parseInt(b.dayId) : null,
           })),
         }),
       })
@@ -473,21 +561,32 @@ function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) =
     } finally { setSaving(false) }
   }
 
+  const sortedDayOptions = [...alpheusDays].sort((a, b) => b.dayDate.localeCompare(a.dayDate))
+
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700"
-      >
-        Allocate <ChevronRight size={13} />
-      </button>
+      {mode === 'new' ? (
+        <button
+          onClick={() => { setBlocks(blocksFromFill(fill)); setOpen(true) }}
+          className="flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700"
+        >
+          Allocate <ChevronRight size={13} />
+        </button>
+      ) : (
+        <button
+          onClick={() => { setBlocks(blocksFromFill(fill)); setError(''); setOpen(true) }}
+          className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-gray-400 hover:text-gray-800"
+        >
+          <ListChecks size={11} /> Edit Allocation
+        </button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">Allocate Fill</h3>
+                <h3 className="text-sm font-semibold text-gray-900">{mode === 'new' ? 'Allocate Fill' : 'Edit Allocation'}</h3>
                 <p className="text-xs text-gray-400">{fmtDate(fill.fillDate)} · {fill.driverName} · {fill.vehicle} · {totalFill.toFixed(0)}L total</p>
               </div>
               <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
@@ -536,6 +635,19 @@ function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) =
                         {((parseFloat(b.litres) || 0) * rate).toFixed(2)}
                       </div>
                     </div>
+                    {b.allocType === 'offsite' && fill.driverName === 'Alpheus' && (
+                      <div className="col-span-3">
+                        <label className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">Matched Alpheus Day</label>
+                        <select value={b.dayId} onChange={e => updateBlock(i, 'dayId', e.target.value)}
+                          className="mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                          <option value="">Auto-match by date</option>
+                          {sortedDayOptions.map(d => (
+                            <option key={d.id} value={d.id}>{fmtDate(d.dayDate)} ({d.dayType})</option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[10px] text-gray-400">Leave on auto-match unless you need to confirm or correct the day this fill belongs to.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -564,7 +676,7 @@ function AllocateButton({ fill, onDone }: { fill: Fill; onDone: (updated: any) =
               <button onClick={() => setOpen(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
               <button onClick={save} disabled={saving || Math.abs(remaining) > 0.5}
                 className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40">
-                {saving ? 'Saving…' : 'Finalise Fill'}
+                {saving ? 'Saving…' : mode === 'new' ? 'Finalise Fill' : 'Save Allocation'}
               </button>
             </div>
           </div>
