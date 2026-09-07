@@ -8,9 +8,14 @@ const roomSeed = [
   ...Array.from({ length: 7 }, (_, i) => ({
     name: `Room ${i + 1}`, type: 'premium' as const, capacity: 2, ratePp: '350', rateSolo: '450',
   })),
-  // Budget rooms 8–14
-  ...Array.from({ length: 7 }, (_, i) => ({
-    name: `Room ${i + 8}`, type: 'budget' as const, capacity: 2, ratePp: '250', rateSolo: '350',
+  // Room 8 is a "book the whole Backpackers dorm as one group" alias, not a standalone
+  // budget room — same physical beds as the 8 individual Dorm A/Bed B rows below, so its
+  // capacity must stay out of Total Sleepers (see DashboardContent.tsx) to avoid double-
+  // counting. Per Anneli 2026-09-07: only used for group bookings of the whole dorm.
+  { name: 'Room 8', type: 'dorm' as const, capacity: 8, ratePp: '1400', rateSolo: '200' },
+  // Budget rooms 9–14
+  ...Array.from({ length: 6 }, (_, i) => ({
+    name: `Room ${i + 9}`, type: 'budget' as const, capacity: 2, ratePp: '250', rateSolo: '350',
   })),
   // Dorm room 15
   { name: 'Room 15 (Dorm)', type: 'dorm' as const, capacity: 6, ratePp: '200', rateSolo: null },

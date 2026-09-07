@@ -117,7 +117,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     db.select({ minCheckIn: sql<string | null>`MIN(${bookings.checkIn})` })
       .from(bookings)
       .where(ne(bookings.status, 'cancelled')),
-    db.select({ id: rooms.id, type: rooms.type, capacity: rooms.capacity })
+    db.select({ id: rooms.id, name: rooms.name, type: rooms.type, capacity: rooms.capacity })
       .from(rooms).where(eq(rooms.active, true)),
     db.select({
       roomId:      bookings.roomId,
@@ -156,15 +156,20 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // twin to an 8-sleeper family unit, so counting each as "1 room" understates how full the
   // property actually is. Bookings block the whole room (the API 409s on any overlap), so a
   // booking occupies its room's full capacity in beds regardless of actual guest headcount.
-  // NOTE: room capacities are as entered in Settings — Room 8 (cap 8), Room 9 (cap 6), and
-  // Dorm B - Bed 1 (cap 2) look anomalous next to their peers and may need correcting; that
-  // would change totalSleepers and every occupancy % below.
+  // Room 8 (cap 8, now type='dorm') is a "book the whole Backpackers dorm as one group"
+  // alias, not 8 extra beds — it's the SAME physical beds as the 8 individual Dorm A/B rows.
+  // Per Anneli 2026-09-07: exclude its capacity from available Total Sleepers so it isn't
+  // double-counted; its bed-nights still count normally (as dorm activity) whenever it's
+  // actually booked. Room 9 (cap 6) is still unconfirmed — may be a genuine 6-sleeper room,
+  // or a similar anomaly; ask before changing it.
+  const wholeUnitAliasNames = new Set(['Room 8'])
   const roomCapacity = new Map(activeRooms.map(r => [r.id, r.capacity]))
   const roomType     = new Map(activeRooms.map(r => [r.id, r.type]))
-  const totalSleepers = activeRooms.reduce((s, r) => s + r.capacity, 0)
+  const capacityRooms = activeRooms.filter(r => !wholeUnitAliasNames.has(r.name))
+  const totalSleepers = capacityRooms.reduce((s, r) => s + r.capacity, 0)
   const sleepersByType = new Map<string, number>()
-  for (const r of activeRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
-  const totalRooms = activeRooms.length
+  for (const r of capacityRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
+  const totalRooms = capacityRooms.length
   // Camping is excluded from the Occupancy Trend chart (below) — its low-volume, highly
   // seasonal bookings would otherwise swing the whole-property trend line in a way that
   // doesn't reflect the main accommodation base. It still appears in the Occupancy by Room
