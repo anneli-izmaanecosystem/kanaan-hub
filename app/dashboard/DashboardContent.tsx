@@ -119,7 +119,13 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       .where(ne(bookings.status, 'cancelled')),
     db.select({ id: rooms.id, type: rooms.type, capacity: rooms.capacity })
       .from(rooms).where(eq(rooms.active, true)),
-    db.select({ roomId: bookings.roomId, checkIn: bookings.checkIn, checkOut: bookings.checkOut })
+    db.select({
+      roomId:      bookings.roomId,
+      checkIn:     bookings.checkIn,
+      checkOut:    bookings.checkOut,
+      totalAmount: bookings.totalAmount,
+      vatIncluded: bookings.vatIncluded,
+    })
       .from(bookings)
       .where(and(
         lte(bookings.checkIn, trendRangeEnd),
@@ -184,6 +190,28 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     return { total, byType }
   }
 
+  // Actual revenue (excl. VAT) for a booking set, pro-rated to the nights that fall in range —
+  // same fraction-weighting as the KPI card's loop below. Guards against non-finite totals
+  // (booking id 381 has a corrupt "NaN" totalAmount) so one bad row can't poison a whole month.
+  function actualRevenueInRange(rows: { checkIn: string; checkOut: string; totalAmount: string; vatIncluded: boolean }[], rangeStart: string, rangeEnd: string) {
+    const rangeStartMs = new Date(rangeStart).getTime()
+    const rangeEndMs   = new Date(rangeEnd).getTime() + 86_400_000
+    let total = 0
+    for (const b of rows) {
+      const checkInMs = new Date(b.checkIn).getTime()
+      const checkOutMs = new Date(b.checkOut).getTime()
+      const s = Math.max(checkInMs, rangeStartMs)
+      const e = Math.min(checkOutMs, rangeEndMs)
+      const nightsInRange = Math.max(0, (e - s) / 86_400_000)
+      const totalNights = Math.max(1, (checkOutMs - checkInMs) / 86_400_000)
+      const fraction = nightsInRange / totalNights
+      const amount = parseFloat(b.totalAmount || '0')
+      const exclVat = b.vatIncluded ? amount / (1 + VAT_RATE) : amount
+      if (Number.isFinite(exclVat)) total += exclVat * fraction
+    }
+    return total
+  }
+
   // KPI calculations
   // Streamlined 2026-08: the old 'quote_sent' status (excluded from revenue) was folded into
   // 'unpaid_quoted' along with real-but-unpaid bookings, so quotes can no longer be told apart
@@ -245,14 +273,19 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     // excludes camping; see nonCampingSleepers above.
     const nonCampingTotal = total - (byType.get('camping') ?? 0)
     const nonCampingAvailable = nonCampingSleepers * mDays
-    return { ym, bedNights: total, rate: nonCampingAvailable > 0 ? (nonCampingTotal / nonCampingAvailable) * 100 : 0 }
+    const actualRevenue = actualRevenueInRange(trendBookings, mStart, mEnd)
+    return { ym, bedNights: total, actualRevenue, rate: nonCampingAvailable > 0 ? (nonCampingTotal / nonCampingAvailable) * 100 : 0 }
   })
 
   // Breakeven model — Kanaan Guest Farm Unit Economics (excl. VAT), per Anneli's 2026-09-01
-  // costing doc. Occupied bed-nights come from real bookings (actual room capacity), but every
-  // Rand figure below is that doc's fixed model, calibrated against its own 54-sleeper/30-day
-  // baseline (1,620 bed-nights/month) — independent of whatever totalSleepers resolves to above.
-  const ADR_EXCL_VAT             = 252.17 // short-term rate, R290 incl. VAT
+  // costing doc. Occupied bed-nights come from real bookings (actual room capacity), and the
+  // chart's Revenue is actual booking revenue (see actualRevenueInRange) — not bedNights x ADR.
+  // Real revenue-per-bed-night swings 187–450 month to month, so the flat-ADR model understated
+  // or overstated profit by 30–80% against what actually happened. ADR is kept below only to
+  // solve the breakeven bed-nights *threshold* (a fixed reference line, not a per-month figure) —
+  // every cost figure is that doc's fixed model, calibrated against its own 54-sleeper/30-day
+  // baseline (1,620 bed-nights/month), independent of whatever totalSleepers resolves to above.
+  const ADR_EXCL_VAT             = 252.17 // short-term rate, R290 incl. VAT — breakeven-threshold input only
   const AVG_LENGTH_OF_STAY       = 2      // nights per stay — sets how often a bed's laundry turns over
   const LAUNDRY_PER_STAY_EXCL_VAT = 31.64 // per single-bed set, net + 10%
   const FIXED_COSTS_EXCL_VAT     = 42_565.22 // electricity + wifi/DStv + cleaning products + gardening
@@ -271,10 +304,9 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     housekeepingCostByMonth.set(ym, (housekeepingCostByMonth.get(ym) ?? 0) + cost)
   }
 
-  function breakevenPnL(bedNights: number, actualHousekeeping?: number) {
+  function breakevenPnL(bedNights: number, revenue: number, actualHousekeeping?: number) {
     const housekeeping = actualHousekeeping ?? HOUSEKEEPING_FLAT
     const fixedBase = FIXED_COSTS_EXCL_VAT + DEPRECIATION_EXCL_VAT + housekeeping
-    const revenue = bedNights * ADR_EXCL_VAT
     const laundry = (bedNights / AVG_LENGTH_OF_STAY) * LAUNDRY_PER_STAY_EXCL_VAT
     const totalCost = (fixedBase + laundry) * (1 + CONTINGENCY_RATE)
     return { revenue, totalCost, profit: revenue - totalCost }
@@ -283,7 +315,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const actualHousekeeping = housekeepingCostByMonth.get(t.ym)
     return {
       ym: t.ym,
-      ...breakevenPnL(t.bedNights, actualHousekeeping),
+      ...breakevenPnL(t.bedNights, t.actualRevenue, actualHousekeeping),
       housekeepingIsActual: actualHousekeeping !== undefined,
     }
   })
@@ -446,7 +478,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
           </span>
         </div>
         <p className="text-xs text-gray-400 mb-4">
-          Revenue vs. total cost (fixed + depreciation + housekeeping + laundry, +5% contingency) from actual bookings each month.
+          Actual booking revenue vs. total cost (fixed + depreciation + housekeeping + laundry, +5% contingency), both from real data each month.
           Housekeeping cost is actual payroll where a run is finalised, else the doc&apos;s flat estimate (<span className="italic">*</span> below).
         </p>
         <div className="flex items-end gap-3 h-40">
