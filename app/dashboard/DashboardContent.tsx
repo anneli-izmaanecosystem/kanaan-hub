@@ -160,8 +160,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // alias, not 8 extra beds — it's the SAME physical beds as the 8 individual Dorm A/B rows.
   // Per Anneli 2026-09-07: exclude its capacity from available Total Sleepers so it isn't
   // double-counted; its bed-nights still count normally (as dorm activity) whenever it's
-  // actually booked. Room 9 (cap 6) is still unconfirmed — may be a genuine 6-sleeper room,
-  // or a similar anomaly; ask before changing it.
+  // actually booked. Room 9 (cap 6) is confirmed genuine — a real 6-sleeper room, counts
+  // normally.
   const wholeUnitAliasNames = new Set(['Room 8'])
   const roomCapacity = new Map(activeRooms.map(r => [r.id, r.capacity]))
   const roomType     = new Map(activeRooms.map(r => [r.id, r.type]))
