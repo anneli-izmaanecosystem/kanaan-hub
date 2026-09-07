@@ -36,9 +36,9 @@ const roomSeed = [
   ...Array.from({ length: 5 }, (_, i) => ({
     name: `Dorm B - Bed ${i + 1}`, type: 'dorm' as const, capacity: 1, ratePp: '200', rateSolo: null,
   })),
-  // Camp sites 1–5
-  ...Array.from({ length: 5 }, (_, i) => ({
-    name: `Camp Site ${i + 1}`, type: 'camping' as const, capacity: 6, ratePp: '250', rateSolo: null,
+  // Camp sites 1–10 — max 2 persons per site (opened up from 5 sites 2026-09-06)
+  ...Array.from({ length: 10 }, (_, i) => ({
+    name: `Camp Site ${i + 1}`, type: 'camping' as const, capacity: 2, ratePp: '250', rateSolo: null,
   })),
 ]
 

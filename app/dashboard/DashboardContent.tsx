@@ -159,6 +159,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const sleepersByType = new Map<string, number>()
   for (const r of activeRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
   const totalRooms = activeRooms.length
+  // Camping is excluded from the Occupancy Trend chart (below) — its low-volume, highly
+  // seasonal bookings would otherwise swing the whole-property trend line in a way that
+  // doesn't reflect the main accommodation base. It still appears in the Occupancy by Room
+  // Type breakdown, and the month KPI card and breakeven analysis stay all-inclusive.
+  const nonCampingSleepers = totalSleepers - (sleepersByType.get('camping') ?? 0)
 
   function bedNightsInRange(rows: { roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
     const rangeStartMs = new Date(rangeStart).getTime()
@@ -234,9 +239,13 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const mStart = `${ym}-01`
     const mDays = new Date(y, m, 0).getDate()
     const mEnd = `${ym}-${String(mDays).padStart(2, '0')}`
-    const { total } = bedNightsInRange(trendBookings, mStart, mEnd)
-    const available = totalSleepers * mDays
-    return { ym, bedNights: total, rate: available > 0 ? (total / available) * 100 : 0 }
+    const { total, byType } = bedNightsInRange(trendBookings, mStart, mEnd)
+    // `bedNights` stays all-inclusive (camping included) since the breakeven analysis below
+    // needs real total revenue-driving bed-nights. `rate` — what the chart actually plots —
+    // excludes camping; see nonCampingSleepers above.
+    const nonCampingTotal = total - (byType.get('camping') ?? 0)
+    const nonCampingAvailable = nonCampingSleepers * mDays
+    return { ym, bedNights: total, rate: nonCampingAvailable > 0 ? (nonCampingTotal / nonCampingAvailable) * 100 : 0 }
   })
 
   // Breakeven model — Kanaan Guest Farm Unit Economics (excl. VAT), per Anneli's 2026-09-01
@@ -406,7 +415,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-700 mb-4">Occupancy Trend — Last 12 Months</h2>
+          <h2 className="text-sm font-medium text-gray-700 mb-1">Occupancy Trend — Last 12 Months</h2>
+          <p className="text-xs text-gray-400 mb-4">Excludes camping — low, seasonal volume otherwise swings the whole-property trend</p>
           <div className="flex items-end gap-1.5 h-32">
             {occupancyTrend.map(t => {
               const heightPct = Math.max(2, Math.min(100, t.rate))
