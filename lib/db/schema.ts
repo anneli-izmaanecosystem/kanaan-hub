@@ -466,3 +466,181 @@ export const documents = pgTable('documents', {
   uploadedBy:  text('uploaded_by'),
   createdAt:   timestamp('created_at').notNull().defaultNow(),
 })
+
+// ── WhatsApp car booking ──────────────────────────────────────────────────────
+// The guest books a car by chatting to the farm's WhatsApp number. Anneli allocates a
+// driver, the driver marks each stage, and the fare is held before pickup and charged
+// once both sides confirm arrival. See docs/kanaan-whatsapp-templates.xlsx for the
+// message set these states drive.
+
+export const tripDirectionEnum = pgEnum('trip_direction', ['pickup', 'drop'])
+
+// One status per stage the conversation can rest in. Every transition is also written
+// to tripEvents, so this column is the current state and that table is how it got here.
+export const tripStatusEnum = pgEnum('trip_status', [
+  'draft',           // guest still answering questions; nothing sent to Anneli yet
+  'requested',       // waiting on Anneli to accept or decline
+  'declined',        // no car free — nothing was ever held
+  'allocated',       // driver assigned and confirmed to the guest
+  'driver_en_route', // driver has set off
+  'driver_waiting',  // driver at pickup, waiting for the guest to confirm
+  'in_progress',     // guest on board
+  'completed',       // both sides confirmed arrival, fare captured
+  'cancelled',
+  'no_show',         // driver waited, guest never appeared
+])
+
+export const waRoleEnum      = pgEnum('wa_role',      ['guest', 'ops', 'driver'])
+export const waDirectionEnum = pgEnum('wa_direction', ['inbound', 'outbound'])
+export const tripActorEnum   = pgEnum('trip_actor',   ['guest', 'ops', 'driver', 'system'])
+
+export const drivers = pgTable('drivers', {
+  id:      serial('id').primaryKey(),
+  name:    text('name').notNull(),
+  phone:   text('phone').notNull(),   // E.164, e.g. +27721184460 — the WhatsApp identity
+  plate:   text('plate').notNull(),   // e.g. 'JHV 421 MP'
+  vehicle: text('vehicle'),           // e.g. 'white Toyota Quantum'
+  active:  boolean('active').notNull().default(true),
+  // Distinct from `active`: active means "still drives for us", onDuty means "available
+  // today". Only on-duty drivers appear in the allocation picker, which WhatsApp caps
+  // at 10 rows.
+  onDuty:  boolean('on_duty').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, t => [unique().on(t.phone)])
+
+export const trips = pgTable('trips', {
+  id:        serial('id').primaryKey(),
+  ref:       text('ref').notNull(),   // 'KN-1187' — the reference quoted to all three parties
+  direction: tripDirectionEnum('direction').notNull(),
+  status:    tripStatusEnum('status').notNull().default('draft'),
+
+  guestPhone: text('guest_phone').notNull(),  // E.164
+  guestName:  text('guest_name'),
+  // Guests answer with whatever they call their room ('Lodge 4', 'the second campsite'),
+  // so the free text is authoritative and roomId is only set when it resolves to a room.
+  roomLabel:  text('room_label'),
+  roomId:     integer('room_id').references(() => rooms.id),
+  bookingId:  integer('booking_id').references(() => bookings.id),
+
+  placeName:  text('place_name'),     // as returned by the geocoder
+  placeLat:   numeric('place_lat', { precision: 10, scale: 7 }),
+  placeLng:   numeric('place_lng', { precision: 10, scale: 7 }),
+  distanceKm: numeric('distance_km', { precision: 6, scale: 2 }),
+  durationMin: integer('duration_min'),
+
+  scheduledAt: timestamp('scheduled_at'),  // when the guest wants to leave
+  fare:        numeric('fare', { precision: 10, scale: 2 }),
+  driverId:    integer('driver_id').references(() => drivers.id),
+
+  // Stripe. The card is tokenised at booking, authorised (held) an hour before pickup
+  // and captured once the trip closes — so a hold that is never captured is released,
+  // never charged.
+  stripeCustomerId:      text('stripe_customer_id'),
+  stripePaymentMethodId: text('stripe_payment_method_id'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  heldAt:      timestamp('held_at'),
+  capturedAt:  timestamp('captured_at'),
+  releasedAt:  timestamp('released_at'),
+
+  cancelledAt: timestamp('cancelled_at'),
+  completedAt: timestamp('completed_at'),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+}, t => [unique().on(t.ref)])
+
+// Append-only audit of how a trip reached its current status. Money moves on the back of
+// these transitions, so "who said what, when" has to survive a disputed fare.
+export const tripEvents = pgTable('trip_events', {
+  id:     serial('id').primaryKey(),
+  tripId: integer('trip_id').notNull().references(() => trips.id, { onDelete: 'cascade' }),
+  actor:  tripActorEnum('actor').notNull(),
+  event:  text('event').notNull(),   // 'driver_allocated', 'hold_placed', 'guest_confirmed_pickup'
+  detail: text('detail'),            // JSON or free text
+  at:     timestamp('at').notNull().defaultNow(),
+})
+
+// Where each phone number currently sits in the conversation. One row per number, not
+// per trip: a guest part-way through booking has no trip yet, and `draft` holds the
+// answers collected so far until there is a row to write them to.
+export const waConversations = pgTable('wa_conversations', {
+  id:     serial('id').primaryKey(),
+  phone:  text('phone').notNull(),
+  role:   waRoleEnum('role').notNull().default('guest'),
+  step:   text('step').notNull(),    // 'awaiting_room', 'awaiting_place', 'idle'
+  draft:  text('draft'),             // JSON of answers gathered so far
+  tripId: integer('trip_id').references(() => trips.id),
+  // Last inbound message from this number. The 24-hour service window is measured from
+  // here, and it decides whether the next send may be free-form or must be a template.
+  lastInboundAt: timestamp('last_inbound_at'),
+  updatedAt:     timestamp('updated_at').notNull().defaultNow(),
+}, t => [unique().on(t.phone)])
+
+// Every message in and out. `waMessageId` is Meta's wamid and is what makes the webhook
+// idempotent — Meta retries delivery, and a retry must not re-run the state machine.
+export const waMessages = pgTable('wa_messages', {
+  id:           serial('id').primaryKey(),
+  waMessageId:  text('wa_message_id'),
+  phone:        text('phone').notNull(),
+  role:         waRoleEnum('role').notNull(),
+  direction:    waDirectionEnum('direction').notNull(),
+  kind:         text('kind').notNull(),     // 'text' | 'interactive' | 'template' | 'location'
+  templateName: text('template_name'),      // set only for approved templates
+  body:         text('body'),               // rendered text, for reading the thread back
+  payload:      text('payload'),            // JSON actually sent or received
+  tripId:       integer('trip_id').references(() => trips.id),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+}, t => [unique().on(t.waMessageId)])
+
+// Places guests ask for by name. Guests phrase the same destination a dozen ways
+// ('phabeni', 'the gate', 'kruger gate'), so aliases are what the matcher searches and
+// the admin keeps adding to as new phrasings turn up in the logs.
+export const destinations = pgTable('destinations', {
+  id:      serial('id').primaryKey(),
+  name:    text('name').notNull(),          // quoted back to the guest to confirm
+  aliases: text('aliases'),                 // comma-separated, lowercase
+  lat:     numeric('lat', { precision: 10, scale: 7 }).notNull(),
+  lng:     numeric('lng', { precision: 10, scale: 7 }).notNull(),
+  // Overrides the per-km calculation. A run to the same gate costing the same every
+  // time removes a whole class of "why is it different today" complaints.
+  fixedFare: numeric('fixed_fare', { precision: 10, scale: 2 }),
+  active:    boolean('active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, t => [unique().on(t.name)])
+
+// Single-row table holding the tariff and the policy numbers. These were env vars, but
+// they are decisions the owner changes — a fare rise should not need a deploy.
+export const transferSettings = pgTable('transfer_settings', {
+  id: serial('id').primaryKey(),
+
+  fareBase:    numeric('fare_base',    { precision: 10, scale: 2 }).notNull().default('80'),
+  farePerKm:   numeric('fare_per_km',  { precision: 10, scale: 2 }).notNull().default('11.75'),
+  fareMinimum: numeric('fare_minimum', { precision: 10, scale: 2 }).notNull().default('150'),
+
+  maxChatKm:       integer('max_chat_km').notNull().default(50),
+  opsResponseMin:  integer('ops_response_min').notNull().default(15),
+  noShowWaitMin:   integer('no_show_wait_min').notNull().default(12),
+  holdBeforeMin:   integer('hold_before_min').notNull().default(60),
+  driverNudgeMin:  integer('driver_nudge_min').notNull().default(25),
+
+  // Undecided in the workbook. Until chargeNoShow is turned on, a hold on a guest who
+  // never appeared is released rather than taken.
+  chargeNoShow: boolean('charge_no_show').notNull().default(false),
+  noShowFee:    numeric('no_show_fee', { precision: 10, scale: 2 }),
+
+  // Outside these hours the bot takes no booking. Null means no restriction.
+  serviceStart: text('service_start'),  // 'HH:MM' SAST
+  serviceEnd:   text('service_end'),
+  maxLeadDays:  integer('max_lead_days').notNull().default(60),
+
+  opsWhatsapp: text('ops_whatsapp'),   // E.164 — where NEW REQUEST lands
+  opsPhone:    text('ops_phone'),      // as quoted to guests
+  // Second number chased when the first has not answered within opsResponseMin. Without
+  // it a sleeping owner means the guest simply waits.
+  opsEscalationWhatsapp: text('ops_escalation_whatsapp'),
+
+  // The four per-trip status pings are informational. At ten trips a day that is forty
+  // notifications the owner cannot act on, each one a billable template.
+  muteOpsCommentary: boolean('mute_ops_commentary').notNull().default(false),
+
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+})

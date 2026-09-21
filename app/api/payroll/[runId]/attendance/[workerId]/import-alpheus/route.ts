@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db, payrollRuns, workers, attendanceDays, alpheusDays, alpheusDayClients, publicHolidays, payrollEntries } from '@/lib/db'
 import { eq, and, between, sql } from 'drizzle-orm'
 import { ALPHEUS_ONSITE_RATE, ALPHEUS_OFFSITE_RATE, round2 } from '@/lib/payroll'

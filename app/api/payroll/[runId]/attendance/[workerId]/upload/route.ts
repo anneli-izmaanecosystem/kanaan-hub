@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import Anthropic from '@anthropic-ai/sdk'
 
 type Params = { params: Promise<{ runId: string; workerId: string }> }

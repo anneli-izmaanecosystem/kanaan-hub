@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db, payrollRuns, payrollEntries, workers, attendanceDays, publicHolidays } from '@/lib/db'
 import { eq, and, between } from 'drizzle-orm'
 import { defaultEntry, calculatePayroll } from '@/lib/payroll'

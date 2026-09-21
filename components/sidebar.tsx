@@ -4,24 +4,26 @@ import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { UserButton } from '@clerk/nextjs'
-import { LayoutDashboard, CalendarDays, DollarSign, MessageSquare, Fuel, Users, Tag, AlertTriangle, Receipt, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { LayoutDashboard, CalendarDays, Car, DollarSign, MessageSquare, MessageCircle, Fuel, Users, Tag, AlertTriangle, Receipt, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const COLLAPSED_KEY = 'sidebar-collapsed'
 
 const nav = [
-  { href: '/dashboard',           label: 'Overview',     icon: LayoutDashboard, exact: true },
-  { href: '/dashboard/bookings',  label: 'Bookings',     icon: CalendarDays },
-  { href: '/dashboard/actions',   label: 'Actions',      icon: AlertTriangle },
-  { href: '/dashboard/pricelist', label: 'Pricelist',    icon: Tag },
-  { href: '/dashboard/payroll',   label: 'Payroll',      icon: DollarSign },
-  { href: '/dashboard/staff',    label: 'Staff',        icon: Users },
-  { href: '/dashboard/fuel',     label: 'Fuel Log',     icon: Fuel },
+  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard, exact: true },
+  { href: '/dashboard/bookings', label: 'Bookings', icon: CalendarDays },
+  { href: '/dashboard/transfers', label: 'Transportation', icon: Car },
+  { href: '/dashboard/actions', label: 'Actions', icon: AlertTriangle },
+  { href: '/dashboard/pricelist', label: 'Pricelist', icon: Tag },
+  { href: '/dashboard/payroll', label: 'Payroll', icon: DollarSign },
+  { href: '/dashboard/staff', label: 'Staff', icon: Users },
+  { href: '/dashboard/fuel', label: 'Fuel Log', icon: Fuel },
   { href: '/dashboard/invoices-inbox', label: 'Invoices Inbox', icon: Receipt },
-  { href: '/dashboard/ai',       label: 'AI Assistant', icon: MessageSquare },
+  { href: '/dashboard/ai', label: 'AI Assistant', icon: MessageSquare },
+  { href: '/dashboard/whatsapp', label: 'WhatsApp', icon: MessageCircle },
 ]
 
-export function Sidebar() {
+export function Sidebar({ authEnabled = true }: { authEnabled?: boolean }) {
   const pathname = usePathname()
   // Defaults expanded on first render (matches the pre-collapse layout) and only
   // flips after mount, once we know what was actually saved — avoids a flash of
@@ -84,7 +86,9 @@ export function Sidebar() {
       </button>
 
       <div className={cn('flex items-center gap-3 border-t border-gray-100 py-4', collapsed ? 'justify-center px-2' : 'px-5')}>
-        <UserButton />
+        {/* UserButton needs a ClerkProvider above it, which the root layout only
+            renders when a publishable key exists. */}
+        {authEnabled && <UserButton />}
         {!collapsed && <span className="text-xs text-gray-500">Account</span>}
       </div>
     </aside>

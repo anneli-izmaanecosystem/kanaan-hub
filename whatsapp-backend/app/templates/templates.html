@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Templates — Kanaan WhatsApp Admin{% endblock %}
+{% block content %}
+  <h2 class="section-title">Message templates</h2>
+  <p style="font-size: 13px; color: #667781;">
+    Templates are registered against Meta via <code>POST /templates</code> (see API docs at <a href="/docs">/docs</a>).
+    This page is read-only — submit new templates through the API or a follow-up form here.
+  </p>
+  <table>
+    <thead><tr><th>Name</th><th>Category</th><th>Language</th><th>Status</th><th>Preview</th><th>Submitted</th></tr></thead>
+    <tbody>
+      {% for t in templates_list %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td>{{ t.category }}</td>
+        <td>{{ t.language }}</td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span>{% if t.status == 'REJECTED' and t.rejected_reason %}<div style="font-size:12px;color:#b3261e;margin-top:4px;">{{ t.rejected_reason }}</div>{% endif %}</td>
+        <td>{{ t.body_preview or '—' }}</td>
+        <td>{{ t.submitted_at.strftime('%d %b %Y') if t.submitted_at else '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No templates yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
