@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db, payrollEntries, workers, payrollRuns, advances } from '@/lib/db'
 import { round2 } from '@/lib/payroll'
 

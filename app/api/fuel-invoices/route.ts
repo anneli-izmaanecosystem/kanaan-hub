@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { fuelInvoices } from '@/lib/db/schema'
 import { desc } from 'drizzle-orm'

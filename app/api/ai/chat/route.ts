@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import Anthropic from '@anthropic-ai/sdk'
 import { db, bookings, rooms, workers } from '@/lib/db'
 import { eq, gte, and, ne } from 'drizzle-orm'

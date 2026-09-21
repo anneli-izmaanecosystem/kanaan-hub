@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Conversations — Kanaan WhatsApp Admin{% endblock %}
+{% block content %}
+  <h2 class="section-title">Conversations</h2>
+  <table>
+    <thead><tr><th>Phone</th><th>Last message</th><th>Direction</th><th>Flow</th><th>When</th></tr></thead>
+    <tbody>
+      {% for c in conversations %}
+      <tr class="clickable" onclick="location.href='/admin/conversations/{{ c.phone_number }}'">
+        <td>{{ c.phone_number }}</td>
+        <td>{{ c.last_body }}</td>
+        <td>{{ '→ sent' if c.last_direction == 'outbound' else '← received' }}</td>
+        <td>{% if c.flow_status %}<span class="badge badge-{{ c.flow_status }}">{{ c.flow_status }}</span>{% endif %}</td>
+        <td>{{ c.last_message_at.strftime('%d %b %H:%M') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No conversations yet — messages will appear here once the webhook receives traffic.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2 class="section-title">Recent templates</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Category</th><th>Language</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for t in templates_list[:5] %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td>{{ t.category }}</td>
+        <td>{{ t.language }}</td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No templates yet — <a href="/admin/templates">register one</a>.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

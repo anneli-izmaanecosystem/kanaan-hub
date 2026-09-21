@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ phone_number }} — Kanaan WhatsApp Admin{% endblock %}
+{% block content %}
+  <p><a class="plain" href="/admin">&larr; All conversations</a></p>
+  <h2 class="section-title">{{ phone_number }}
+    {% if flow %}<span class="badge badge-{{ flow.status }}">{{ flow.flow_name }}: {{ flow.status }}{% if flow.current_step %} · {{ flow.current_step }}{% endif %}</span>{% endif %}
+  </h2>
+
+  <div style="background: var(--wa-chat-bg); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 8px;">
+    {% for m in messages %}
+    <div style="display: flex; justify-content: {{ 'flex-end' if m.direction == 'outbound' else 'flex-start' }};">
+      <div style="max-width: 65%; background: {{ 'var(--wa-bubble-out)' if m.direction == 'outbound' else 'var(--wa-bubble-in)' }}; border-radius: 8px; padding: 8px 12px; box-shadow: 0 1px 1px rgba(0,0,0,.1);">
+        {% if m.template_name %}<div style="font-size: 12px; color: #667781; margin-bottom: 2px;">📄 template: {{ m.template_name }}</div>{% endif %}
+        <div style="white-space: pre-wrap; font-size: 14px;">{{ m.body or ('[' + m.message_type + ']') }}</div>
+        <div style="text-align: right; font-size: 11px; color: #667781; margin-top: 2px;">
+          {{ m.created_at.strftime('%H:%M') }}
+          {% if m.direction == 'outbound' %}· <span class="badge badge-{{ m.status }}" style="padding: 0 6px;">{{ m.status }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p>No messages yet.</p>
+    {% endfor %}
+  </div>
+
+  {% if flow and flow.context %}
+  <h2 class="section-title">Flow context</h2>
+  <pre style="background: #fff; border-radius: 8px; padding: 14px; font-size: 13px; overflow-x: auto;">{{ flow.context }}</pre>
+  {% endif %}
+{% endblock %}

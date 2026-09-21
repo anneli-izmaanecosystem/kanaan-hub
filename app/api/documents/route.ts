@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth, currentUser } from '@clerk/nextjs/server'
+import { auth, currentUser } from '@/lib/auth'
 import { db, documents, entities } from '@/lib/db'
 import { desc, eq } from 'drizzle-orm'
 import { uploadDocument, getDocumentUrl } from '@/lib/storage'

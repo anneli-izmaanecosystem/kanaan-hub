@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db, roomCombos, roomComboMembers } from '@/lib/db'
 import { eq, inArray } from 'drizzle-orm'
 

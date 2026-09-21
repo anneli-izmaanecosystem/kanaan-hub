@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth'
 import { db, alpheusDays, alpheusDayClients, fuelAllocations } from '@/lib/db'
 import { desc, eq } from 'drizzle-orm'
 import { matchFillsToDay } from '@/lib/alpheus-match'
