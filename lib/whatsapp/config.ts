@@ -25,9 +25,12 @@ export const config = {
   // PLACEHOLDER TARIFF. Reverse-engineered from the one worked example in the screens
   // (34 km → R 480) so the flow quotes something plausible. Replace with the real rate
   // card before this takes a booking.
-  fareBase: num('KANAAN_FARE_BASE', 80),
-  farePerKm: num('KANAAN_FARE_PER_KM', 11.75),
-  fareMinimum: num('KANAAN_FARE_MINIMUM', 150),
+  // Base + per km, with a minimum: UberX South Africa's rates with its per-minute charge
+  // folded into the per-km rate. The WhatsApp service (whatsapp-backend) quotes the
+  // fares; these are what the dashboard shows until the owner saves their own.
+  fareBase: num('KANAAN_FARE_BASE', 5),
+  farePerKm: num('KANAAN_FARE_PER_KM', 8.3),
+  fareMinimum: num('KANAAN_FARE_MINIMUM', 20),
 
   /** Past this, the bot refuses and refers the guest to Anneli. Flagged for review. */
   maxChatKm: num('KANAAN_MAX_CHAT_KM', 50),
@@ -42,10 +45,9 @@ export const config = {
   driverNudgeBeforeMinutes: num('KANAAN_DRIVER_NUDGE_BEFORE_MIN', 25),
 }
 
-/** Quoted fare in rand, rounded to the nearest 10 so the number reads like a price. */
+/** Upfront fare in rand: base + per km, never below the minimum, to the whole rand. */
 export function quoteFare(distanceKm: number): number {
-  const raw = config.fareBase + config.farePerKm * distanceKm
-  return Math.max(config.fareMinimum, Math.round(raw / 10) * 10)
+  return Math.max(config.fareMinimum, Math.round(config.fareBase + config.farePerKm * distanceKm))
 }
 
 export function withinChatLimit(distanceKm: number): boolean {

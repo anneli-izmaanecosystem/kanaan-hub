@@ -1,23 +1,34 @@
 // Resolving "Phabeni Gate" into a pin and a road distance.
 //
-// No geocoder has been chosen yet, so this is the seam. `resolvePlace` is what the
-// conversation calls; swapping in Google Places + Distance Matrix (or Mapbox) means
-// implementing one function and leaving every caller alone.
+// With GOOGLE_MAPS_API_KEY set, typed places are found with Google Places and every
+// distance is the Google Routes driving distance from the farm. Without it — or when a
+// Google call fails — the flow still runs: typed places come from the admin destinations
+// and the built-in list, and distance is a straight-line estimate. `resolvePlace` and
+// `resolveSharedLocation` are what the conversation calls; callers never see which.
 
 import { config } from './config'
 import { db, destinations } from '@/lib/db'
 import { eq } from 'drizzle-orm'
+import { googleMapsKey, reverseGeocode, routeFromFarm, searchPlace } from './google-maps'
 
 export interface ResolvedPlace {
   /** Full name as the provider returns it — quoted back for the guest to confirm. */
   name: string
   lat: number
   lng: number
-  /** Road distance from the farm, not straight line. Drives the fare and the cutoff. */
+  /** Road distance from the farm. Drives the fare and the chat cutoff. */
   distanceKm: number
   durationMin: number
   /** Optional admin-set price that overrides the distance tariff. */
   fixedFare?: number | null
+  /** True when the distance is the straight-line estimate, not a routed one. */
+  estimated?: boolean
+}
+
+export interface Distance {
+  distanceKm: number
+  durationMin: number
+  estimated: boolean
 }
 
 /** Great-circle distance. Only a fallback — real fares need road distance. */
@@ -34,47 +45,78 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 
 /**
  * Roads wander, so a straight line understates the drive. This is the usual rule of
- * thumb and exists only so the stub quotes something sane — a real provider returns
- * the actual routed distance and this constant disappears with it.
+ * thumb, used only when Google is not configured or does not answer.
  */
 const ROAD_FACTOR = 1.3
 const AVG_KMH = 55
 
 export function placesConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_MAPS_API_KEY)
+  return Boolean(googleMapsKey())
 }
 
-/** Distance and drive time from the farm to a known point. */
-export function distanceFromFarm(lat: number, lng: number): { distanceKm: number; durationMin: number } {
+/** The straight-line estimate — instant and free, but only approximate. */
+export function estimatedDistanceFromFarm(lat: number, lng: number): Distance {
   const straight = haversineKm(config.pickupLat, config.pickupLng, lat, lng)
   const distanceKm = Math.round(straight * ROAD_FACTOR * 10) / 10
-  return { distanceKm, durationMin: Math.max(5, Math.round((distanceKm / AVG_KMH) * 60)) }
+  return { distanceKm, durationMin: Math.max(5, Math.round((distanceKm / AVG_KMH) * 60)), estimated: true }
 }
 
-/** A pin the guest shared. No lookup needed — we already have coordinates. */
-export function resolveSharedLocation(
-  lat: number,
-  lng: number,
-  name?: string,
-): ResolvedPlace {
-  const { distanceKm, durationMin } = distanceFromFarm(lat, lng)
-  return { name: name || 'the location you shared', lat, lng, distanceKm, durationMin }
+// Routes are paid per call and the same few points (the gates, Hazyview, saved
+// destinations) come up all day, so answers are kept for a while. Keyed to ~10 m, which
+// is finer than any pickup point needs. Per server process; a restart just re-asks.
+const ROUTE_TTL_MS = 24 * 60 * 60 * 1000
+const routeCache = new Map<string, { at: number; value: Distance }>()
+
+/**
+ * Driving distance and time from the farm. Google Routes when configured; otherwise, or
+ * if Google fails, the estimate — flagged, and never cached, so the next ask retries.
+ */
+export async function distanceFromFarm(lat: number, lng: number): Promise<Distance> {
+  if (!placesConfigured()) return estimatedDistanceFromFarm(lat, lng)
+
+  const key = `${config.pickupLat},${config.pickupLng}>${lat.toFixed(4)},${lng.toFixed(4)}`
+  const hit = routeCache.get(key)
+  if (hit && Date.now() - hit.at < ROUTE_TTL_MS) return hit.value
+
+  try {
+    const route = await routeFromFarm(lat, lng)
+    const value = { ...route, estimated: false }
+    routeCache.set(key, { at: Date.now(), value })
+    return value
+  } catch (err) {
+    console.error('[places] Google Routes failed, using the straight-line estimate —', (err as Error).message)
+    return estimatedDistanceFromFarm(lat, lng)
+  }
+}
+
+/**
+ * A pin the guest shared. The coordinates are exact; Google supplies the road distance
+ * and, when WhatsApp sent no place name, the street address to quote back.
+ */
+export async function resolveSharedLocation(lat: number, lng: number, name?: string): Promise<ResolvedPlace> {
+  const [distance, address] = await Promise.all([
+    distanceFromFarm(lat, lng),
+    name || !placesConfigured()
+      ? Promise.resolve(null)
+      : reverseGeocode(lat, lng).catch(err => {
+          console.error('[places] Google Geocoding failed —', (err as Error).message)
+          return null
+        }),
+  ])
+  return { name: name || address || 'the location you shared', lat, lng, ...distance }
 }
 
 /**
  * Turns typed text into a place. Returns null when nothing matches, which the
  * conversation surfaces as "try again" rather than guessing.
  *
- * The stub covers the landmarks around Hazyview that guests actually ask for, so the
- * flow is testable end to end before a geocoder is wired up. Anything else returns
- * null — better than inventing coordinates and quoting a fare against them.
+ * Order: the admin's saved destinations (so aliases and fixed fares always win), then
+ * Google Places, then the built-in landmarks — which also cover a Google outage.
  */
 export async function resolvePlace(query: string): Promise<ResolvedPlace | null> {
   const q = query.toLowerCase().trim()
   if (!q) return null
 
-  // Admin-managed destinations take precedence over the built-in starter list. This
-  // makes additions, aliases and fixed fares from the dashboard effective immediately.
   const saved = await db.select().from(destinations).where(eq(destinations.active, true))
   const savedMatch = saved.find(place => {
     const aliases = (place.aliases ?? '').split(',').map(alias => alias.trim()).filter(Boolean)
@@ -83,33 +125,28 @@ export async function resolvePlace(query: string): Promise<ResolvedPlace | null>
   if (savedMatch) {
     const lat = Number(savedMatch.lat)
     const lng = Number(savedMatch.lng)
-    const { distanceKm, durationMin } = distanceFromFarm(lat, lng)
     return {
       name: savedMatch.name,
       lat,
       lng,
-      distanceKm,
-      durationMin,
+      ...(await distanceFromFarm(lat, lng)),
       fixedFare: savedMatch.fixedFare == null ? null : Number(savedMatch.fixedFare),
     }
   }
 
   if (placesConfigured()) {
-    return resolveViaGoogle(query)
+    try {
+      const found = await searchPlace(query)
+      if (found) return { ...found, ...(await distanceFromFarm(found.lat, found.lng)) }
+      return null
+    } catch (err) {
+      console.error('[places] Google Places failed, using the built-in list —', (err as Error).message)
+    }
   }
 
   const match = KNOWN_PLACES.find(p => p.aliases.some(a => q.includes(a)))
   if (!match) return null
-
-  const { distanceKm, durationMin } = distanceFromFarm(match.lat, match.lng)
-  return { name: match.name, lat: match.lat, lng: match.lng, distanceKm, durationMin }
-}
-
-async function resolveViaGoogle(_query: string): Promise<ResolvedPlace | null> {
-  // Deliberately unimplemented. Wiring this up is Places Text Search for the pin, then
-  // Distance Matrix from the farm for road distance and duration — two calls, both
-  // needing billing enabled on GOOGLE_MAPS_API_KEY.
-  throw new Error('Google Places lookup is not implemented yet — unset GOOGLE_MAPS_API_KEY to use the built-in place list')
+  return { name: match.name, lat: match.lat, lng: match.lng, ...(await distanceFromFarm(match.lat, match.lng)) }
 }
 
 /** Landmarks within reach of the farm, with the names guests actually use for them. */

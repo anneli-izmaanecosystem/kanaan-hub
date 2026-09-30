@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Payments — Kanaan WhatsApp Admin{% endblock %}
+{% block content %}
+  <h2 class="section-title">Payments</h2>
+  <p style="font-size: 13px; color: #667781;">
+    Paystack payments from the car booking: fares (link sent when the guest confirms the trip is complete) and no-show fees.
+    "Chat flow told" is when the chat flow was told the payment went through.
+  </p>
+  <table>
+    <thead><tr><th>When</th><th>Trip</th><th>Purpose</th><th>Amount</th><th>Status</th><th>Card</th><th>Chat flow told</th><th>Reference</th></tr></thead>
+    <tbody>
+      {% for p in payments %}
+      <tr>
+        <td>{{ p.created_at.strftime('%d %b %H:%M') if p.created_at else '—' }}</td>
+        <td>{{ p.trip_ref or '—' }}</td>
+        <td>{{ p.purpose or '—' }}</td>
+        <td>{% if p.amount_cents is not none %}R {{ '%.2f' % (p.amount_cents / 100) }}{% else %}—{% endif %}</td>
+        <td><span class="badge">{{ p.status }}</span>{% if p.gateway_response and p.status != 'success' %}<div style="font-size:12px;color:#667781;margin-top:4px;">{{ p.gateway_response }}</div>{% endif %}</td>
+        <td>{{ (p.card_brand ~ ' ****' ~ p.card_last4) if p.card_last4 else '—' }}</td>
+        <td>{% if p.forward_error %}<span style="color:#b3261e;">{{ p.forward_error }}</span>{% elif p.forwarded_at %}{{ p.forwarded_at.strftime('%H:%M:%S') }}{% else %}—{% endif %}</td>
+        <td style="font-size:12px;">{{ p.reference }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8">No payments yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

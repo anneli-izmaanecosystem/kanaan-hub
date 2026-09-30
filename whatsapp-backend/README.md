@@ -7,13 +7,15 @@ Python (FastAPI) service that:
 - receives the Meta webhook (inbound messages + delivery status) and logs every message,
 - tracks chatbot flow/session state per phone number,
 - serves a small server-rendered admin UI, styled like a WhatsApp thread, to read all of
-  the above without a database client.
+  the above without a database client,
+- **runs the car-booking chatbot** (`app/bot/`): the guest, Anneli and driver
+  conversations, the trip lifecycle, Paystack payment links, and the scheduled sends
+  (reminders, chasing Anneli, no-show checks).
 
-**This service does not run the car-booking chatbot.** That flow — direction, room,
-time, place lookup, fare quote, Stripe card hold — is already fully implemented in the
-Next.js app (`lib/whatsapp/*`, `app/api/whatsapp/webhook`), which is the only thing that
-talks to Meta and Stripe for it. This service exists for template registration and for
-showing that conversation in an admin UI; see "Mirroring" below for how the two connect.
+The bot keeps its data — trips, drivers, conversations, fare settings — in the
+`kanaan_hub` database (`KANAAN_HUB_DATABASE_URL`), which is where the Next.js dashboard
+reads it. The tables are owned by the dashboard's Drizzle schema (`lib/db/schema.ts` in
+the main repo); `app/bot/hub_db.py` only describes the columns the bot uses.
 
 ## Setup
 
@@ -55,34 +57,37 @@ database has no native json/jsonb columns anywhere, so this doesn't introduce th
 one. `app/models.py` has a `JSONText` type that (de)serializes transparently, so the rest
 of the code just works with dicts/lists as normal.
 
-## Mirroring the live car-booking conversation
+## The car-booking bot
 
-The Next.js app owns the guest-booking flow end to end (Meta webhook + Stripe). It pushes
-a copy of everything into this service so the admin UI can show it — see
-`lib/whatsapp/mirror.ts` in the main repo, called from:
+Meta calls `POST /webhook`. The message is logged (admin UI), the response goes back to
+Meta, and the bot handles it in the background (`app/bot/inbound.py`):
 
-- `lib/whatsapp/client.ts` — every outbound send (`sendText`, `sendButtons`, `sendTemplate`, ...)
-- `app/api/whatsapp/webhook/route.ts` — every inbound message and delivery-status update
-- `lib/whatsapp/conversation.ts`'s `saveConversation` — every step/state change, as
-  flow `kanaan_car_booking`
+- the insert into `kanaan_hub.wa_messages` is the idempotency claim, so a Meta retry is
+  never processed twice;
+- the sender's role decides the handler: Anneli's number (`transfer_settings.ops_whatsapp`,
+  else `KANAAN_OPS_WHATSAPP`) goes to `ops.py`, a registered driver to `driver.py`, anyone
+  else to the guest conversation in `conversation.py`;
+- every transition lives in `trip.py`, which writes the status and a `trip_events` row
+  before messaging anyone.
 
-These calls are fire-and-forget from the Next.js side (a mirroring failure never affects
-a real guest's booking) and land on `POST /internal/messages`, `/internal/messages/status`
-and `/internal/flows` here — all gated by a shared secret, since they're service-to-service,
-not a public webhook. To wire it up:
+Everything the bot sends is recorded in `wa_messages` (the dashboard's thread view) and
+in `kanaan_whatsapp_logs` (the admin UI here).
 
-1. Set `INTERNAL_MIRROR_SECRET` in this service's `.env` to a long random string.
-2. In the Next.js app's environment, set `WHATSAPP_MIRROR_URL` (this service's base URL,
-   e.g. `https://kanaan-whatsapp-backend.example.com`) and `WHATSAPP_MIRROR_SECRET` to
-   the same value.
+Paystack confirmations (`/payments/paystack/webhook` and `/callback`) mark the trip paid
+through `trip.payment_received`, which is safe to run twice.
 
-Without those two Next.js env vars set, `mirrorOutbound`/`mirrorInbound`/`mirrorFlow` are
-silent no-ops — nothing breaks, the admin UI just stays empty.
+The scheduled sends run in a background thread every `BOT_SCHEDULER_INTERVAL_SEC`
+(default 120). A Postgres advisory lock allows one tick at a time across replicas.
+`POST /bot/tick` runs one on demand.
 
-This service's own `/webhook` (Meta's inbound endpoint, further up) is unrelated to this
-and currently unused for the car-booking flow — Meta is configured to call the Next.js
-webhook, not this one. It's kept for template-related traffic or a future flow that this
-service does own directly.
+The dashboard's board actions that message people call `POST /bot/trips/{id}/allocate`
+and `POST /bot/trips/{id}/cancel`, gated by `X-Internal-Secret` (`INTERNAL_MIRROR_SECRET`
+here, `KANAAN_BOT_SECRET` on the dashboard, with `KANAAN_BOT_URL` set to this service).
+
+### Testing
+
+`tests/bot_e2e.py` drives whole conversations through the real `/webhook` endpoint
+against a throwaway Postgres, with Meta and Paystack stubbed. See its docstring for setup.
 
 ## Connecting Kanaan's Meta WhatsApp account
 

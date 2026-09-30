@@ -97,11 +97,13 @@ export async function saveSettings(patch: Record<string, unknown>) {
   return updated
 }
 
-/** Quoted fare in rand, rounded to the nearest 10 so it reads like a price. */
+/**
+ * Upfront fare in rand: base + per km, never below the minimum, rounded to the whole
+ * rand. Mirrors fare_for in whatsapp-backend, which quotes guests.
+ */
 export function fareFor(distanceKm: number, s: TransferSettings, fixedFare?: number | null): number {
   if (fixedFare != null) return Number(fixedFare)
-  const raw = s.fareBase + s.farePerKm * distanceKm
-  return Math.max(s.fareMinimum, Math.round(raw / 10) * 10)
+  return Math.max(s.fareMinimum, Math.round(s.fareBase + s.farePerKm * distanceKm))
 }
 
 /**

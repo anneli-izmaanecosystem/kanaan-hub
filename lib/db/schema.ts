@@ -538,6 +538,14 @@ export const trips = pgTable('trips', {
   stripeCustomerId:      text('stripe_customer_id'),
   stripePaymentMethodId: text('stripe_payment_method_id'),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
+  // Paystack, which is what is actually wired up. Nothing is taken at booking: when the
+  // guest confirms the trip is complete they are sent a payment link for the fare, and
+  // capturedAt is set once Paystack confirms it. The card_* columns are from an earlier
+  // save-the-card design and are no longer written.
+  cardAuthorizationCode: text('card_authorization_code'),
+  cardEmail:             text('card_email'),
+  cardLast4:             text('card_last4'),
+  paymentRef:            text('payment_ref'),  // last Paystack payment link reference
   heldAt:      timestamp('held_at'),
   capturedAt:  timestamp('captured_at'),
   releasedAt:  timestamp('released_at'),

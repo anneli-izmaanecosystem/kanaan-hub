@@ -32,7 +32,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const [row] = await db.update(destinations).set(patch).where(eq(destinations.id, parseInt(id))).returning()
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  return NextResponse.json({ ...row, ...distanceFromFarm(Number(row.lat), Number(row.lng)) })
+  return NextResponse.json({ ...row, ...(await distanceFromFarm(Number(row.lat), Number(row.lng))) })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

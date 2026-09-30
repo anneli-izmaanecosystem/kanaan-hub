@@ -127,6 +127,13 @@
       "when": 1789659014515,
       "tag": "0017_round_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790398969323,
+      "tag": "0018_paystack_card",
+      "breakpoints": true
     }
   ]
 }

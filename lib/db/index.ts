@@ -66,10 +66,9 @@ function getDb() {
     // own argument from inside whichever server component touched `db` first.
     const url = process.env.POSTGRES_URL
     if (url && !isNeonUrl(url)) {
-      // Plain Postgres - the RDS instance shared with whatsapp-backend, or a local
-      // server. The neon-http client only talks to Neon's HTTP proxy, so anything else
-      // goes over a normal TCP pool. TLS comes from the URL itself (`sslmode=verify-full`
-      // + `sslrootcert=lib/db/certs/rds-global-bundle.pem` for RDS), which pg honours.
+      // Plain Postgres - a local server, or any managed instance that is not Neon. The
+      // neon-http client only talks to Neon's HTTP proxy, so anything else goes over a
+      // normal TCP pool; TLS comes from the connection string itself, which pg honours.
       // Both drizzle flavours expose the same query builder; the neon-http type stays the
       // nominal one since production runs on Neon.
       // Kept on globalThis so a dev hot-reload of this module reuses the pool instead
