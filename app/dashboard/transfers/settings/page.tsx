@@ -45,9 +45,9 @@ export default function TransferSettingsPage() {
 
   if (!s) return <div className="text-sm text-gray-400">Loading…</div>
 
-  // The example fare from the original screens, recomputed live so a rate change can be
-  // sanity-checked against a trip everyone already knows the price of.
-  const example = Math.max(s.fareMinimum, Math.round((s.fareBase + s.farePerKm * 34) / 10) * 10)
+  // The example trip from the original screens (34 km), recomputed live with the same
+  // formula the WhatsApp service quotes with.
+  const example = Math.max(s.fareMinimum, Math.round(s.fareBase + s.farePerKm * 34))
 
   return (
     <div className="max-w-3xl">
@@ -59,7 +59,7 @@ export default function TransferSettingsPage() {
 
       <Card
         title="Fares"
-        note="These started as placeholders reverse-engineered from a single example. Set your real rate card before taking a booking."
+        note="Upfront fare: base + per kilometre, never below the minimum. Defaults are UberX South Africa rates with its per-minute charge folded into the per-km rate."
       >
         <div className="grid grid-cols-3 gap-3">
           <Field label="Base fare" prefix="R">
@@ -73,8 +73,8 @@ export default function TransferSettingsPage() {
           </Field>
         </div>
         <p className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
-          A 34 km run to Phabeni Gate would quote <span className="font-semibold text-gray-900">R {example}</span>.
-          Destinations with a fixed fare ignore this.
+          A 34 km run would quote <span className="font-semibold text-gray-900">R {example}</span>.
+          Places with a fixed price ignore this.
         </p>
       </Card>
 

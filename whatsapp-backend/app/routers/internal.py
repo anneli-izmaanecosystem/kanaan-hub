@@ -1,9 +1,8 @@
-"""Receives a copy of the live conversation from the Next.js app.
+"""Service-to-service writes into the admin UI's tables, gated by X-Internal-Secret.
 
-Next.js owns the actual guest-facing bot end to end — Meta's webhook, Stripe holds,
-driver allocation. This service never talks to Meta for that flow; it only stores what
-Next.js tells it, so the admin UI has something to show. Every route here requires the
-shared X-Internal-Secret header — this is service-to-service, not a public webhook.
+These were how the Next.js app mirrored the booking conversation here when it ran the
+bot. The bot now runs in this service (app/bot) and logs directly; the routes stay for
+any other service that wants its messages shown in the admin UI.
 """
 
 from typing import Optional

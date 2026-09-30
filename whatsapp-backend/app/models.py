@@ -87,3 +87,29 @@ class WhatsAppLog(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     flow: Mapped[Optional[WhatsAppFlow]] = relationship(back_populates="logs")
+
+
+class Payment(Base):
+    """A Paystack transaction from the car-booking flow — see app/routers/payments.py."""
+
+    __tablename__ = "kanaan_payments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    reference: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    trip_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    trip_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    purpose: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    amount_cents: Mapped[Optional[int]] = mapped_column(nullable=True)
+    currency: Mapped[str] = mapped_column(String, nullable=False, default="ZAR")
+    phone_number: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    card_brand: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    card_last4: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    gateway_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_event: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONText, nullable=False, default=dict)
+    forwarded_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    forward_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())

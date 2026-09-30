@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import WhatsAppFlow, WhatsAppLog, WhatsAppTemplate
+from app.models import Payment, WhatsAppFlow, WhatsAppLog, WhatsAppTemplate
 from app.routers.conversations import list_conversations
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -57,6 +57,12 @@ def conversation_thread(
         "thread.html",
         {"request": request, "phone_number": phone_number, "messages": messages, "flow": flow},
     )
+
+
+@router.get("/payments", response_class=HTMLResponse)
+def payments_page(request: Request, db: Session = Depends(get_db), _=Depends(require_admin)):
+    payments = db.scalars(select(Payment).order_by(Payment.created_at.desc()).limit(200)).all()
+    return templates.TemplateResponse("payments.html", {"request": request, "payments": payments})
 
 
 @router.get("/templates", response_class=HTMLResponse)

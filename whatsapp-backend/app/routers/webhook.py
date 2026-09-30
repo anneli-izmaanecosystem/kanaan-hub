@@ -1,13 +1,14 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.flow_state import get_or_create_active_flow
+from app.bot.inbound import process_webhook
 from app.meta_client import verify_webhook_signature
 from app.models import WhatsAppLog
 from app.utils import utcnow
@@ -39,6 +40,8 @@ def _extract_body(message: dict[str, Any]) -> Optional[str]:
             return interactive["button_reply"]["title"]
         if interactive.get("type") == "list_reply":
             return interactive["list_reply"]["title"]
+        if interactive.get("type") == "nfm_reply":
+            return (interactive.get("nfm_reply") or {}).get("response_json")
     if msg_type == "location":
         loc = message.get("location", {})
         return loc.get("name") or loc.get("address") or f"{loc.get('latitude')},{loc.get('longitude')}"
@@ -46,15 +49,24 @@ def _extract_body(message: dict[str, Any]) -> Optional[str]:
 
 
 @router.post("")
-async def receive(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+async def receive(
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     raw = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
 
     if settings.whatsapp_app_secret:
-        signature = request.headers.get("X-Hub-Signature-256")
         if not verify_webhook_signature(raw, signature, settings.whatsapp_app_secret):
             raise HTTPException(401, "Invalid signature")
 
     payload = await request.json()
+
+    # The booking bot answers after this response has gone back to Meta, so a slow send
+    # never makes Meta retry the delivery.
+    background.add_task(process_webhook, payload)
 
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):

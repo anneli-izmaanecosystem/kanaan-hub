@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ phone_number }} — Kanaan WhatsApp Admin{% endblock %}
 {% block content %}
-  <p><a class="plain" href="/admin">&larr; All conversations</a></p>
+  <p><a class="plain" href="{{ request.scope.root_path }}/admin">&larr; All conversations</a></p>
   <h2 class="section-title">{{ phone_number }}
     {% if flow %}<span class="badge badge-{{ flow.status }}">{{ flow.flow_name }}: {{ flow.status }}{% if flow.current_step %} · {{ flow.current_step }}{% endif %}</span>{% endif %}
   </h2>

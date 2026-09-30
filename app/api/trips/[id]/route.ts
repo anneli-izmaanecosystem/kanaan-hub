@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db, trips, tripEvents, drivers } from '@/lib/db'
 import { eq } from 'drizzle-orm'
-import { allocateDriver, cancelTrip } from '@/lib/whatsapp/trip'
+import { BotError, callBot } from '@/lib/bot'
 
 // Manual intervention from the board, for the cases the chat flow cannot reach: a guest
 // who phones instead of replying, a driver who texts the owner directly, a trip wedged
@@ -43,12 +43,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const [driver] = await db.select().from(drivers).where(eq(drivers.id, Number(body.driverId)))
       if (!driver) return NextResponse.json({ error: 'Driver not found' }, { status: 400 })
       // Same transition the WhatsApp "Accept" path uses: guest confirmed, driver briefed.
-      await allocateDriver(trip.id, driver.id, 'board', { reassign: Boolean(trip.driverId) })
+      // It messages people, so it runs in the WhatsApp service (lib/bot.ts).
+      const failed = await viaBot(`/bot/trips/${trip.id}/allocate`, { driver_id: driver.id })
+      if (failed) return failed
       break
     }
 
     case 'cancel': {
-      await cancelTrip(trip.id, 'ops', body.reason ?? 'cancelled from the board')
+      const failed = await viaBot(`/bot/trips/${trip.id}/cancel`, { reason: body.reason ?? 'cancelled from the board' })
+      if (failed) return failed
       break
     }
 
@@ -75,4 +78,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const [updated] = await db.select().from(trips).where(eq(trips.id, trip.id))
   return NextResponse.json(updated)
+}
+
+/** Runs a board action in the WhatsApp service; returns an error response if it failed. */
+async function viaBot(path: string, body: object): Promise<NextResponse | null> {
+  try {
+    await callBot(path, body)
+    return null
+  } catch (err) {
+    const status = err instanceof BotError ? err.status : 502
+    return NextResponse.json({ error: (err as Error).message }, { status: status >= 500 ? 502 : status })
+  }
 }

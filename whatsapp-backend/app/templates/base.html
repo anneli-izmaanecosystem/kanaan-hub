@@ -33,10 +33,11 @@
 </head>
 <body>
   <header class="topbar">
-    <a href="/admin">Kanaan WhatsApp Admin</a>
+    <a href="{{ request.scope.root_path }}/admin">Kanaan WhatsApp Admin</a>
     <nav>
-      <a href="/admin">Conversations</a>
-      <a href="/admin/templates">Templates</a>
+      <a href="{{ request.scope.root_path }}/admin">Conversations</a>
+      <a href="{{ request.scope.root_path }}/admin/templates">Templates</a>
+      <a href="{{ request.scope.root_path }}/admin/payments">Payments</a>
     </nav>
   </header>
   <div class="container">

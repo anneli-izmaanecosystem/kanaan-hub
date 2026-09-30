@@ -12,10 +12,11 @@ export async function GET() {
 
   // Distance is derived from the coordinates, so it is computed on read rather than
   // stored — moving the farm pin then corrects every destination at once.
-  return NextResponse.json(rows.map(d => ({
+  // Google Routes answers are cached in places.ts, so reloading the list is cheap.
+  return NextResponse.json(await Promise.all(rows.map(async d => ({
     ...d,
-    ...distanceFromFarm(Number(d.lat), Number(d.lng)),
-  })))
+    ...(await distanceFromFarm(Number(d.lat), Number(d.lng))),
+  }))))
 }
 
 export async function POST(req: NextRequest) {
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
       fixedFare: body.fixedFare ? String(body.fixedFare) : null,
       active: body.active ?? true,
     }).returning()
-    return NextResponse.json({ ...row, ...distanceFromFarm(lat, lng) })
+    return NextResponse.json({ ...row, ...(await distanceFromFarm(lat, lng)) })
   } catch (err) {
     if (String(err).includes('duplicate key')) {
       return NextResponse.json({ error: 'A destination with that name already exists' }, { status: 409 })
