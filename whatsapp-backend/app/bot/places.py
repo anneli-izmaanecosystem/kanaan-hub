@@ -48,10 +48,14 @@ def _haversine_km(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> flo
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def estimated_distance(lat: float, lng: float) -> dict[str, Any]:
-    f_lat, f_lng = _farm()
-    km = round(_haversine_km(f_lat, f_lng, lat, lng) * ROAD_FACTOR, 1)
+def estimated_between(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, Any]:
+    """Straight line x ROAD_FACTOR - the fallback when there is no routing."""
+    km = round(_haversine_km(a_lat, a_lng, b_lat, b_lng) * ROAD_FACTOR, 1)
     return {"distanceKm": km, "durationMin": max(5, round(km / AVG_KMH * 60)), "estimated": True}
+
+
+def estimated_distance(lat: float, lng: float) -> dict[str, Any]:
+    return estimated_between(*_farm(), lat, lng)
 
 
 # Routes are paid per call and the same points come up all day. Keyed to ~10 m; per
@@ -70,17 +74,16 @@ def _google_post(url: str, field_mask: str, body: dict[str, Any]) -> dict[str, A
     return res.json()
 
 
-def _route_from_farm(lat: float, lng: float) -> dict[str, Any]:
-    """Driving distance from the farm — that is the way the car runs, even on a pickup."""
-    f_lat, f_lng = _farm()
+def _route(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, Any]:
+    """Driving distance and time from A to B. Only the two numbers are asked for - no
+    path, no map (the field mask), and traffic-unaware so a quote never changes."""
     data = _google_post(
         "https://routes.googleapis.com/directions/v2:computeRoutes",
         "routes.distanceMeters,routes.duration",
         {
-            "origin": {"location": {"latLng": {"latitude": f_lat, "longitude": f_lng}}},
-            "destination": {"location": {"latLng": {"latitude": lat, "longitude": lng}}},
+            "origin": {"location": {"latLng": {"latitude": a_lat, "longitude": a_lng}}},
+            "destination": {"location": {"latLng": {"latitude": b_lat, "longitude": b_lng}}},
             "travelMode": "DRIVE",
-            # Traffic-unaware: the quote must be the same whenever the guest asks.
             "routingPreference": "TRAFFIC_UNAWARE",
             "units": "METRIC",
         },
@@ -95,24 +98,34 @@ def _route_from_farm(lat: float, lng: float) -> dict[str, Any]:
     }
 
 
-def distance_from_farm(lat: float, lng: float) -> dict[str, Any]:
-    """{distanceKm, durationMin, estimated}. Google when configured, else the estimate."""
+def _route_from_farm(lat: float, lng: float) -> dict[str, Any]:
+    """Driving distance from the farm - the way the car runs, even on a pickup."""
+    return _route(*_farm(), lat, lng)
+
+
+def distance_between(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, Any]:
+    """{distanceKm, durationMin, estimated} from A to B. Google when configured (cached),
+    else the straight-line estimate - also the fallback if Google fails."""
     if not places_configured():
-        return estimated_distance(lat, lng)
-    f_lat, f_lng = _farm()
-    key = f"{f_lat},{f_lng}>{lat:.4f},{lng:.4f}"
+        return estimated_between(a_lat, a_lng, b_lat, b_lng)
+    key = f"{a_lat:.4f},{a_lng:.4f}>{b_lat:.4f},{b_lng:.4f}"
     with _cache_lock:
         hit = _route_cache.get(key)
     if hit and time.time() - hit[0] < _ROUTE_TTL:
         return hit[1]
     try:
-        value = _route_from_farm(lat, lng)
+        value = _route(a_lat, a_lng, b_lat, b_lng)
     except Exception as err:
         log.error("Google Routes failed, using the straight-line estimate - %s", err)
-        return estimated_distance(lat, lng)
+        return estimated_between(a_lat, a_lng, b_lat, b_lng)
     with _cache_lock:
         _route_cache[key] = (time.time(), value)
     return value
+
+
+def distance_from_farm(lat: float, lng: float) -> dict[str, Any]:
+    """{distanceKm, durationMin, estimated} from the farm."""
+    return distance_between(*_farm(), lat, lng)
 
 
 def _trim_country(address: str) -> str:

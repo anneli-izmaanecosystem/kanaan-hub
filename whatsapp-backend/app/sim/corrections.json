@@ -1,0 +1,258 @@
+[
+  {
+    "id": "C01",
+    "raised": "2026-09-27",
+    "area": "Payment",
+    "asked": "No payment option shown to the guest until Anneli (admin) accepts the ride request.",
+    "status": "done"
+  },
+  {
+    "id": "C02",
+    "raised": "2026-09-27",
+    "area": "Pickup",
+    "asked": "Guest shares their location; distance is measured from Kanaan Guest Farm; past 50 km the guest is told we can't serve it, with 'Pick within 50 km' / 'End'.",
+    "status": "done"
+  },
+  {
+    "id": "C03",
+    "raised": "2026-09-29",
+    "area": "Date & time",
+    "asked": "Pick the day, date and time from a calendar and time selection (WhatsApp Flow), with minutes as well as the hour.",
+    "status": "done"
+  },
+  {
+    "id": "C04",
+    "raised": "2026-09-29",
+    "area": "Driver",
+    "asked": "Remove the 'I cannot take it' option from the driver's new-trip card.",
+    "status": "done",
+    "note": "kn_driver_new_trip_v2 (Noted only) is approved on Meta."
+  },
+  {
+    "id": "C05",
+    "raised": "2026-09-29",
+    "area": "Review",
+    "asked": "Offer the guest a review only after the payment is completed.",
+    "status": "done"
+  },
+  {
+    "id": "C06",
+    "raised": "2026-09-29",
+    "area": "Payment",
+    "asked": "Payment success, failure and cancellation each update the guest, the driver and Anneli.",
+    "status": "done"
+  },
+  {
+    "id": "C07",
+    "raised": "2026-09-29",
+    "area": "Ride",
+    "asked": "Driver gets a 'Ride started' button; when tapped the guest is told the ride started; ride completion then follows the usual flow.",
+    "status": "done"
+  },
+  {
+    "id": "C08",
+    "raised": "2026-09-29",
+    "area": "Conversation",
+    "asked": "Keep the conversation interactive - no message leaves the guest with nothing to tap (templates checked approved).",
+    "status": "done"
+  },
+  {
+    "id": "C09",
+    "raised": "2026-09-29",
+    "area": "Quote",
+    "asked": "Quote says 'We are checking driver availability and will confirm your booking as soon as possible. No payment is required until your car is confirmed.' instead of mentioning Anneli.",
+    "status": "done"
+  },
+  {
+    "id": "C10",
+    "raised": "2026-09-29",
+    "area": "Places",
+    "asked": "Default places to choose from: Perry's Bridge, Lowveld Mall (Engen), Kruger International Airport, my location, Kanaan Guest Farm - choosing one shares its Google Maps pin.",
+    "status": "done"
+  },
+  {
+    "id": "C11",
+    "raised": "2026-09-29",
+    "area": "Pickup",
+    "asked": "Don't show the distance from Kanaan in the 'We will collect you at ...' message.",
+    "status": "done"
+  },
+  {
+    "id": "C12",
+    "raised": "2026-09-29",
+    "area": "Quote",
+    "asked": "Show the guest's full name and phone number in the booking confirmation.",
+    "status": "done"
+  },
+  {
+    "id": "C13",
+    "raised": "2026-09-30",
+    "area": "Pricing",
+    "asked": "Price like Uber, simplified to one rate (R5 base + R8.30/km, min R20); fixed prices kept in the backend and shown only at the quote.",
+    "status": "done",
+    "note": "No fixed prices are set yet (KANAAN_FIXED_FARES empty)."
+  },
+  {
+    "id": "C14",
+    "raised": "2026-09-30",
+    "area": "Collisions (KN-1012)",
+    "asked": "Driver got two ride-start and two ride-end messages; 'guest has not confirmed the pickup' shown after confirming; payment cancel read like a trip cancel.",
+    "status": "done"
+  },
+  {
+    "id": "C15",
+    "raised": "2026-09-30",
+    "area": "Places",
+    "asked": "Give the same location dropdown for the drop-off as for the pickup (trips between any two places).",
+    "status": "done",
+    "note": "Production DB: migration 0019 (pickup_name, pickup_lat, pickup_lng) applied 2026-09-30 with the user's approval."
+  },
+  {
+    "id": "C16",
+    "raised": "2026-09-30",
+    "area": "Collisions",
+    "asked": "Buttons on earlier messages must not act (disabled) - they can collide with the flow.",
+    "status": "done",
+    "note": "WhatsApp cannot grey out old buttons; the bot refuses them and re-sends the current question."
+  },
+  {
+    "id": "C17",
+    "raised": "2026-09-30",
+    "area": "Ride",
+    "asked": "Guest taps 'Yes, I can see him' -> driver gets 'Ride started' -> after tapping it the driver gets 'Ride complete' (no collision).",
+    "status": "done",
+    "note": "Since C30/C31: 'Ride started' is offered only after the guest's 'Yes, I can see him', and 'Reached destination' comes between 'Ride started' and 'Ride complete'."
+  },
+  {
+    "id": "C18",
+    "raised": "2026-09-30",
+    "area": "Payment",
+    "asked": "'Ride complete' is not shown to the driver until the guest has paid.",
+    "status": "done"
+  },
+  {
+    "id": "C19",
+    "raised": "2026-09-30",
+    "area": "Conversation",
+    "asked": "The same step must always show the same message and options - interactive and continuous.",
+    "status": "done"
+  },
+  {
+    "id": "C20",
+    "raised": "2026-09-30",
+    "area": "Process",
+    "asked": "No new Meta templates and no deploying without permission; verify on the local simulator first, watching the chat live.",
+    "status": "done",
+    "note": "Simulator at http://localhost:8765/sim; nothing reaches Meta or Paystack."
+  },
+  {
+    "id": "C21",
+    "raised": "2026-09-30",
+    "area": "Simulator",
+    "asked": "'Error: Internal Server Error' while testing the flow on the simulator.",
+    "status": "done",
+    "note": "Cause: the simulator's local database had stopped. It now runs in its own window (sim/run-simulator.cmd), stops whole if the database stops, and says so plainly instead of a 500."
+  },
+  {
+    "id": "C22",
+    "raised": "2026-10-01",
+    "area": "Templates",
+    "asked": "After testing the flow: create the templates the flow needs on Meta (approved by the user).",
+    "status": "done",
+    "note": "Submitted once each, PENDING Meta review: kn_guest_trip_confirmed_v3 (pay before drop-off), kn_guest_driver_on_way_v2 (no 'Good morning'/'he'), kn_ops_trip_closed_v3 (driver closes the ride). Until approved the bot sends the approved originals. Nothing deleted. All three APPROVED on Meta (checked 2026-10-01)."
+  },
+  {
+    "id": "C23",
+    "raised": "2026-10-01",
+    "area": "Collisions (found in testing)",
+    "asked": "Found while testing C17: if the guest's 'Yes, I can see him' and the driver's 'Ride started' land together, the driver could get a stale 'Ride started' after 'Ride complete', and 'Ride complete' was then refused.",
+    "status": "done",
+    "note": "The two steps now take turns per trip (database lock). Stress test: 8 simultaneous races, 0 bad (1 bad without the fix)."
+  },
+  {
+    "id": "C24",
+    "raised": "2026-09-30",
+    "area": "Release",
+    "asked": "After testing on the simulator: deploy the code and make the production database change (approved by the user).",
+    "status": "done",
+    "note": "Migration 0019 applied to kanaan_hub (20 migrations recorded, 12 trips intact); kanaan-service deployed with the tested flow; simulator off in production."
+  },
+  {
+    "id": "C25",
+    "raised": "2026-10-01",
+    "area": "Driver",
+    "asked": "Show the guest's full name and phone number on the driver's new-trip card once Anneli confirms the ride.",
+    "status": "done",
+    "note": "Carried in the card's existing Guest line, so no new template is needed."
+  },
+  {
+    "id": "C26",
+    "raised": "2026-10-01",
+    "area": "Driver",
+    "asked": "After the new-trip card, show only the guest's pickup point as a location (not the drop-off).",
+    "status": "done",
+    "note": "The drop-off pin now comes when the ride starts, for directions."
+  },
+  {
+    "id": "C27",
+    "raised": "2026-10-01",
+    "area": "Driver",
+    "asked": "Remove the 'I cannot make it' button from the driver's screen.",
+    "status": "done",
+    "note": "kn_driver_trip_reminder_v2 (only 'I have left') submitted to Meta 2026-10-01 with the user's go-ahead, APPROVED on Meta 2026-10-01. A tap on the old button no longer hands the trip back - the driver is told to call Anneli."
+  },
+  {
+    "id": "C28",
+    "raised": "2026-10-01",
+    "area": "Guest",
+    "asked": "Once Anneli confirms and allots the driver, no cancel button on the guest's screen.",
+    "status": "done",
+    "note": "kn_guest_trip_confirmed_v4, kn_guest_trip_reminder_evening_v3 and kn_guest_driver_waiting_v2 (no cancel button) submitted to Meta 2026-10-01 with the user's go-ahead, APPROVED on Meta 2026-10-01. Typing 'cancel' or tapping an old cancel button is turned down, and Anneli is told."
+  },
+  {
+    "id": "C29",
+    "raised": "2026-10-01",
+    "area": "Payment",
+    "asked": "Show 'Your car is confirmed' first, then the fare message with only 'Pay now' (no 'Pay during ride').",
+    "status": "done"
+  },
+  {
+    "id": "C30",
+    "raised": "2026-10-01",
+    "area": "Collisions",
+    "asked": "'Ride started' reached the driver twice (on arriving, and again when the guest tapped 'Yes, I can see him'). Send it once, after the guest confirms.",
+    "status": "done"
+  },
+  {
+    "id": "C31",
+    "raised": "2026-10-01",
+    "area": "Ride",
+    "asked": "After 'Ride started' the driver gets 'Reached destination'; then the guest gets 'Pay now' if not yet paid; only after that 'Ride complete'.",
+    "status": "done",
+    "note": "Payment is no longer asked for when the ride starts. 'Ride complete' is still the driver's button, shown once the fare is paid."
+  },
+  {
+    "id": "C32",
+    "raised": "2026-10-01",
+    "area": "Collisions (live only)",
+    "asked": "Duplicate chats and flow collisions on the deployed bot that did not show in the simulator.",
+    "status": "done",
+    "note": "Live WhatsApp can deliver a plain message ahead of the template sent just before it (the simulator always keeps order). The fare message now waits for Meta's delivery receipt of 'Your car is confirmed', and the pickup pin for the new-trip card's (up to 6 s each). Proved in tests/bot_e2e.py 6j; the simulator cannot show delivery order."
+  },
+  {
+    "id": "C33",
+    "raised": "2026-10-01",
+    "area": "Templates",
+    "asked": "Delete the duplicate (older) templates from Meta - later, as they do not affect the chat flow.",
+    "status": "deferred",
+    "note": "Nothing deleted. Safe to delete now (replaced by an approved newer version, never sent): kn_driver_new_trip, kn_guest_trip_confirmed, kn_guest_trip_confirmed_v2, kn_guest_trip_reminder_evening, kn_guest_driver_on_way, kn_ops_new_request, kn_ops_guest_no_show, kn_ops_trip_closed, kn_ops_trip_closed_v2. Only after their replacements are approved AND the new code is deployed: kn_guest_trip_confirmed_v3 (v4), kn_guest_trip_reminder_evening_v2 (v3), kn_guest_driver_waiting (v2), kn_driver_trip_reminder (v2). When deleting, drop the same names from the bot's fallback lists in trip.py."
+  },
+  {
+    "id": "C34",
+    "raised": "2026-10-01",
+    "area": "Release",
+    "asked": "Deploy the changed chat flow (C25-C32) so it can be tested on mobile phones.",
+    "status": "done",
+    "note": "kanaan-service deployed 2026-10-01 with the user's go-ahead (deploy/k8s/deploy.sh); pod healthy, /health 200, simulator off in production. The 4 new templates were already APPROVED on Meta. No database change."
+  }
+]

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanaan WhatsApp Simulator</title>
+<style>
+  :root { --bg:#e9edef; --chat:#efeae2; --in:#fff; --out:#d9fdd3; --green:#1f4d3a; --link:#027eb5; --warn:#b42318; --warnbg:#fef3f2; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:#111b21; }
+  header { background:var(--green); color:#fff; padding:10px 16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  header .note { font-size:12px; opacity:.85; margin-right:auto; }
+  header button { background:#fff2; color:#fff; border:1px solid #fff5; border-radius:6px; padding:6px 10px; cursor:pointer; font-size:13px; }
+  header button:hover { background:#fff3; }
+  .phones { display:grid; grid-template-columns: repeat(3, minmax(300px, 1fr)); gap:12px; padding:12px; height: calc(100vh - 52px); }
+  @media (max-width: 1000px) { .phones { grid-template-columns: 1fr; height:auto; } .phone { height: 80vh; } }
+  .phone { display:flex; flex-direction:column; background:var(--chat); border-radius:12px; overflow:hidden; box-shadow:0 1px 3px #0002; min-height:0; }
+  .top { background:var(--green); color:#fff; padding:10px 12px; font-weight:600; font-size:14px; }
+  .top small { display:block; font-weight:400; opacity:.8; font-size:11px; }
+  .chat { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:6px; }
+  .msg { max-width:88%; padding:6px 9px 4px; border-radius:8px; font-size:13.5px; line-height:1.35; white-space:pre-wrap; box-shadow:0 1px 1px #0001; }
+  .msg.out { background:var(--in); align-self:flex-start; }
+  .msg.in { background:var(--out); align-self:flex-end; }
+  .msg .meta { font-size:10.5px; color:#667781; text-align:right; margin-top:2px; }
+  .msg .tpl { font-size:10.5px; color:#667781; margin-bottom:2px; }
+  .msg .warn { background:var(--warnbg); color:var(--warn); font-size:11.5px; border-radius:4px; padding:3px 6px; margin-top:4px; white-space:normal; }
+  .acts { display:flex; flex-direction:column; border-top:1px solid #e9edef; margin-top:6px; }
+  .acts button, .acts select, .acts a { background:none; border:0; border-top:1px solid #f0f2f5; color:var(--link); padding:7px 4px; font-size:13.5px; cursor:pointer; text-align:center; text-decoration:none; font-family:inherit; }
+  .acts button:first-child { border-top:0; }
+  .acts button:hover { background:#f5f6f6; }
+  .form { display:grid; gap:6px; padding:6px 0 2px; }
+  .form input, .form select { padding:6px; border:1px solid #d1d7db; border-radius:6px; font-size:13px; }
+  .compose { display:flex; gap:6px; padding:8px; background:#f0f2f5; }
+  .compose input { flex:1; padding:9px 12px; border-radius:18px; border:0; font-size:14px; }
+  .compose button { border:0; background:#00a884; color:#fff; border-radius:18px; padding:0 14px; cursor:pointer; font-size:13px; }
+  .compose .loc { background:#fff; color:#111; }
+  dialog { border:0; border-radius:12px; padding:16px; max-width:420px; width:92vw; }
+  dialog h3 { margin-top:0; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { border-bottom:1px solid #eee; padding:5px; text-align:left; }
+  .bad { color:var(--warn); font-weight:600; }
+  .msg.stale .acts.prompt { opacity:.45; }
+  .msg.stale .acts.prompt::after { content:'Earlier question - no longer active'; font-size:10.5px; color:#667781; text-align:center; padding:3px 0; }
+  .acts button:disabled, .acts select:disabled { cursor:not-allowed; color:#8696a0; }
+  header .primary { background:#fff; color:var(--green); font-weight:600; }
+  #panel { position:fixed; top:0; right:0; bottom:0; width:min(470px, 96vw); background:#fff; box-shadow:-4px 0 16px #0003;
+           display:none; flex-direction:column; z-index:10; }
+  #panel.open { display:flex; }
+  #panel .ph { background:var(--green); color:#fff; padding:10px 14px; display:flex; align-items:center; gap:8px; }
+  #panel .ph h2 { font-size:15px; margin:0; flex:1; }
+  #panel .ph button { background:#fff2; color:#fff; border:1px solid #fff5; border-radius:6px; padding:5px 9px; cursor:pointer; }
+  #panel .tabs { display:flex; border-bottom:1px solid #e9edef; }
+  #panel .tabs button { flex:1; padding:9px; border:0; background:none; cursor:pointer; font-size:13.5px; border-bottom:2px solid transparent; }
+  #panel .tabs button.on { border-bottom-color:var(--green); font-weight:600; }
+  #panel .body { flex:1; overflow-y:auto; padding:12px 14px; font-size:13px; }
+  .scn { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #f0f2f5; }
+  .scn button, .runall { border:1px solid var(--green); color:var(--green); background:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12.5px; }
+  .runall { background:var(--green); color:#fff; width:100%; padding:9px; font-size:14px; margin-bottom:8px; }
+  .runall:disabled, .scn button:disabled { opacity:.5; cursor:not-allowed; }
+  .res { padding:5px 0 5px 22px; position:relative; border-bottom:1px solid #f6f7f8; line-height:1.35; }
+  .res::before { position:absolute; left:0; top:5px; }
+  .res.ok::before { content:'✅'; } .res.bad::before { content:'❌'; }
+  .res small { color:#667781; }
+  .grp { font-weight:600; margin:12px 0 4px; color:var(--green); }
+  .cor { padding:8px 0; border-bottom:1px solid #f0f2f5; }
+  .cor .top2 { display:flex; gap:8px; align-items:baseline; }
+  .cor .id { font-weight:700; color:var(--green); min-width:32px; }
+  .badge { font-size:11px; border-radius:10px; padding:1px 8px; white-space:nowrap; margin-left:auto; }
+  .b-verified { background:#dcfce7; color:#166534; } .b-failing { background:#fee2e2; color:#991b1b; } .b-notrun { background:#f1f5f9; color:#475569; }
+  .cor .note { color:#667781; font-size:12px; margin-top:2px; }
+  .summary { background:#f6f7f8; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kanaan WhatsApp Simulator</h1>
+  <span class="note">Local only - nothing goes to Meta or Paystack. Real bot code, throwaway database.</span>
+  <span id="clock" class="note"></span>
+  <button onclick="tick(15)">Time +15 min</button>
+  <button onclick="tick(60)">+1 hour</button>
+  <button onclick="tick(60*12)">+12 hours</button>
+  <button onclick="tick(0)">Run scheduler now</button>
+  <button onclick="templatesUsed()">Templates used</button>
+  <button onclick="resetAll()">Reset</button>
+  <button class="primary" onclick="togglePanel()">Tests &amp; corrections</button>
+</header>
+<aside id="panel">
+  <div class="ph"><h2>Tests &amp; corrections</h2><button onclick="togglePanel()">Close</button></div>
+  <div class="tabs"><button id="tab-s" class="on" onclick="tab('s')">Test scenarios</button><button id="tab-c" onclick="tab('c')">Corrections tracker</button></div>
+  <div class="body" id="pbody"></div>
+</aside>
+<div class="phones">
+  <section class="phone" data-role="guest"><div class="top">Guest<small>+27 00 000 0003 - books a car</small></div><div class="chat"></div>
+    <div class="compose"><input placeholder="Type a message (try: hi)"><button class="loc" title="Share location">📍</button><button>Send</button></div></section>
+  <section class="phone" data-role="ops"><div class="top">Anneli (admin)<small>+27 00 000 0001 - accepts requests, picks drivers</small></div><div class="chat"></div>
+    <div class="compose"><input placeholder="Type a message"><button class="loc" title="Share location">📍</button><button>Send</button></div></section>
+  <section class="phone" data-role="driver"><div class="top">Driver - Test Driver<small>+27 00 000 0002 - left, arrived, started, complete</small></div><div class="chat"></div>
+    <div class="compose"><input placeholder="Type a message"><button class="loc" title="Share location">📍</button><button>Send</button></div></section>
+</div>
+
+<dialog id="locdlg"><h3>Share a location</h3>
+  <div class="form">
+    <select id="locpick">
+      <option value="-25.0461,31.1264,">Kanaan Guest Farm</option>
+      <option value="-25.0360,31.1248,">Perry's Bridge</option>
+      <option value="-25.0457,31.1296,">Lowveld Mall (Engen)</option>
+      <option value="-25.0075,31.2394,">Phabeni Gate</option>
+      <option value="-25.3832,31.1056,">Kruger Mpumalanga Intl Airport</option>
+      <option value="-25.4753,30.9694,">Nelspruit (past 50 km)</option>
+      <option value="19.0760,72.8777,">Mumbai (far away)</option>
+      <option value="custom">Custom latitude, longitude...</option>
+    </select>
+    <input id="loccustom" placeholder="-25.05, 31.12" style="display:none">
+    <button onclick="sendLoc()">Send location</button>
+    <button onclick="locdlg.close()">Cancel</button>
+  </div>
+</dialog>
+<dialog id="infodlg"><div id="info"></div><button onclick="infodlg.close()">Close</button></dialog>
+
+<script>
+let since = 0, locRole = null, locContext = null;
+const chats = {};
+document.querySelectorAll('.phone').forEach(p => {
+  const role = p.dataset.role, input = p.querySelector('.compose input');
+  chats[role] = p.querySelector('.chat');
+  const [loc, send] = p.querySelectorAll('.compose button');
+  const go = () => { if (input.value.trim()) { post({role, kind:'text', text:input.value.trim()}); input.value=''; } };
+  send.onclick = go; input.onkeydown = e => { if (e.key === 'Enter') go(); };
+  loc.onclick = () => openLoc(role);
+});
+locpick.onchange = () => loccustom.style.display = locpick.value === 'custom' ? '' : 'none';
+
+async function post(body) {
+  const r = await fetch('/sim/send', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if (!r.ok) { let t = await r.text(); try { t = JSON.parse(t).detail || t } catch (e) {} alert(t); }
+  poll();
+}
+function openLoc(role, context) { locRole = role; locContext = context || null; locdlg.showModal(); }
+function sendLoc() {
+  let v = locpick.value, name = locpick.options[locpick.selectedIndex].text;
+  if (v === 'custom') { v = loccustom.value + ','; name = ''; }
+  const [lat, lng] = v.split(',').map(Number);
+  if (isNaN(lat) || isNaN(lng)) return alert('Enter latitude, longitude');
+  locdlg.close();
+  post({role: locRole, kind:'location', lat, lng, name: name.includes('(') ? '' : name, context: locContext});
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+// Mirrors the bot's rule: only the latest question (buttons, list or picker) to a phone
+// can be answered; earlier ones are greyed out. Template-card buttons stay live - the bot
+// checks the trip's state for those instead.
+const latestPrompt = {};
+function retire(box) {
+  if (!box) return;
+  box.querySelectorAll('.acts.prompt button, .acts.prompt select, .acts.prompt input').forEach(c => c.disabled = true);
+  box.classList.add('stale');
+}
+
+function render(m) {
+  const box = el('div', 'msg ' + (m.dir === 'in' ? 'in' : 'out'));
+  const isPrompt = m.dir === 'out' && m.kind === 'interactive' && ((m.buttons || []).length || m.list || m.flow);
+  if (isPrompt) { retire(latestPrompt[m.role]); latestPrompt[m.role] = box; }
+  if (m.template) box.appendChild(el('div', 'tpl', 'Template: ' + m.template));
+  box.appendChild(el('div', '', m.text || ''));
+  if (m.map) { const a = el('a', '', 'Open in Google Maps'); a.href = m.map; a.target = '_blank'; box.appendChild(a); }
+  if (m.dir === 'out') {
+    const acts = el('div', 'acts' + (isPrompt ? ' prompt' : ''));
+    (m.buttons || []).forEach(b => {
+      const btn = el('button', '', b.title);
+      btn.onclick = () => post({role: m.role, kind: b.kind === 'template' ? 'template' : 'button', id: b.id, title: b.title, context: m.wamid});
+      acts.appendChild(btn);
+    });
+    if (m.list) {
+      const sel = el('select');
+      sel.appendChild(new Option(m.list.label + ' ▾', ''));
+      m.list.rows.forEach(r => sel.appendChild(new Option(r.title + (r.description ? ' - ' + r.description : ''), r.id)));
+      sel.onchange = () => { const r = m.list.rows.find(x => x.id === sel.value); if (r) post({role: m.role, kind:'list', id:r.id, title:r.title, context:m.wamid}); };
+      acts.appendChild(sel);
+    }
+    if (m.location_request) { const b = el('button', '', '📍 Send location'); b.onclick = () => openLoc(m.role, m.wamid); acts.appendChild(b); }
+    if (m.cta) { const a = el('a', '', m.cta.label + ' ↗'); a.href = m.cta.url; a.target = '_blank'; acts.appendChild(a); }
+    if (m.flow) acts.appendChild(flowForm(m));
+    if (acts.childNodes.length) box.appendChild(acts);
+  }
+  if (m.warn) box.appendChild(el('div', 'warn', m.warn));
+  box.appendChild(el('div', 'meta', m.at + (m.trip_id ? '  ·  trip ' + m.trip_id : '')));
+  return box;
+}
+
+function flowForm(m) {
+  const d = m.flow.data || {}, wrap = el('div', 'form');
+  const date = el('input'); date.type = 'date'; date.min = d.min_date || ''; date.max = d.max_date || ''; date.value = d.min_date || '';
+  const hour = el('select'), minute = el('select');
+  (d.hours || []).forEach(h => hour.appendChild(new Option('Hour ' + h.title, h.id)));
+  (d.minutes || []).forEach(x => minute.appendChild(new Option('Minutes ' + x.title, x.id)));
+  const b = el('button', '', 'Confirm (' + m.flow.cta + ')');
+  b.onclick = () => post({role: m.role, kind:'flow', date: date.value, hour: hour.value, minute: minute.value});
+  wrap.append(el('div', 'tpl', 'Date and time picker (WhatsApp Flow)'), date, hour, minute, b);
+  return wrap;
+}
+
+async function poll() {
+  try {
+    const r = await (await fetch('/sim/messages?since=' + since)).json();
+    for (const m of r.messages) {
+      since = Math.max(since, m.n);
+      const chat = chats[m.role]; if (!chat) continue;
+      chat.appendChild(render(m)); chat.scrollTop = chat.scrollHeight;
+    }
+    clock.textContent = r.offset_min ? 'Clock moved +' + r.offset_min + ' min' : '';
+  } catch (e) {}
+}
+setInterval(poll, 800); poll();
+
+async function tick(min) {
+  const r = await (await fetch('/sim/tick?minutes=' + min, {method:'POST'})).json();
+  const done = Object.entries(r).filter(([k, v]) => v.length).map(([k, v]) => k + ': ' + v.join(', '));
+  if (!done.length) alert('Scheduler ran - nothing was due.'); poll();
+}
+async function resetAll() {
+  if (!confirm('Clear all trips and chats?')) return;
+  await fetch('/sim/reset', {method:'POST'}); since = 0; Object.values(chats).forEach(c => c.innerHTML = ''); Object.keys(latestPrompt).forEach(k => delete latestPrompt[k]);
+}
+// ── Tests & corrections panel ───────────────────────────────────────────────
+let panelTab = 's', scenarioList = [], lastStatus = null, statusTimer = null;
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function togglePanel() {
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    if (!scenarioList.length) scenarioList = await (await fetch('/sim/scenarios')).json();
+    await refreshStatus();
+  }
+}
+function tab(t) { panelTab = t; tab_s.classList.toggle('on', t === 's'); tab_c.classList.toggle('on', t === 'c'); drawPanel(); }
+const tab_s = document.getElementById('tab-s'), tab_c = document.getElementById('tab-c');
+async function runScenario(key) {
+  const r = await fetch('/sim/scenarios/run?key=' + encodeURIComponent(key), {method:'POST'});
+  if (!r.ok) { let t = await r.text(); try { t = JSON.parse(t).detail || t } catch (e) {} alert(t); return; }
+  refreshStatus();
+}
+async function refreshStatus() {
+  try { lastStatus = await (await fetch('/sim/scenarios/status')).json(); } catch (e) { return; }
+  drawPanel();
+  clearTimeout(statusTimer);
+  if (lastStatus.running || panel.classList.contains('open')) statusTimer = setTimeout(refreshStatus, lastStatus.running ? 800 : 3000);
+}
+function drawPanel() {
+  const s = lastStatus || {results: [], tracker: []};
+  const busy = !!s.running;
+  if (panelTab === 's') {
+    const ok = s.results.filter(r => r.ok).length, bad = s.results.length - ok;
+    let h = `<button class="runall" ${busy ? 'disabled' : ''} onclick="runScenario('all')">${busy ? 'Running: ' + esc(s.current) + ' ...' : 'Run all scenarios (watch the phones)'}</button>`;
+    h += scenarioList.map(x => `<div class="scn"><span>${esc(x.title)}</span><button ${busy ? 'disabled' : ''} onclick="runScenario('${x.key}')">Run</button></div>`).join('');
+    if (s.results.length) {
+      h += `<div class="summary" style="margin-top:12px">${ok} passed, ${bad} failed${s.finished_at ? ' - finished ' + esc(s.finished_at) : ''}</div>`;
+      let grp = null;
+      for (const r of s.results) {
+        if (r.scenario !== grp) { grp = r.scenario; h += `<div class="grp">${esc(grp)}</div>`; }
+        h += `<div class="res ${r.ok ? 'ok' : 'bad'}">${esc(r.check)} <small>${esc(r.corrections.join(', '))}</small></div>`;
+      }
+    } else h += '<p style="color:#667781">Runs a booking through the Guest, Anneli and Driver phones step by step - watch the chats while each check turns green or red.</p>';
+    pbody.innerHTML = h;
+  } else {
+    const t = s.tracker || [];
+    const v = t.filter(c => c.verification === 'verified').length, f = t.filter(c => c.verification === 'failing').length;
+    let h = `<div class="summary">${t.length} corrections you raised - ${v} verified, ${f} failing, ${t.length - v - f} not yet run in this session. Run all scenarios to verify.</div>`;
+    h += t.map(c => {
+      const cls = c.verification === 'verified' ? 'b-verified' : c.verification === 'failing' ? 'b-failing' : 'b-notrun';
+      const label = c.verification === 'verified' ? `verified (${c.checks} checks)` : c.verification === 'failing' ? 'failing' : 'not run';
+      return `<div class="cor"><div class="top2"><span class="id">${esc(c.id)}</span><span>${esc(c.asked)}</span><span class="badge ${cls}">${label}</span></div>` +
+        `<div class="note">${esc(c.area)} - raised ${esc(c.raised)} - ${esc(c.status)}${c.note ? ' - ' + esc(c.note) : ''}</div>` +
+        (c.failed && c.failed.length ? `<div class="note bad">Failing: ${esc(c.failed.join('; '))}</div>` : '') + `</div>`;
+    }).join('');
+    pbody.innerHTML = h;
+  }
+}
+
+async function templatesUsed() {
+  const rows = await (await fetch('/sim/templates-used')).json();
+  info.innerHTML = '<h3>Templates sent in this session</h3>' + (rows.length ? '<table><tr><th>Template</th><th>Sent</th><th>On Meta</th></tr>' +
+    rows.map(r => `<tr><td>${r.template}</td><td>${r.sent}</td><td class="${r.on_meta === 'APPROVED' ? '' : 'bad'}">${r.on_meta}</td></tr>`).join('') +
+    '</table>' : '<p>None yet.</p>');
+  infodlg.showModal();
+}
+</script>
+</body>
+</html>

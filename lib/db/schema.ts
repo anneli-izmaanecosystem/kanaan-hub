@@ -528,6 +528,13 @@ export const trips = pgTable('trips', {
   distanceKm: numeric('distance_km', { precision: 6, scale: 2 }),
   durationMin: integer('duration_min'),
 
+  // Where the guest is collected when that is neither the farm nor `place` - a trip
+  // between two other points (direction 'drop', to `place`). Null means the farm (drop)
+  // or `place` itself (pickup), as before. distanceKm is then the drive between the two.
+  pickupName: text('pickup_name'),
+  pickupLat:  numeric('pickup_lat', { precision: 10, scale: 7 }),
+  pickupLng:  numeric('pickup_lng', { precision: 10, scale: 7 }),
+
   scheduledAt: timestamp('scheduled_at'),  // when the guest wants to leave
   fare:        numeric('fare', { precision: 10, scale: 2 }),
   driverId:    integer('driver_id').references(() => drivers.id),

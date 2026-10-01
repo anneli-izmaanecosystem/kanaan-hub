@@ -19,13 +19,13 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.bot import flows, hub_db, trip as T
 from app.bot.admin_log import log_flow
 from app.bot.hub_db import Row, db_time, now
-from app.bot.places import PRESETS, SHARED, preset_place, resolve_place, resolve_shared_location
+from app.bot.places import PRESETS, SHARED, distance_between, preset_place, resolve_place, resolve_shared_location
 from app.bot.reply import FLOW_REPLY, Reply, context_id, is_location, read_reply, said
 from app.bot.settings_store import TransferSettings, booking_window_error, fare_for, js_round, load_settings
 from app.bot.wa import send_buttons, send_flow, send_list, send_location, send_location_request, send_text, to_wa_id
@@ -64,8 +64,6 @@ class BTN:
     to_location = "to:location"
     to_other = "to:other"
     change_pickup = "from:change"
-    coming_to_farm = "end:coming"
-    leaving_farm = "end:leaving"
     place_yes = "place:yes"
     place_no = "place:no"
     place_closer = "place:closer"
@@ -119,6 +117,18 @@ def save_conversation(phone: str, step: str, draft: dict[str, Any], trip_id: Opt
         stmt = pg_insert(hub_db.wa_conversations).values(**values)
         c.execute(stmt.on_conflict_do_update(index_elements=["phone"], set_=values))
     log_flow(phone, role, step, {**draft, "tripId": trip_id})
+
+
+def _claim_step(phone: str, expected: str, step: str) -> bool:
+    """Moves the conversation from `expected` to `step` in one statement - True only for
+    the one message that made the move, so a double tap cannot act twice."""
+    c_ = hub_db.wa_conversations
+    with hub_db.begin() as c:
+        moved = c.execute(
+            c_.update().where(and_(c_.c.phone == phone, c_.c.step == expected))
+            .values(step=step, updated_at=db_time(now())).returning(c_.c.id)
+        ).first()
+    return moved is not None
 
 
 # ── steps ────────────────────────────────────────────────────────────────────
@@ -183,19 +193,11 @@ def ask_pickup_location(to: str) -> str:
 
 
 def ask_to(to: str, frm: Optional[End] = None) -> str:
-    # Collected away from the farm. No distance here - it would be measured from the
-    # farm, which means nothing to the guest.
-    if isinstance(frm, dict):
-        send_buttons(
-            to,
-            f"We will collect you at {frm['name']}. Where are you going?\n"
-            "Tap below if you are coming to the farm, or type another place.",
-            [(BTN.to_farm, "Kanaan Guest Farm")],
-        )
-        return STEPS.to
-    # Collected at the farm: every other place, but not the farm itself (offering it had
-    # testers looping on "both ends are the farm").
-    send_list(to, "Where are you going?\nChoose a place below, or share a location.", "Choose destination",
+    """The same pick-list as the pickup, for the drop-off, whatever the pickup was - any
+    two places can be a trip. The pickup itself is left off the list. No distance here:
+    it would be measured from the farm, which means nothing to the guest."""
+    where = f"We will collect you at {frm['name']}.\n" if isinstance(frm, dict) else ""
+    send_list(to, f"{where}Where are you going?\nChoose a place below, or share a location.", "Choose destination",
               _place_rows("to", exclude=frm))
     return STEPS.to
 
@@ -229,14 +231,6 @@ def ask_name(to: str) -> str:
     return STEPS.name
 
 
-def format_phone(to: str) -> str:
-    """'+27 64 211 6345' for a South African number, else '+<digits>'."""
-    digits = to.lstrip("+")
-    if digits.startswith("27") and len(digits) == 11:
-        return f"+27 {digits[2:4]} {digits[4:7]} {digits[7:]}"
-    return f"+{digits}"
-
-
 def confirm_quote(to: str, draft: dict[str, Any]) -> str:
     """Everything the guest is agreeing to, with the fare. No payment is asked for here:
     it is only offered once Anneli has accepted and a driver is allocated."""
@@ -247,7 +241,7 @@ def confirm_quote(to: str, draft: dict[str, Any]) -> str:
     if draft.get("name"):
         lines.append(f"Name: {draft['name']}")
     # The number they are writing from - what the driver will call if needed.
-    lines.append(f"Phone: {format_phone(to)}")
+    lines.append(f"Phone: {T.format_phone(to)}")
     place = draft["place"]
     trip_size = f"{_km(place['distanceKm'])} km" + (f", about {place['durationMin']} minutes" if place.get("durationMin") else "")
     lines += [format_when_long(when), trip_size, f"Fare: R {_num(draft['fare'])}", "",
@@ -291,8 +285,12 @@ def create_trip(phone: str, draft: dict[str, Any]) -> int:
     with a unique placeholder first (two simultaneous inserts must not collide on the
     unique ref) and renamed in the same transaction."""
     place = draft["place"]
+    # Between two places, neither the farm: the pickup point is stored too.
+    pickup = draft["from"] if draft.get("direction") == "drop" and isinstance(draft.get("from"), dict) else None
+    pickup_cols = {"pickup_name": pickup["name"], "pickup_lat": pickup["lat"], "pickup_lng": pickup["lng"]} if pickup else {}
     with hub_db.begin() as c:
         trip_id = c.execute(hub_db.trips.insert().values(
+            **pickup_cols,
             ref=f"pending-{uuid.uuid4()}",
             direction=draft["direction"],
             status="draft",
@@ -349,11 +347,15 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
     if handle_trip_reply(phone, message, reply, convo):
         return
 
-    # "cancel" always works. With a live trip it means that trip, through the same yes/no.
+    # "cancel" always works. With a live trip it means that trip, through the same yes/no -
+    # until Anneli confirms the car, after which it is turned down.
     if not reply_id and re.match(r"^(cancel|stop|start over|restart)\b", text, re.I):
         live = T.trip_for_reply(phone, "guest")
         if live and live.status in T.ACTIVE_STATUSES and not re.match(r"^(start over|restart)", text, re.I):
-            ask_cancel(phone, to, live)
+            if T.guest_can_cancel(live):
+                ask_cancel(phone, to, live)
+            else:
+                T.refuse_guest_cancel(live)
             return
         send_buttons(to, "No problem - that request is cancelled. Tap below whenever you need a car.", [T.BOOK_AGAIN])
         save_conversation(phone, STEPS.idle, {})
@@ -454,13 +456,6 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
         return
 
     if step == STEPS.to:
-        if reply_id in (BTN.coming_to_farm, BTN.leaving_farm):
-            if reply_id == BTN.coming_to_farm:
-                draft["to"] = "farm"
-            else:
-                draft["to"], draft["from"] = draft.get("from"), "farm"
-            _settle_place(phone, to, draft)
-            return
         if reply_id == BTN.change_pickup:
             draft.pop("from", None)
             save_conversation(phone, ask_from(to), draft)
@@ -533,6 +528,10 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
         if reply_id != BTN.quote_confirm:
             save_conversation(phone, confirm_quote(to, draft), draft)
             return
+        # A double-tapped "Send request" arrives twice at once: only the tap that moves the
+        # conversation off this step creates the trip.
+        if not _claim_step(phone, STEPS.quote_confirm, STEPS.ops):
+            return
         # No payment at booking: the request goes straight to Anneli.
         trip_id = create_trip(phone, draft)
         T.submit_to_ops(trip_id)
@@ -565,6 +564,11 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
     if step == STEPS.cancel_confirm:
         trip = T.trip_for_reply(phone, "guest") if convo.trip_id else None
         if reply_id == BTN.cancel_yes and trip:
+            # Asked while the request waited on Anneli, answered after she confirmed it.
+            if not T.guest_can_cancel(trip):
+                T.refuse_guest_cancel(trip)
+                save_conversation(phone, STEPS.booked, {}, trip.id)
+                return
             T.cancel_trip(trip.id, "guest", "guest cancelled by chat")
             save_conversation(phone, STEPS.idle, {})
             return
@@ -594,25 +598,38 @@ def _handle_datetime(phone: str, to: str, when, draft: dict[str, Any]) -> None:
     save_conversation(phone, ask_from(to), draft)
 
 
+def _same_spot(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return abs(float(a["lat"]) - float(b["lat"])) < 0.001 and abs(float(a["lng"]) - float(b["lng"])) < 0.001
+
+
 def _settle_place(phone: str, to: str, draft: dict[str, Any]) -> None:
-    """Both ends are known. One of them has to be the farm — the end that gets priced."""
+    """Both ends are known. To or from the farm, the far end is priced by its distance from
+    the farm (and may have a fixed price); between two other places, by the drive from
+    the pickup to the drop-off."""
     frm, dest = draft.get("from"), draft.get("to")
-    if frm == "farm" and dest == "farm":
-        send_text(to, "The pickup and the drop are both the farm. Where are you going?")
+    if (frm == "farm" and dest == "farm") or (isinstance(frm, dict) and isinstance(dest, dict) and _same_spot(frm, dest)):
+        send_text(to, "The pickup and the drop-off are the same place. Where are you going?")
         draft.pop("to", None)
         save_conversation(phone, ask_to(to, frm), draft)
         return
+
+    settings = load_settings()
     if frm != "farm" and dest != "farm":
-        # Nine times out of ten the guest typed the same place twice.
-        send_buttons(to, f"Got it - {dest['name']}. Is that where we collect you, or where you are going? One end of the trip is always the farm.",
-                     [(BTN.coming_to_farm, "Coming to Kanaan"), (BTN.leaving_farm, "Leaving Kanaan")])
-        save_conversation(phone, STEPS.to, draft)
+        # Between two places: both must be in the area served (the pickup was checked
+        # already), and the fare is the drive from one to the other.
+        if not dest.get("preset") and dest["distanceKm"] > settings.max_chat_km:
+            draft["direction"] = "drop"
+            save_conversation(phone, refuse_too_far(to, dest, settings, STEPS.place_confirm, "drop"), draft)
+            return
+        draft["direction"] = "drop"
+        leg = distance_between(float(frm["lat"]), float(frm["lng"]), float(dest["lat"]), float(dest["lng"]))
+        draft["place"] = {**dest, **leg, "fixedFare": None, "between": True}
+        save_conversation(phone, confirm_place(to, draft["place"]), draft)
         return
 
     draft["direction"] = "drop" if frm == "farm" else "pickup"
     place = dest if draft["direction"] == "drop" else frm
     draft["place"] = place
-    settings = load_settings()
     if not place.get("preset") and place["distanceKm"] > settings.max_chat_km:
         save_conversation(phone, refuse_too_far(to, place, settings, STEPS.place_confirm, draft["direction"]), draft)
         return
@@ -676,8 +693,8 @@ def handle_trip_reply(phone: str, message: dict[str, Any], reply: Reply, convo: 
         save_conversation(phone, STEPS.idle, {})
         return True
 
-    # Pay now / Pay after ride — offered once Anneli has allocated a driver, and still good
-    # after the ride closes (the tap may come late).
+    # Pay now — offered once Anneli has allocated a driver, and still good after the ride
+    # closes (the tap may come late). "Pay during ride" is on older offers only.
     if rid == "guest:pay:noshow":
         target = trip or T.last_trip(phone)
         if target:
@@ -699,7 +716,12 @@ def handle_trip_reply(phone: str, message: dict[str, Any], reply: Reply, convo: 
         return True
 
     if wants_cancel:
-        ask_cancel(phone, to, trip)
+        # "Cancel this trip" on a confirmation or reminder sent before those templates lost
+        # the button: once the car is confirmed, the guest calls Anneli instead.
+        if T.guest_can_cancel(trip):
+            ask_cancel(phone, to, trip)
+        else:
+            T.refuse_guest_cancel(trip)
         return True
 
     if trip.status == "driver_waiting" and not (rid == "guest:at_drop:yes" or said(reply, B["we_are_here"])):

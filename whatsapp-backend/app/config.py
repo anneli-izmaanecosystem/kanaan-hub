@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     bot_scheduler_enabled: bool = True
     bot_scheduler_interval_sec: int = 120
 
+    # Local WhatsApp simulator (app/sim): captures every send instead of calling Meta, fakes
+    # Paystack, and serves /sim. For testing on one machine only - never set on a server.
+    simulator: bool = False
+
     @property
     def bot_configured(self) -> bool:
         return bool(self.kanaan_hub_database_url)

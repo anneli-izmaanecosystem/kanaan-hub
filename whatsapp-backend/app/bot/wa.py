@@ -10,6 +10,8 @@ capped at 20 characters and a list row title at 24.
 
 import itertools
 import json
+import time
+import uuid
 import logging
 from typing import Any, Optional
 
@@ -36,6 +38,7 @@ class WhatsAppError(Exception):
 # fake wamid so replies to them can still be traced.
 capture: Optional[list[dict[str, Any]]] = None
 _fake_ids = itertools.count(1)
+_RUN = uuid.uuid4().hex[:8]  # captured ids stay unique across restarts on one database
 
 
 def to_e164(wa_id: str) -> str:
@@ -49,7 +52,7 @@ def to_wa_id(phone: str) -> str:
 def _send(payload: dict[str, Any], trip_id: Optional[int] = None) -> Optional[str]:
     settings = get_settings()
     if capture is not None:
-        wamid = f"wamid.test-{next(_fake_ids)}"
+        wamid = f"wamid.test-{_RUN}-{next(_fake_ids)}"
         capture.append({**payload, "_id": wamid, "_trip_id": trip_id})
     elif not settings.whatsapp_configured:
         log.warning("WhatsApp not configured - would have sent: %s", json.dumps(payload))
@@ -263,6 +266,37 @@ def send_template(to: str, name: str, body: list[str], trip_id: Optional[int] = 
     if components:
         template["components"] = components
     return _send({"to": to, "type": "template", "template": template}, trip_id)
+
+
+DELIVERED = ("delivered", "read", "failed")
+
+
+def await_delivery(wamid: Optional[str], timeout: float = 6.0) -> None:
+    """Waits until Meta reports `wamid` delivered (or read, or failed) - at most `timeout`
+    seconds, then carries on. WhatsApp does not keep a template and the plain message sent
+    straight after it in order: the plain one can overtake it on the phone. A message that
+    must come after a template ("Pay now" after "Your car is confirmed", the pickup pin
+    after the new-trip card) waits here first. The receipt arrives on the webhook, which
+    updates the admin log row. Returns at once when sends are captured (tests, simulator)."""
+    if not wamid or capture is not None or not get_settings().whatsapp_configured:
+        return
+    from app.db import SessionLocal  # late: the admin log's database, not the hub's
+    from app.models import WhatsAppLog
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with SessionLocal() as db:
+                status = db.scalar(select(WhatsAppLog.status).where(WhatsAppLog.wa_message_id == wamid))
+        except Exception:
+            log.exception("could not read the delivery status of %s", wamid)
+            return
+        if status in DELIVERED:
+            return
+        if time.monotonic() >= deadline:
+            log.info("no delivery receipt for %s after %ss - sending the next message anyway", wamid, timeout)
+            return
+        time.sleep(0.3)
 
 
 def mark_read(wamid: str) -> None:

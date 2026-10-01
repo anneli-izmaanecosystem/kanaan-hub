@@ -146,7 +146,7 @@ def _run(at: datetime, report: dict[str, list[str]]) -> None:
 
             # The guest has not appeared: measured from the driver's arrival, or the last
             # time Anneli said to keep waiting.
-            if trip.status == "driver_waiting":
+            if trip.status == "driver_waiting" and not has("guest_confirmed_pickup"):
                 since = latest("driver_arrived", "keep_waiting", "guest_coming")
                 asked = latest("no_show_asked")
                 if since and (asked is None or asked < since) and (at - since).total_seconds() >= settings.no_show_wait_min * MIN:

@@ -134,6 +134,13 @@
       "when": 1790398969323,
       "tag": "0018_paystack_card",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790791949529,
+      "tag": "0019_trip_pickup_point",
+      "breakpoints": true
     }
   ]
 }
