@@ -64,6 +64,10 @@ trips = Table(
     Column("place_lng", Numeric(10, 7)),
     Column("distance_km", Numeric(6, 2)),
     Column("duration_min", Integer),
+    # A pickup that is neither the farm nor `place` (trips between two other points).
+    Column("pickup_name", Text),
+    Column("pickup_lat", Numeric(10, 7)),
+    Column("pickup_lng", Numeric(10, 7)),
     Column("scheduled_at", DateTime),
     Column("fare", Numeric(10, 2)),
     Column("driver_id", Integer),

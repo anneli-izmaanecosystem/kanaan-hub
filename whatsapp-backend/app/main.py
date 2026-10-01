@@ -50,6 +50,14 @@ app.include_router(payments.router)
 app.include_router(bot.router)
 app.include_router(admin.router)
 
+if get_settings().simulator:
+    # Local testing only: nothing is sent to Meta or Paystack (see app/sim).
+    from app import sim
+
+    sim.enable()
+    app.include_router(sim.router)
+    logging.getLogger("kanaan.sim").warning("SIMULATOR MODE - open /sim; nothing is sent to Meta or Paystack")
+
 
 @app.get("/health")
 def health():

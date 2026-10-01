@@ -1,0 +1,9 @@
+{
+  "name": "kanaan-whatsapp-simulator-db",
+  "private": true,
+  "description": "A throwaway local Postgres for the WhatsApp simulator (see run.sh).",
+  "type": "module",
+  "dependencies": {
+    "embedded-postgres": "18.4.0-beta.17"
+  }
+}

@@ -1,6 +1,7 @@
-"""The driver's side. He only ever taps: Noted on the trip card, then I have left (or I
-cannot make it) / I have arrived / Ride started / Ride complete on the day. The ride
-starts on his "Ride started" or the guest's "Yes, I can see him", whichever comes first."""
+"""The driver's side. He only ever taps: Noted on the trip card, then I have left / I have
+arrived / Ride started / Reached destination / Ride complete on the day. "Ride started" is
+offered once, when the guest says "Yes, I can see him"; "Ride complete" only once the fare
+is paid."""
 
 from datetime import timedelta
 from typing import Any
@@ -11,7 +12,7 @@ from app.bot import hub_db, trip as T
 from app.bot.hub_db import Row, now
 from app.bot.reply import context_id, read_reply, said
 from app.bot.settings_store import load_settings
-from app.bot.wa import send_buttons, send_text, to_wa_id
+from app.bot.wa import send_text, to_wa_id
 from app.bot.when import format_day_name, format_time
 
 B = T.DRIVER_BTN
@@ -33,6 +34,13 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         send_text(to, f"Trip {trip.ref} has been reassigned - nothing needed from you.")
         return
 
+    # A tap on a card of a trip that is already over (a second "Ride complete", a button on
+    # an old card) - say so, rather than something that only fits a trip still going.
+    finished = {"completed": "closed", "cancelled": "cancelled", "no_show": "closed as a no-show", "declined": "closed"}
+    if trip.status in finished and not said(reply, B["noted"]):
+        send_text(to, f"Trip {trip.ref} is already {finished[trip.status]}. Nothing more is needed from you. Thank you.")
+        return
+
     status = trip.status.replace("_", " ", 1)
 
     if said(reply, B["noted"]):
@@ -40,19 +48,13 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         send_text(to, f"Thank you. You will get a reminder {_reminder_wording(trip)}.")
         return
 
-    # Handing a new trip back from its card is no longer offered (kn_driver_new_trip_v2 has
-    # only "Noted"); a tap on an older card is pointed at Anneli, and the trip stands.
-    if said(reply, B["cannot_take"]):
-        T.record(trip.id, "driver", "cannot_take_tapped", "option removed - told to call Anneli")
+    # Handing a trip back from a card is no longer offered: kn_driver_new_trip_v2 has only
+    # "Noted" and kn_driver_trip_reminder_v2 only "I have left". A tap on an older card is
+    # pointed at Anneli, and the trip stands.
+    if said(reply, B["cannot_take"], B["cannot_make"]):
+        event = "cannot_take_tapped" if said(reply, B["cannot_take"]) else "cannot_make_tapped"
+        T.record(trip.id, "driver", event, "option removed - told to call Anneli")
         send_text(to, f"Trip {trip.ref} is still yours. If you really cannot do it, please call Anneli on {load_settings().ops_phone}.")
-        return
-
-    # "I cannot make it" on the morning reminder still hands the trip back to Anneli.
-    if said(reply, B["cannot_make"]):
-        if trip.status != "allocated":
-            send_text(to, f"Trip {trip.ref} is already under way - please call Anneli.")
-            return
-        T.driver_declined(trip.id, driver)
         return
 
     if said(reply, B["left"]):
@@ -69,12 +71,12 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         T.driver_arrived(trip.id, driver)
         return
 
-    # The guest is in the car. Also accepted from "on my way", for a driver who skipped
-    # "I have arrived".
-    if reply.reply_id == "driver:started" or said(reply, B["ride_started"]):
+    # The guest is in the car. The button comes once the guest can see the driver; typed, it
+    # is also accepted for a guest who never tapped, and from "on my way" for a driver who
+    # skipped "I have arrived".
+    if reply.reply_id == T.RIDE_STARTED[0] or said(reply, B["ride_started"]):
         if trip.status == "in_progress":
-            send_buttons(to, f"Trip {trip.ref} has already started. Tap below once you have dropped the guest off.",
-                         [("driver:complete", B["ride_complete"])], trip.id)
+            _ride_step(to, trip, f"Trip {trip.ref} has already started. ")
             return
         if trip.status not in ("driver_waiting", "driver_en_route"):
             send_text(to, f"Trip {trip.ref} is marked as {status} - tap I have left and I have arrived first.")
@@ -82,15 +84,64 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         T.driver_started_ride(trip.id, driver)
         return
 
-    # "Arrived at drop" is the same action on cards sent before the button was renamed.
-    if reply.reply_id in ("driver:complete", "driver:at_drop") or said(reply, B["ride_complete"], B["at_drop"]):
+    # At the drop-off. "Arrived at drop" is the same step on cards sent before the rename.
+    if reply.reply_id in (T.REACHED[0], "driver:at_drop") or said(reply, B["reached"], B["at_drop"]):
         if trip.status != "in_progress":
-            send_text(to, "The guest has not confirmed the pickup yet, so the trip has not started.")
+            _not_started(to, trip)
+            return
+        if T.reached_destination(trip):
+            _complete_or_wait(to, trip)
+            return
+        T.driver_reached_destination(trip.id, driver)
+        return
+
+    if reply.reply_id == T.RIDE_COMPLETE[0] or said(reply, B["ride_complete"]):
+        if trip.status != "in_progress":
+            _not_started(to, trip)
+            return
+        if not T.ride_can_complete(trip):
+            # Unpaid: the guest is asked to pay at the destination first.
+            if T.reached_destination(trip):
+                _complete_or_wait(to, trip)
+            else:
+                T.driver_reached_destination(trip.id, driver)
             return
         T.driver_completed_ride(trip.id, driver)
         return
 
     send_text(to, f"Use the buttons for trip {trip.ref}, or call Anneli if something is wrong.")
+
+
+# The replies below say where a trip stands, in words only. Each of the driver's buttons is
+# sent once, by the step that earns it (trip.py) - a double tap, or a tap out of order,
+# never puts a second copy on his screen.
+
+
+def _not_started(to: str, trip: Row) -> None:
+    """A drop-off button before the ride has started."""
+    if trip.status == "driver_waiting" and T.guest_saw_driver(trip):
+        send_text(to, f"Trip {trip.ref} has not started yet. Tap Ride started above once the guest is in the car.")
+    elif trip.status == "driver_waiting":
+        send_text(to, f"Trip {trip.ref} has not started yet. Ride started will appear here once the guest confirms they can see you.")
+    else:
+        send_text(to, f"Trip {trip.ref} has not started yet.")
+
+
+def _ride_step(to: str, trip: Row, started: str) -> None:
+    """Where a ride under way stands: on the road, or at the drop-off."""
+    if T.reached_destination(trip):
+        _complete_or_wait(to, trip, started)
+    else:
+        send_text(to, f"{started}Tap Reached destination above when you arrive at {T.to_label(trip)}.")
+
+
+def _complete_or_wait(to: str, trip: Row, started: str = "") -> None:
+    """At the drop-off: Ride complete if the fare is paid, else why not yet."""
+    if T.ride_can_complete(trip):
+        send_text(to, f"{started}Tap Ride complete above once you have dropped the guest off.")
+    else:
+        send_text(to, f"{started}The guest has not paid the R {T.fare(trip)} fare yet - Ride complete will appear here "
+                      "as soon as they do. If they cannot pay, please call Anneli.")
 
 
 def _reminder_wording(trip: Row) -> str:

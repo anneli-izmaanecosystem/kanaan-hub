@@ -1,0 +1,295 @@
+{
+ "kn_driver_trip_reminder_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Reminder: trip {{1}} today at {{2}}.\nPickup: {{3}}\nDrop: {{4}}\nTap I have left when you set off.",
+  "footer": null,
+  "buttons": [
+   "I have left"
+  ]
+ },
+ "kn_guest_trip_confirmed_v4": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your car is confirmed.\nDriver: {{1}}\nVehicle: {{2}}, {{3}}\nWhen: {{4}} at {{5}}\nFare: R {{6}}, paid by card.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_trip_reminder_evening_v3": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Reminder: your car to {{1}} is booked for tomorrow at {{2}}.\nDriver: {{3}}, {{4}}.\nFare: R {{5}}, paid by card.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_driver_waiting_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your driver {{1}} is still waiting for you at {{2}}.\nTrip {{3}} was due at {{4}}. Please tap below if you are on your way.",
+  "footer": null,
+  "buttons": [
+   "Coming now"
+  ]
+ },
+ "kn_ops_trip_closed_v3": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - arrived at {{2}}. The driver has closed the ride.\nPayment: {{3}}.\nTrip closed.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_driver_on_way_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your driver {{1}} has left and is on the way to you.\nVehicle: {{2}}, {{3}}.\nCall your driver on {{4}} if you need to.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_trip_confirmed_v3": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your car is confirmed.\nDriver: {{1}}\nVehicle: {{2}}, {{3}}\nWhen: {{4}} at {{5}}\nFare: R {{6}}, paid by card - pay now or during the ride, before your drop-off.",
+  "footer": "Tap below if your plans change.",
+  "buttons": [
+   "Cancel this trip"
+  ]
+ },
+ "kn_guest_ride_started": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your ride has started.\nDriver: {{1}}\nVehicle: {{2}}\nTrip reference: {{3}}\nHave a safe journey, and thank you for travelling with Kanaan Guest Farm.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_driver_new_trip_v2": {
+  "status": "APPROVED",
+  "header": "NEW TRIP",
+  "body": "You have a new trip from Kanaan Guest Farm.\nWhen: {{1}}\nPickup: {{2}}\nGuest: {{3}}\nDrop: {{4}}\nTrip reference: {{5}}\nPlease tap below to confirm you have seen it.",
+  "footer": null,
+  "buttons": [
+   "Noted"
+  ]
+ },
+ "kn_ops_guest_no_show_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - {{2}} has waited {{3}} minutes at {{4}} and the guest has not appeared.\nThe no-show fee would be R {{5}}, sent to the guest as a card link. What should happen?",
+  "footer": null,
+  "buttons": [
+   "No charge",
+   "Charge a no-show",
+   "Keep waiting"
+  ]
+ },
+ "kn_ops_trip_closed_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - arrived at {{2}}. Both sides confirmed.\nPayment: {{3}}.\nTrip closed.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_trip_reminder_evening_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Reminder: your car to {{1}} is booked for tomorrow at {{2}}.\nDriver: {{3}}, {{4}}.\nFare: R {{5}}, paid by card after the trip. Tap below if your plans have changed.",
+  "footer": null,
+  "buttons": [
+   "Cancel this trip"
+  ]
+ },
+ "kn_guest_trip_confirmed_v2": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your car is confirmed.\nDriver: {{1}}\nVehicle: {{2}}, {{3}}\nWhen: {{4}} at {{5}}\nFare: R {{6}}, paid by card once the trip is finished.",
+  "footer": "Tap below if your plans change.",
+  "buttons": [
+   "Cancel this trip"
+  ]
+ },
+ "kn_ops_new_request_v2": {
+  "status": "APPROVED",
+  "header": "NEW REQUEST",
+  "body": "When: {{1}}\nGuest: {{2}}\nDrop: {{3}}\nDistance: {{4}} km\nFare: R {{5}}\nThe guest pays by card link after the trip.\nRef {{6}}\nTap below to allocate a driver.",
+  "footer": null,
+  "buttons": [
+   "Accept",
+   "No car available",
+   "Offer another time"
+  ]
+ },
+ "kn_guest_driver_changed": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your driver for trip {{1}} has changed.\n{{2}} will now collect you, {{3}}.\nThe pickup place and time stay the same: {{4}}.\nNothing else changes.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_driver_new_trip": {
+  "status": "APPROVED",
+  "header": "NEW TRIP",
+  "body": "You have a new trip from Kanaan Guest Farm.\nWhen: {{1}}\nPickup: {{2}}\nGuest: {{3}}\nDrop: {{4}}\nTrip reference: {{5}}\nPlease tap below to confirm whether you can take it.",
+  "footer": null,
+  "buttons": [
+   "Noted",
+   "I cannot take it"
+  ]
+ },
+ "kn_ops_driver_unavailable": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - {{2}} cannot take it.\nPickup is at {{3}}. Please allocate another driver.",
+  "footer": null,
+  "buttons": [
+   "Pick another driver",
+   "Cancel the trip"
+  ]
+ },
+ "kn_ops_guest_no_show": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - {{2}} has waited {{3}} minutes at {{4}} and the guest has not appeared.\nR {{5}} is still held. What should happen?",
+  "footer": null,
+  "buttons": [
+   "Release the hold",
+   "Charge a no-show",
+   "Keep waiting"
+  ]
+ },
+ "kn_guest_driver_waiting": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your driver {{1}} is still waiting at {{2}}.\nTrip {{3}} was due at {{4}}. Are you on your way?",
+  "footer": null,
+  "buttons": [
+   "Coming now",
+   "Cancel the trip"
+  ]
+ },
+ "kn_ops_trip_cancelled": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} has been cancelled by the guest.\n{{2}} has been told and the car is free again.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_driver_trip_cancelled": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} on {{2}} at {{3}} has been cancelled by the guest.\nYou do not need to go.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_still_waiting": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "We are still arranging your car for {{1}}.\nAnneli has been reminded. Nothing has been held or charged.",
+  "footer": null,
+  "buttons": [
+   "Cancel the request"
+  ]
+ },
+ "kn_ops_request_unanswered": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} is still unanswered after {{2}} minutes.\nThe guest is waiting on a yes or no.",
+  "footer": null,
+  "buttons": [
+   "Accept",
+   "No car available"
+  ]
+ },
+ "kn_guest_no_car_available": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Sorry - no car is free at {{1}} on {{2}}.\nNothing has been held or charged.\nAnneli can look at another time, or you can call her on 063 794 3880.",
+  "footer": null,
+  "buttons": [
+   "Try another time",
+   "End"
+  ]
+ },
+ "kn_ops_trip_closed": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - arrived at {{2}}. Both sides confirmed.\nR {{3}} charged. Trip closed.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_ops_trip_started": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - guest on board, trip started.\nNothing needed from you.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_ops_trip_at_pickup": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - {{2}} is at {{3}}.\nWaiting for the guest to confirm.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_ops_trip_left": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Trip {{1}} - {{2}} has left for {{3}}.\nNothing needed from you.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_guest_driver_arrived": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your driver {{1}} says he is at {{2}}.\nCan you see him?",
+  "footer": null,
+  "buttons": [
+   "Yes, I can see him",
+   "Not yet"
+  ]
+ },
+ "kn_guest_driver_on_way": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Good morning. {{1}} has left and is on his way to you.\n{{2}}, {{3}}.\nCall him on {{4}} if you need to.",
+  "footer": null,
+  "buttons": []
+ },
+ "kn_driver_trip_reminder": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Reminder: trip {{1}} today at {{2}}.\nPickup: {{3}}\nDrop: {{4}}\nTap below when you set off.",
+  "footer": null,
+  "buttons": [
+   "I have left",
+   "I cannot make it"
+  ]
+ },
+ "kn_guest_trip_reminder_evening": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Reminder: your car to {{1}} is booked for tomorrow at {{2}}.\nDriver: {{3}}, {{4}}.\nR {{5}} will be held in the morning. Tap below if your plans have changed.",
+  "footer": null,
+  "buttons": [
+   "Cancel this trip"
+  ]
+ },
+ "kn_guest_trip_confirmed": {
+  "status": "APPROVED",
+  "header": null,
+  "body": "Your car is confirmed.\nDriver: {{1}}\nVehicle: {{2}}, {{3}}\nWhen: {{4}} at {{5}}\nR {{6}} will be held on the morning of the trip.",
+  "footer": "Tap below if your plans change.",
+  "buttons": [
+   "Cancel this trip"
+  ]
+ },
+ "kn_ops_new_request": {
+  "status": "APPROVED",
+  "header": "NEW REQUEST",
+  "body": "When: {{1}}\nGuest: {{2}}\nDrop: {{3}}\nDistance: {{4}} km\nFare: R {{5}}\nCard is on file.\nRef {{6}}\nTap below to allocate a driver.",
+  "footer": null,
+  "buttons": [
+   "Accept",
+   "No car available",
+   "Offer another time"
+  ]
+ }
+}

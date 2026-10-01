@@ -11,9 +11,10 @@ number for days, and a guest's 24-hour window is usually shut by the morning of 
 """
 
 import logging
+from contextlib import contextmanager
 from typing import Any, Callable, Optional
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 
 from app import paystack
 from app.bot import hub_db, wa
@@ -48,12 +49,13 @@ OPS_BTN = {
 
 DRIVER_BTN = {
     "noted": "Noted",
-    "cannot_take": "I cannot take it",
+    "cannot_take": "I cannot take it",  # only on kn_driver_new_trip, before _v2
     "left": "I have left",
-    "cannot_make": "I cannot make it",
+    "cannot_make": "I cannot make it",  # only on kn_driver_trip_reminder, before _v2
     "arrived": "I have arrived",
-    "at_drop": "Arrived at drop",  # on cards sent before the driver closed the ride
+    "at_drop": "Arrived at drop",  # on cards sent before "Reached destination"
     "ride_started": "Ride started",
+    "reached": "Reached destination",
     "ride_complete": "Ride complete",
 }
 
@@ -70,7 +72,7 @@ GUEST_BTN = {
     "good": "Good",
     "not_good": "Not good",
     "pay_now": "Pay now",
-    "pay_after": "Pay after ride",
+    "pay_after": "Pay during ride",  # on payment offers sent before "Pay now" stood alone
 }
 
 
@@ -78,17 +80,24 @@ GUEST_BTN = {
 # them at a dead end. Handled in conversation.py.
 BOOK_AGAIN: tuple[str, str] = ("book", "Book a car")
 CANCEL_REQUEST: tuple[str, str] = ("guest:cancel", GUEST_BTN["cancel_request"])
-CANCEL_TRIP: tuple[str, str] = ("guest:cancel", GUEST_BTN["cancel_trip"])
 CAN_SEE: tuple[str, str] = ("guest:can_see", GUEST_BTN["can_see"])
+PAY_NOW: tuple[str, str] = ("guest:pay:now", GUEST_BTN["pay_now"])
+
+# The driver's in-session buttons on the day, in order. Handled in driver.py.
+RIDE_STARTED: tuple[str, str] = ("driver:started", DRIVER_BTN["ride_started"])
+REACHED: tuple[str, str] = ("driver:reached", DRIVER_BTN["reached"])
+RIDE_COMPLETE: tuple[str, str] = ("driver:complete", DRIVER_BTN["ride_complete"])
+
+
+def guest_can_cancel(trip: Row) -> bool:
+    """The guest may cancel only while the request waits on Anneli. Once she has confirmed
+    the car and a driver is booked, a change of plan goes through her by phone."""
+    return trip.status in ("draft", "requested")
 
 
 def cancel_button(trip: Row) -> Optional[tuple[str, str]]:
-    """The right cancel button for where a trip stands, or None once the ride is under way."""
-    if trip.status == "requested":
-        return CANCEL_REQUEST
-    if trip.status in ("allocated", "driver_en_route"):
-        return CANCEL_TRIP
-    return None
+    """The cancel button while the request waits on Anneli; none once the car is confirmed."""
+    return CANCEL_REQUEST if trip.status == "requested" else None
 
 
 # ── lookups ──────────────────────────────────────────────────────────────────
@@ -147,10 +156,11 @@ def events_for(trip_id: int) -> list[Row]:
             select(hub_db.trip_events).where(hub_db.trip_events.c.trip_id == trip_id).order_by(hub_db.trip_events.c.at)))
 
 
-def _guarded(trip_id: Optional[int], what: str, fn: Callable[[], Any]) -> None:
-    """One party's send, isolated: a failure is logged against the trip and swallowed."""
+def _guarded(trip_id: Optional[int], what: str, fn: Callable[[], Any]) -> Any:
+    """One party's send, isolated: a failure is logged against the trip and swallowed.
+    Returns what the send returned (its wamid), or None if it failed."""
     try:
-        fn()
+        return fn()
     except Exception as err:
         log.exception("%s failed", what)
         if trip_id:
@@ -166,22 +176,22 @@ def notify(role: str, to: str, trip_id: Optional[int], template: str, params: li
     _guarded(trip_id, f"{template} to {role}", lambda: wa.send_template(wa.to_wa_id(to), template, body, trip_id))
 
 
-def notify_first(role: str, to: str, trip_id: Optional[int], templates: list[str], params: list[str]) -> None:
+def notify_first(role: str, to: str, trip_id: Optional[int], templates: list[str], params: list[str]) -> Optional[str]:
     """Like notify, trying each template in turn — a new version still in Meta's review
-    (or rejected) falls back to the approved one before it, so nobody goes untold."""
+    (or rejected) falls back to the approved one before it, so nobody goes untold.
+    Returns the wamid of the one sent."""
     body = [" ".join(str(p).split()) for p in params]
 
     def send():
         for i, name in enumerate(templates):
             try:
-                wa.send_template(wa.to_wa_id(to), name, body, trip_id)
-                return
+                return wa.send_template(wa.to_wa_id(to), name, body, trip_id)
             except wa.WhatsAppError as err:
                 if i == len(templates) - 1:
                     raise
                 log.warning("%s not usable (%s) - falling back to %s", name, err, templates[i + 1])
 
-    _guarded(trip_id, f"{templates[0]} to {role}", send)
+    return _guarded(trip_id, f"{templates[0]} to {role}", send)
 
 
 def notify_or_say(role: str, to: str, trip_id: Optional[int], template: str, params: list[str], fallback: str) -> None:
@@ -221,11 +231,50 @@ def set_status(trip_id: int, status: str, **extra: Any) -> None:
         c.execute(T.update().where(T.c.id == trip_id).values(status=status, updated_at=db_time(now()), **values))
 
 
+@contextmanager
+def trip_lock(trip_id: int):
+    """One step at a time per trip. Steps that both read the trip and then message people
+    (the guest's "I can see him" and the driver's "Ride started") take turns: the second
+    waits, re-reads the trip, and sees what the first did - so messages never go out in a
+    contradictory order. A Postgres advisory lock, so it holds across server processes."""
+    with hub_db.engine().connect() as c:
+        c.execute(text("select pg_advisory_lock(:ns, :id)"), {"ns": TRIP_LOCK_NS, "id": trip_id})
+        try:
+            yield
+        finally:
+            c.execute(text("select pg_advisory_unlock(:ns, :id)"), {"ns": TRIP_LOCK_NS, "id": trip_id})
+            c.commit()
+
+
+TRIP_LOCK_NS = 4172  # namespace for trip_lock's advisory locks (the scheduler uses a single-key lock)
+
+
+def claim_status(trip_id: int, from_statuses: tuple[str, ...], status: str, **extra: Any) -> bool:
+    """Moves the trip to `status` only if it is still in one of `from_statuses`, in one
+    statement - True if this call made the move. Two taps landing together (the driver's
+    "Ride started" and the guest's "Yes, I can see him", or a double-tapped "Ride
+    complete") are handled concurrently; only the first may move the trip and message
+    everyone, the second finds it already moved and does nothing."""
+    values = {k: db_time(v) if hasattr(v, "tzinfo") else v for k, v in extra.items()}
+    with hub_db.begin() as c:
+        moved = c.execute(
+            T.update()
+            .where(and_(T.c.id == trip_id, T.c.status.in_(from_statuses)))
+            .values(status=status, updated_at=db_time(now()), **values)
+            .returning(T.c.id)
+        ).first()
+    if not moved:
+        log.info("trip %s: %s skipped - no longer in %s", trip_id, status, from_statuses)
+    return moved is not None
+
+
 # ── wording helpers ──────────────────────────────────────────────────────────
 
 
 def from_label(trip: Row) -> str:
-    return FARM if trip.direction == "drop" else (trip.place_name or "your location")
+    if trip.direction == "drop":
+        return getattr(trip, "pickup_name", None) or FARM
+    return trip.place_name or "your location"
 
 
 def to_label(trip: Row) -> str:
@@ -233,11 +282,54 @@ def to_label(trip: Row) -> str:
 
 
 def pickup_address(trip: Row) -> str:
-    return get_settings().kanaan_pickup_address if trip.direction == "drop" else (trip.place_name or "guest location")
+    if trip.direction == "drop":
+        return getattr(trip, "pickup_name", None) or get_settings().kanaan_pickup_address
+    return trip.place_name or "guest location"
+
+
+def pickup_pin(trip: Row) -> Optional[dict[str, Any]]:
+    """Where the guest is collected, as a map pin: the place itself on a trip to the farm,
+    the pickup point on a trip between two places, else the farm."""
+    if trip.direction == "pickup":
+        if trip.place_lat is None or trip.place_lng is None:
+            return None
+        return {"name": trip.place_name, "lat": float(trip.place_lat), "lng": float(trip.place_lng)}
+    if getattr(trip, "pickup_lat", None) is not None and getattr(trip, "pickup_lng", None) is not None:
+        return {"name": trip.pickup_name, "lat": float(trip.pickup_lat), "lng": float(trip.pickup_lng)}
+    s = get_settings()
+    return {"name": s.kanaan_pickup_name, "lat": s.kanaan_pickup_lat, "lng": s.kanaan_pickup_lng}
+
+
+def dropoff_pin(trip: Row) -> Optional[dict[str, Any]]:
+    """Where the guest is going, as a map pin - None for the farm, which every driver knows."""
+    if trip.direction != "drop" or trip.place_lat is None or trip.place_lng is None:
+        return None
+    return {"name": trip.place_name, "lat": float(trip.place_lat), "lng": float(trip.place_lng)}
+
+
+def send_pin(trip_id: int, driver: Row, pin: Optional[dict[str, Any]], what: str) -> None:
+    if pin:
+        _guarded(trip_id, f"driver {what.lower()} pin", lambda: wa.send_location(
+            wa.to_wa_id(driver.phone), pin["lat"], pin["lng"], f"{what}: {pin['name']} - tap for directions", pin["name"], trip_id))
+
+
+def format_phone(phone: str) -> str:
+    """'+27 64 211 6345' for a South African number, else '+<digits>'."""
+    digits = phone.lstrip("+")
+    if digits.startswith("27") and len(digits) == 11:
+        return f"+27 {digits[2:4]} {digits[4:7]} {digits[7:]}"
+    return f"+{digits}"
 
 
 def guest_label(trip: Row) -> str:
     return trip.guest_name or trip.room_label or "the guest"
+
+
+def guest_contact(trip: Row) -> str:
+    """The guest's full name and number, for the driver: "Sam Botha - +27 64 211 6345"."""
+    name = trip.guest_name or trip.room_label
+    phone = format_phone(trip.guest_phone) if trip.guest_phone else None
+    return " - ".join(filter(None, [name, phone])) or "the guest"
 
 
 def fare(trip: Row) -> str:
@@ -294,13 +386,14 @@ def _record_payment_row(trip: Row, data: dict[str, Any], amount_rand: float, pur
 def offer_payment(trip: Row) -> None:
     """Straight after the confirmation template, once Anneli has accepted: the first time
     the guest sees a payment option. A session message, so it only lands inside the
-    24-hour window; if it does not, the link still goes out when the driver closes the ride."""
+    24-hour window; if it does not, the link still goes out when the driver reaches the
+    destination."""
     if not payments_configured() or trip.captured_at:
         return
     say("guest", trip.guest_phone, trip.id,
         f"Your fare is R {fare(trip)}, paid by card - no cash needed on the trip.\n"
-        "Would you like to pay now, or after the ride?",
-        [("guest:pay:now", GUEST_BTN["pay_now"]), ("guest:pay:after", GUEST_BTN["pay_after"])])
+        "You can pay now, or when you reach your destination.",
+        [PAY_NOW])
 
 
 def payment_received(tx: dict[str, Any]) -> None:
@@ -311,9 +404,16 @@ def payment_received(tx: dict[str, Any]) -> None:
     purpose = meta.get("purpose")
     if not trip_id or purpose not in ("fare", "noshow") or tx.get("status") != "success":
         return
+    # Takes turns with the driver's "Reached destination", so "Ride complete" is offered
+    # exactly once whichever lands first.
+    with trip_lock(int(trip_id)):
+        _payment_received(tx, int(trip_id), purpose)
+
+
+def _payment_received(tx: dict[str, Any], trip_id: int, purpose: str) -> None:
     with hub_db.begin() as c:
         trip = hub_db.one(c, T.update()
-                          .where(and_(T.c.id == int(trip_id), T.c.captured_at.is_(None)))
+                          .where(and_(T.c.id == trip_id, T.c.captured_at.is_(None)))
                           .values(captured_at=db_time(now()), payment_ref=tx["reference"])
                           .returning(*T.c))
     if not trip:
@@ -323,8 +423,14 @@ def payment_received(tx: dict[str, Any]) -> None:
     say("guest", trip.guest_phone, trip.id, f"Payment of R {amount} received for trip {trip.ref}. Thank you!")
     driver = driver_for(trip)
     if driver and purpose == "fare":
-        say("driver", driver.phone, trip.id,
-            f"Trip {trip.ref} - the guest has paid the R {amount} fare by card. No cash to collect.")
+        if trip.status == "in_progress" and reached_destination(trip):
+            # At the drop-off and waiting on this: only now can the driver end the ride.
+            say("driver", driver.phone, trip.id,
+                f"Trip {trip.ref} - the guest has paid the R {amount} fare.\nTap below once you have dropped them off.",
+                [RIDE_COMPLETE])
+        else:
+            say("driver", driver.phone, trip.id,
+                f"Trip {trip.ref} - the guest has paid the R {amount} fare by card. No cash to collect.")
     ops = ops_number()
     if ops:
         say("ops", ops, trip.id,
@@ -353,13 +459,8 @@ def _unpaid_attempt(tx: dict[str, Any]) -> Optional[tuple[Row, str, int]]:
     return trip, purpose, amount
 
 
-def _retry_buttons(trip: Row, purpose: str, first: str) -> list[wa.Button]:
-    if purpose == "noshow":
-        return [("guest:pay:noshow", first)]
-    buttons: list[wa.Button] = [("guest:pay:now", first)]
-    if trip.status in ("allocated", "driver_en_route", "driver_waiting", "in_progress"):
-        buttons.append(("guest:pay:after", GUEST_BTN["pay_after"]))
-    return buttons
+def _retry_buttons(purpose: str, title: str) -> list[wa.Button]:
+    return [("guest:pay:noshow" if purpose == "noshow" else "guest:pay:now", title)]
 
 
 def payment_failed(tx: dict[str, Any]) -> None:
@@ -376,7 +477,7 @@ def payment_failed(tx: dict[str, Any]) -> None:
     say("guest", trip.guest_phone, trip.id,
         f"Your card payment of R {amount} for trip {trip.ref} did not go through ({reason}). No money was taken.\n"
         "You can try again with the same or another card.",
-        _retry_buttons(trip, purpose, "Try again"))
+        _retry_buttons(purpose, "Try again"))
     driver = driver_for(trip)
     if driver and purpose == "fare":
         say("driver", driver.phone, trip.id,
@@ -399,15 +500,18 @@ def payment_cancelled(tx: dict[str, Any]) -> None:
     what = "no-show fee" if purpose == "noshow" else "fare"
     record(trip.id, "guest", "payment_cancelled", f"{tx['reference']} R {amount}")
 
-    later = purpose == "fare" and trip.status not in ("completed", "no_show")
-    say("guest", trip.guest_phone, trip.id,
-        f"Payment cancelled - nothing was taken for trip {trip.ref}.\n"
-        + ("You can pay now, or after the ride." if later else f"The R {amount} {what} is still due - tap below when you are ready."),
-        _retry_buttons(trip, purpose, "Pay now"))
+    if purpose == "fare" and trip.status in ("allocated", "driver_en_route", "driver_waiting"):
+        then = f"Your booking {trip.ref} is still confirmed. You can pay now, or when you reach your destination."
+    elif purpose == "fare" and trip.status == "in_progress":
+        then = f"Please pay the R {amount} fare now - the driver can end the trip once it is paid."
+    else:
+        then = f"The R {amount} {what} for trip {trip.ref} is still due - tap below when you are ready."
+    say("guest", trip.guest_phone, trip.id, "You closed the payment page without paying - nothing was taken.\n" + then,
+        _retry_buttons(purpose, "Pay now"))
     driver = driver_for(trip)
     if driver and purpose == "fare":
         say("driver", driver.phone, trip.id,
-            f"Trip {trip.ref} - the guest cancelled the card payment and will pay later. Nothing needed from you.")
+            f"Trip {trip.ref} is still on - the guest closed the payment page and will pay later. Nothing needed from you.")
     ops = ops_number()
     if ops:
         say("ops", ops, trip.id,
@@ -451,7 +555,8 @@ def send_new_request_card(trip: Row) -> None:
     notify("ops", ops, trip.id, "kn_ops_new_request_v2", [
         format_when_short(trip.scheduled_at),
         guest_label(trip),
-        (trip.place_name or "") if trip.direction == "drop" else f"{FARM} (collect from {trip.place_name})",
+        ((trip.place_name or "") + (f" (collect from {trip.pickup_name})" if getattr(trip, "pickup_name", None) else ""))
+        if trip.direction == "drop" else f"{FARM} (collect from {trip.place_name})",
         "" if trip.distance_km is None else str(trip.distance_km),
         fare(trip),
         trip.ref,
@@ -478,36 +583,57 @@ def send_driver_picker(trip_id: int, body: str = "Which driver is going?") -> bo
 
 
 def allocate_driver(trip_id: int, driver_id: int, by: str, reassign: bool = False) -> None:
-    """Anneli (or the board) picked a driver. Confirms to the guest, briefs the driver with
-    a map pin for the far end, and closes the loop with Anneli."""
+    """Anneli (or the board) picked a driver. Confirms to the guest, then offers the fare;
+    briefs the driver with the trip card and a map pin for the pickup; and closes the loop
+    with Anneli."""
     trip = get_trip(trip_id)
     driver = get_driver(driver_id)
     if not trip or not driver:
         return
 
-    set_status(trip_id, "allocated", driver_id=driver.id)
+    # A first allocation only from a waiting request (a double-tapped driver pick must not
+    # confirm everyone twice); a reassignment from any not-yet-started state, and only
+    # to a different driver.
+    if reassign:
+        if trip.driver_id == driver.id:
+            return
+        moved = claim_status(trip_id, ("requested", "allocated", "driver_en_route", "driver_waiting"), "allocated", driver_id=driver.id)
+    else:
+        moved = claim_status(trip_id, ("requested",), "allocated", driver_id=driver.id)
+    if not moved:
+        return
     record(trip_id, "ops", "driver_reassigned" if reassign else "driver_allocated",
            f"{driver.name} ({driver.plate}){' - from the board' if by == 'board' else ''}")
 
+    confirmed = None
     if reassign:
         notify("guest", trip.guest_phone, trip_id, "kn_guest_driver_changed",
                [trip.ref, driver.name, driver.plate, format_time(trip.scheduled_at)])
     else:
-        notify("guest", trip.guest_phone, trip_id, "kn_guest_trip_confirmed_v2", [
+        # "Your car is confirmed" first, then the fare with Pay now. _v4 has no cancel
+        # button (the guest no longer cancels a confirmed car); until Meta approves it the
+        # earlier versions go, and a tap on their "Cancel this trip" is turned down.
+        confirmed = notify_first("guest", trip.guest_phone, trip_id,
+                                 ["kn_guest_trip_confirmed_v4", "kn_guest_trip_confirmed_v3", "kn_guest_trip_confirmed_v2"], [
             driver.name, driver.plate, driver.vehicle or "vehicle",
             format_day_name(trip.scheduled_at), format_time(trip.scheduled_at), fare(trip),
         ])
-        offer_payment(trip)
 
     # _v2 has only "Noted": a driver no longer hands a new trip back from the card. The
     # original (with "I cannot take it") is the fallback while _v2 is in Meta's review.
-    notify_first("driver", driver.phone, trip_id, ["kn_driver_new_trip_v2", "kn_driver_new_trip"], [
-        format_when_short(trip.scheduled_at), pickup_address(trip), guest_label(trip), to_label(trip), trip.ref,
+    # The guest line carries their full name and number.
+    card = notify_first("driver", driver.phone, trip_id, ["kn_driver_new_trip_v2", "kn_driver_new_trip"], [
+        format_when_short(trip.scheduled_at), pickup_address(trip), guest_contact(trip), to_label(trip), trip.ref,
     ])
-    if trip.place_lat is not None and trip.place_lng is not None:
-        _guarded(trip_id, "driver map pin", lambda: wa.send_location(
-            wa.to_wa_id(driver.phone), float(trip.place_lat), float(trip.place_lng),
-            f"{trip.place_name} - tap for directions", trip.place_name, trip_id))
+
+    # Each follow-up waits for its template to reach the phone, so it cannot arrive first.
+    if not reassign:
+        wa.await_delivery(confirmed)
+        offer_payment(trip)
+    # After the card, only where to collect the guest; the drop-off pin comes when the
+    # ride starts.
+    wa.await_delivery(card)
+    send_pin(trip_id, driver, pickup_pin(trip), "Pickup")
 
     ops = ops_number()
     if ops and by == "ops":
@@ -524,7 +650,8 @@ def decline_trip(trip_id: int) -> None:
     trip = get_trip(trip_id)
     if not trip:
         return
-    set_status(trip_id, "declined")
+    if not claim_status(trip_id, ("requested",), "declined"):
+        return
     record(trip_id, "ops", "declined", "no car available")
     notify("guest", trip.guest_phone, trip_id, "kn_guest_no_car_available",
            [format_time(trip.scheduled_at), format_day_name(trip.scheduled_at)])
@@ -576,7 +703,8 @@ def cancel_trip(trip_id: int, by: str, reason: Optional[str] = None) -> None:
     extra: dict[str, Any] = {"cancelled_at": now()}
     if held:
         extra["released_at"] = now()
-    set_status(trip_id, "cancelled", **extra)
+    if not claim_status(trip_id, ACTIVE_STATUSES + ("draft",), "cancelled", **extra):
+        return
     record(trip_id, by, "cancelled", reason)
     if held:
         record(trip_id, "system", "hold_released" if payments_configured() else "hold_release_skipped", "no payment provider")
@@ -613,16 +741,17 @@ def cancel_trip(trip_id: int, by: str, reason: Optional[str] = None) -> None:
             f"Trip {trip.ref} was already paid (R {fare(trip)}{paystack_ref}). Please refund it in Paystack - the guest has been told to expect it.")
 
 
-def driver_declined(trip_id: int, driver: Row) -> None:
-    """The driver hands the trip back and Anneli is asked to reallocate."""
-    trip = get_trip(trip_id)
-    if not trip:
-        return
-    record(trip_id, "driver", "driver_declined", f"{driver.name} ({driver.plate})")
-    say("driver", driver.phone, trip_id, f"Thanks for letting us know. Anneli will find another driver for {trip.ref}.")
+def refuse_guest_cancel(trip: Row) -> None:
+    """The guest asked to cancel a car Anneli has already confirmed - by typing "cancel",
+    or on a cancel button left on an older message. The trip stands; the guest is pointed
+    at Anneli, and she is told they asked."""
+    record(trip.id, "guest", "cancel_refused", "car already confirmed")
+    say("guest", trip.guest_phone, trip.id,
+        f"Your car ({trip.ref}) is confirmed, so it can no longer be cancelled in the chat.\n"
+        f"If your plans have changed, please call Anneli on {load_settings().ops_phone}.")
     ops = ops_number()
     if ops:
-        notify("ops", ops, trip_id, "kn_ops_driver_unavailable", [trip.ref, driver.name, format_time(trip.scheduled_at)])
+        say("ops", ops, trip.id, f"Trip {trip.ref} - the guest asked to cancel in the chat. They have been asked to call you.")
 
 
 # ── 2. on the day ────────────────────────────────────────────────────────────
@@ -630,14 +759,16 @@ def driver_declined(trip_id: int, driver: Row) -> None:
 
 def send_evening_reminder(trip: Row, driver: Row) -> None:
     record(trip.id, "system", "guest_reminder_sent")
-    notify("guest", trip.guest_phone, trip.id, "kn_guest_trip_reminder_evening_v2",
-           [to_label(trip), format_time(trip.scheduled_at), driver.name, driver.plate, fare(trip)])
+    # _v3 has no cancel button; _v2 (with "Cancel this trip") until Meta approves it.
+    notify_first("guest", trip.guest_phone, trip.id, ["kn_guest_trip_reminder_evening_v3", "kn_guest_trip_reminder_evening_v2"],
+                 [to_label(trip), format_time(trip.scheduled_at), driver.name, driver.plate, fare(trip)])
 
 
 def send_driver_reminder(trip: Row, driver: Row) -> None:
     record(trip.id, "system", "driver_reminder_sent")
-    notify("driver", driver.phone, trip.id, "kn_driver_trip_reminder",
-           [trip.ref, format_time(trip.scheduled_at), pickup_address(trip), to_label(trip)])
+    # _v2 has only "I have left"; the original (with "I cannot make it") until Meta approves it.
+    notify_first("driver", driver.phone, trip.id, ["kn_driver_trip_reminder_v2", "kn_driver_trip_reminder"],
+                 [trip.ref, format_time(trip.scheduled_at), pickup_address(trip), to_label(trip)])
 
 
 def place_hold(trip: Row) -> None:
@@ -651,13 +782,14 @@ def driver_left(trip_id: int, driver: Row) -> None:
     trip = get_trip(trip_id)
     if not trip:
         return
-    set_status(trip_id, "driver_en_route")
+    if not claim_status(trip_id, ("allocated",), "driver_en_route"):
+        return
     record(trip_id, "driver", "driver_left")
     say("driver", driver.phone, trip_id,
         "Thanks. The guest has been told you are on your way.\n"
-        f"Guest: {guest_label(trip)} - +{wa.to_wa_id(trip.guest_phone)}\nPickup: {pickup_address(trip)}\nDrop: {to_label(trip)}",
+        f"Guest: {guest_contact(trip)}\nPickup: {pickup_address(trip)}\nDrop: {to_label(trip)}",
         [("driver:arrived", DRIVER_BTN["arrived"])])
-    notify("guest", trip.guest_phone, trip_id, "kn_guest_driver_on_way",
+    notify_first("guest", trip.guest_phone, trip_id, ["kn_guest_driver_on_way_v2", "kn_guest_driver_on_way"],
            [driver.name, driver.plate, driver.vehicle or "the car", driver.phone])
     ops = ops_number()
     if ops:
@@ -665,14 +797,16 @@ def driver_left(trip_id: int, driver: Row) -> None:
 
 
 def driver_arrived(trip_id: int, driver: Row) -> None:
-    """Nothing moves past "arrived" until the guest confirms."""
+    """Nothing moves past "arrived" until the guest confirms: "Ride started" is not offered
+    here, only once the guest taps "Yes, I can see him" - so the driver gets it once."""
     trip = get_trip(trip_id)
     if not trip:
         return
-    set_status(trip_id, "driver_waiting")
+    if not claim_status(trip_id, ("allocated", "driver_en_route"), "driver_waiting"):
+        return
     record(trip_id, "driver", "driver_arrived")
-    say("driver", driver.phone, trip_id, "The guest has been told you are here.\nTap Ride started once they are in the car.",
-        [("driver:started", DRIVER_BTN["ride_started"])])
+    say("driver", driver.phone, trip_id,
+        "The guest has been told you are here.\nRide started will appear here once they confirm they can see you.")
     notify("guest", trip.guest_phone, trip_id, "kn_guest_driver_arrived", [driver.name, from_label(trip)])
     ops = ops_number()
     if ops:
@@ -680,43 +814,95 @@ def driver_arrived(trip_id: int, driver: Row) -> None:
 
 
 def guest_confirmed_pickup(trip_id: int) -> None:
-    """"Yes, I can see him": the ride starts, and the driver closes it."""
+    with trip_lock(trip_id):
+        _guest_confirmed_pickup(trip_id)
+
+
+def _guest_confirmed_pickup(trip_id: int) -> None:
+    """"Yes, I can see him": the driver is told and gets "Ride started". This does not start
+    the ride - only the driver does that, so there is one way in and nothing collides."""
     trip = get_trip(trip_id)
-    if not trip:
+    if not trip or trip.status not in ("driver_waiting", "driver_en_route"):
         return
-    driver = driver_for(trip)
-    set_status(trip_id, "in_progress")
+    if any(e.event == "guest_confirmed_pickup" for e in events_for(trip_id)):
+        return
     record(trip_id, "guest", "guest_confirmed_pickup")
+    driver = driver_for(trip)
     say("guest", trip.guest_phone, trip_id,
-        "Trip started. Safe travels." if trip.captured_at
-        else f"Trip started. Safe travels.\nWe will send the R {fare(trip)} payment link as soon as the ride is complete.")
+        f"Thank you. {driver.name if driver else 'The driver'} will start the ride once you are in the car.")
     if driver:
-        say("driver", driver.phone, trip_id, "Guest confirmed. Trip started.\nTap below once you have dropped the guest off.",
-            [("driver:complete", DRIVER_BTN["ride_complete"])])
-    ops = ops_number()
-    if ops:
-        notify("ops", ops, trip_id, "kn_ops_trip_started", [trip.ref])
+        say("driver", driver.phone, trip_id, "The guest can see you.\nTap Ride started once they are in the car.", [RIDE_STARTED])
+
+
+def guest_saw_driver(trip: Row) -> bool:
+    return any(e.event == "guest_confirmed_pickup" for e in events_for(trip.id))
 
 
 def driver_started_ride(trip_id: int, driver: Row) -> None:
-    """Driver tapped "Ride started": the guest is in the car. The guest is told, Anneli gets
-    her trip-started card, and the driver gets Ride complete — the same place the guest's
-    "Yes, I can see him" leads to, whichever comes first."""
+    with trip_lock(trip_id):
+        _driver_started_ride(trip_id, driver)
+
+
+def _driver_started_ride(trip_id: int, driver: Row) -> None:
+    """Driver tapped "Ride started" - the only way a ride starts. The guest is told and
+    Anneli gets her trip-started card. The driver gets the drop-off pin and "Reached
+    destination"; payment is asked for there, not now."""
     trip = get_trip(trip_id)
     if not trip:
         return
-    set_status(trip_id, "in_progress")
+    if not claim_status(trip_id, ("driver_waiting", "driver_en_route"), "in_progress"):
+        return
     record(trip_id, "driver", "driver_started_ride")
 
     vehicle = f"{driver.plate}, {driver.vehicle}" if driver.vehicle else driver.plate
-    fallback = f"Your ride with {driver.name} has started. Safe travels." + (
-        "" if trip.captured_at else f"\nWe will send the R {fare(trip)} payment link as soon as the ride is complete.")
-    notify_or_say("guest", trip.guest_phone, trip_id, "kn_guest_ride_started", [driver.name, vehicle, trip.ref], fallback)
-    say("driver", driver.phone, trip_id, "Ride started.\nTap below once you have dropped the guest off.",
-        [("driver:complete", DRIVER_BTN["ride_complete"])])
+    notify_or_say("guest", trip.guest_phone, trip_id, "kn_guest_ride_started", [driver.name, vehicle, trip.ref],
+                  f"Your ride with {driver.name} has started. Safe travels.")
     ops = ops_number()
     if ops:
         notify("ops", ops, trip_id, "kn_ops_trip_started", [trip.ref])
+
+    send_pin(trip_id, driver, dropoff_pin(trip), "Drop-off")
+    paid = " The fare is already paid." if trip.captured_at else ""
+    say("driver", driver.phone, trip_id,
+        f"Ride started.{paid}\nTap Reached destination when you arrive at {to_label(trip)}.", [REACHED])
+
+
+def reached_destination(trip: Row) -> bool:
+    return any(e.event == "driver_at_destination" for e in events_for(trip.id))
+
+
+def driver_reached_destination(trip_id: int, driver: Row) -> None:
+    with trip_lock(trip_id):
+        _driver_reached_destination(trip_id, driver)
+
+
+def _driver_reached_destination(trip_id: int, driver: Row) -> None:
+    """Driver tapped "Reached destination". An unpaid guest is sent the Pay now link; the
+    driver gets "Ride complete" only once the fare is paid - now if it already is, else
+    when Paystack confirms it (payment_received, which takes turns with this)."""
+    trip = get_trip(trip_id)
+    if not trip or trip.status != "in_progress" or reached_destination(trip):
+        return
+    record(trip_id, "driver", "driver_at_destination")
+
+    if trip.captured_at:
+        say("driver", driver.phone, trip_id, "The fare is already paid.\nTap below once you have dropped the guest off.", [RIDE_COMPLETE])
+        return
+    ok, reason = request_payment(trip, float(trip.fare or 0), "fare", f"You have reached {to_label(trip)}.")
+    ops = ops_number()
+    if ok:
+        say("driver", driver.phone, trip_id,
+            f"The guest has been sent the R {fare(trip)} payment link.\n"
+            "Ride complete will appear here as soon as they have paid.")
+        if ops:
+            say("ops", ops, trip_id, f"Trip {trip.ref} - at the destination; waiting for the guest's R {fare(trip)} payment "
+                                     "before the driver can close it.")
+    else:
+        # Card payment is not possible right now: the ride cannot wait on it.
+        record(trip_id, "system", "payment_unavailable", reason)
+        say("driver", driver.phone, trip_id,
+            "Card payment is not available right now - Anneli will sort the fare with the guest.\n"
+            "Tap below once you have dropped the guest off.", [RIDE_COMPLETE])
 
 
 def guest_pay_now(trip_id: int) -> None:
@@ -732,15 +918,18 @@ def guest_pay_now(trip_id: int) -> None:
     ok, _ = request_payment(trip, float(trip.fare or 0), "fare", "Thank you.")
     if not ok:
         say("guest", trip.guest_phone, trip_id,
-            "Sorry - card payment is not available right now. We will send the link after the ride, or Anneli will sort it with you.")
+            "Sorry - card payment is not available right now. We will send the link when you reach your destination, "
+            "or Anneli will sort it with you.")
 
 
 def guest_pay_after(trip_id: int) -> None:
+    """"Pay during ride" on a payment offer sent before Pay now stood alone."""
     trip = get_trip(trip_id)
     if not trip:
         return
     record(trip_id, "guest", "chose_pay_after")
-    say("guest", trip.guest_phone, trip_id, "No problem. We will send you the payment link as soon as the ride is complete.")
+    say("guest", trip.guest_phone, trip_id,
+        "No problem. We will send you the payment link when you reach your destination.")
 
 
 def guest_cannot_see_driver(trip_id: int) -> None:
@@ -754,14 +943,24 @@ def guest_cannot_see_driver(trip_id: int) -> None:
         say("driver", driver.phone, trip_id, "The guest cannot see you yet. Please stay at the pickup point.")
 
 
+def ride_can_complete(trip: Row) -> bool:
+    """Ride complete only once the fare is paid - or when card payment was not possible,
+    so Anneli collects it another way."""
+    if trip.captured_at or not payments_configured():
+        return True
+    return any(e.event == "payment_unavailable" for e in events_for(trip.id))
+
+
 def driver_completed_ride(trip_id: int, driver: Row) -> None:
-    """Driver tapped "Ride complete". The trip closes, and the guest gets the payment link
-    unless they already paid."""
+    """Driver tapped "Ride complete" (only offered once the fare is paid). The trip closes
+    and the guest is asked for a review. The unpaid branch below is a safety net."""
     trip = get_trip(trip_id)
     if not trip:
         return
+    # A double-tapped "Ride complete" closes the trip - and sends the payment link - once.
+    if not claim_status(trip_id, ("in_progress",), "completed", completed_at=now()):
+        return
     record(trip_id, "driver", "ride_completed")
-    set_status(trip_id, "completed", completed_at=now())
 
     intro = f"Your ride with {driver.name} to {to_label(trip)} is complete. Thank you for travelling with us."
     if trip.captured_at:
@@ -786,7 +985,7 @@ def driver_completed_ride(trip_id: int, driver: Row) -> None:
             money = f"R {fare(trip)} payment link sent to the guest - you will be told when it is paid"
         else:
             money = f"R {fare(trip)} NOT requested ({reason}) - please collect from the guest"
-        notify("ops", ops, trip_id, "kn_ops_trip_closed_v2", [trip.ref, to_label(trip), money])
+        notify_first("ops", ops, trip_id, ["kn_ops_trip_closed_v3", "kn_ops_trip_closed_v2"], [trip.ref, to_label(trip), money])
 
 
 RATINGS = {
@@ -870,8 +1069,9 @@ def guest_feedback(trip_id: int, good: bool) -> None:
 
 def ask_about_no_show(trip: Row, driver: Row, waited_min: int) -> None:
     record(trip.id, "system", "no_show_asked", f"{waited_min} min")
-    notify("guest", trip.guest_phone, trip.id, "kn_guest_driver_waiting",
-           [driver.name, from_label(trip), trip.ref, format_time(trip.scheduled_at)])
+    # _v2 has only "Coming now"; the original (with "Cancel the trip") until Meta approves it.
+    notify_first("guest", trip.guest_phone, trip.id, ["kn_guest_driver_waiting_v2", "kn_guest_driver_waiting"],
+                 [driver.name, from_label(trip), trip.ref, format_time(trip.scheduled_at)])
     ops = ops_number()
     if ops:
         fee = load_settings().no_show_fee
@@ -919,7 +1119,8 @@ def resolve_no_show(trip_id: int, charge: bool) -> None:
     settings = load_settings()
     fee = float(settings.no_show_fee if settings.no_show_fee is not None else (trip.fare or 0))
 
-    set_status(trip_id, "no_show")
+    if not claim_status(trip_id, ("driver_waiting", "driver_en_route", "allocated"), "no_show"):
+        return
     record(trip_id, "ops", "no_show_charged" if charge else "no_show_released")
     closed = f"{driver.name if driver else 'The driver'} has left {from_label(trip)}. Trip {trip.ref} is closed."
     driver_msg = f"Trip {trip.ref} is closed as a no-show. You can leave. Thank you for waiting."
