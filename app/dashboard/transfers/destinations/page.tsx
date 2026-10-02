@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Plus, Edit2, Check, X, AlertTriangle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, getJson } from '@/lib/utils'
 
 type Destination = {
   id: number; name: string; aliases: string | null
@@ -21,12 +21,12 @@ export default function DestinationsPage() {
   const [addForm, setAddForm] = useState<Record<string, unknown>>({ active: true })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/destinations').then(r => r.json()).then(d => {
-      setRows(Array.isArray(d) ? d : [])
-      setLoading(false)
-    })
+    getJson<Destination[]>('/api/destinations')
+      .then(setRows, (err: Error) => setLoadError(err.message))
+      .finally(() => setLoading(false))
   }, [])
 
   async function add() {
@@ -71,6 +71,13 @@ export default function DestinationsPage() {
   }
 
   if (loading) return <div className="text-sm text-gray-400">Loading…</div>
+
+  // An empty list here would read as "no destinations, using the built-in list".
+  if (loadError) return (
+    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      <AlertTriangle size={15} className="mt-0.5 shrink-0" /> Could not load destinations: {loadError}
+    </div>
+  )
 
   return (
     <div>

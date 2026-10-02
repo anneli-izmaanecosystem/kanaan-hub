@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/local-db.mjs && node scripts/local-whatsapp.mjs && next dev",
     "build": "next build",
     "start": "next start",
     "db:generate": "drizzle-kit generate",

@@ -1,12 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, RefreshCw, User, Car, Headset, FileText, MapPin } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Search, RefreshCw, User, Car, Headset, FileText, MapPin, AlertTriangle } from 'lucide-react'
+import { cn, formatPhone, getJson } from '@/lib/utils'
 
-// Every message exchanged with the WhatsApp number, read back as a thread. The chat list
-// on the left is one row per phone; the right-hand pane is that number's full history
-// with the bot, including the template cards and button choices it was sent.
+// Every message the guests and drivers exchanged with the WhatsApp number, read back as a
+// thread. The chat list on the left is one row per phone; the right-hand pane is that
+// number's full history with the bot, including the template cards and button choices it
+// was sent.
 
 type Chat = {
   phone: string
@@ -17,7 +18,8 @@ type Chat = {
   lastDirection: string | null
   role: string | null
   step: string | null
-  guestName: string | null
+  /** The driver's name, or the name the guest booked under. */
+  name: string | null
   trip: { ref: string; status: string } | null
 }
 
@@ -40,7 +42,10 @@ type Trip = {
   fare: string | null; events: TripEvent[]
 }
 
-type Thread = { phone: string; messages: Message[]; conversation: { step: string; tripId: number | null } | null; trips: Trip[] }
+type Thread = {
+  phone: string; role: string; name: string | null
+  messages: Message[]; conversation: { step: string; tripId: number | null } | null; trips: Trip[]
+}
 
 const ROLE: Record<string, { label: string; icon: typeof User; tone: string }> = {
   guest:  { label: 'Guest',  icon: User,    tone: 'bg-emerald-100 text-emerald-800' },
@@ -88,18 +93,29 @@ export default function WhatsAppPage() {
   const [thread, setThread] = useState<Thread | null>(null)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
+  // The list and the open thread poll separately, so each keeps its own failure.
+  const [chatsError, setChatsError] = useState<string | null>(null)
+  const [threadError, setThreadError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const lastCount = useRef(0)
 
   const loadChats = useCallback(async () => {
-    const res = await fetch('/api/whatsapp/conversations', { cache: 'no-store' })
-    if (res.ok) setChats(await res.json())
+    try {
+      setChats(await getJson<Chat[]>('/api/whatsapp/conversations'))
+      setChatsError(null)
+    } catch (err) {
+      setChatsError((err as Error).message)
+    }
     setLoading(false)
   }, [])
 
   const loadThread = useCallback(async (phone: string) => {
-    const res = await fetch(`/api/whatsapp/conversations/${encodeURIComponent(phone)}`, { cache: 'no-store' })
-    if (res.ok) setThread(await res.json())
+    try {
+      setThread(await getJson<Thread>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}`))
+      setThreadError(null)
+    } catch (err) {
+      setThreadError((err as Error).message)
+    }
   }, [])
 
   useEffect(() => {
@@ -126,17 +142,26 @@ export default function WhatsAppPage() {
 
   const visible = chats.filter(c => {
     const q = query.trim().toLowerCase()
-    return !q || c.phone.includes(q) || (c.guestName ?? '').toLowerCase().includes(q) || (c.trip?.ref ?? '').toLowerCase().includes(q)
+    // Digits only, so "072 118", "+27 72 118" and "2772118" all find the same number.
+    const digits = q.replace(/\D/g, '').replace(/^0/, '')
+    return !q || (digits.length > 0 && c.phone.includes(digits)) || (c.name ?? '').toLowerCase().includes(q) || (c.trip?.ref ?? '').toLowerCase().includes(q)
   })
 
   const current = chats.find(c => c.phone === selected) ?? null
+
+  function open(phone: string) {
+    if (phone === selected) return
+    // Never show one number's messages under another's header while the new thread loads.
+    setThread(null); setThreadError(null)
+    setSelected(phone)
+  }
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col">
       <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">WhatsApp</h1>
-          <p className="text-sm text-gray-500">Every conversation with the Kanaan number — guests, Anneli and drivers.</p>
+          <p className="text-sm text-gray-500">Guest and driver conversations with the Kanaan number. Read-only.</p>
         </div>
         <button
           onClick={() => { loadChats(); if (selected) loadThread(selected) }}
@@ -162,14 +187,19 @@ export default function WhatsAppPage() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && <p className="p-4 text-sm text-gray-400">Loading…</p>}
-            {!loading && visible.length === 0 && <p className="p-4 text-sm text-gray-400">No conversations yet.</p>}
+            {chatsError && (
+              <p className="m-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" /> Could not load conversations: {chatsError}
+              </p>
+            )}
+            {!loading && !chatsError && visible.length === 0 && <p className="p-4 text-sm text-gray-400">No conversations yet.</p>}
             {visible.map(c => {
               const role = ROLE[c.role ?? 'guest'] ?? ROLE.guest
               const Icon = role.icon
               return (
                 <button
                   key={c.phone}
-                  onClick={() => setSelected(c.phone)}
+                  onClick={() => open(c.phone)}
                   className={cn(
                     'flex w-full items-start gap-3 border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50',
                     selected === c.phone && 'bg-emerald-50 hover:bg-emerald-50',
@@ -180,10 +210,10 @@ export default function WhatsAppPage() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-gray-900">{c.guestName ?? c.phone}</span>
+                      <span className="truncate text-sm font-medium text-gray-900">{c.name ?? formatPhone(c.phone)}</span>
                       <span className="shrink-0 text-[11px] text-gray-400">{whenOf(c.lastAt)}</span>
                     </span>
-                    {c.guestName && <span className="block text-[11px] text-gray-400">{c.phone}</span>}
+                    {c.name && <span className="block text-[11px] text-gray-400">{formatPhone(c.phone)}</span>}
                     <span className="mt-0.5 block truncate text-xs text-gray-500">
                       {c.lastDirection === 'outbound' ? '↩ ' : ''}{(c.lastBody ?? '').split('\n')[0] || '—'}
                     </span>
@@ -214,9 +244,12 @@ export default function WhatsAppPage() {
             <>
               <header className="flex items-center justify-between border-b border-gray-200 bg-white px-5 py-3">
                 <div>
-                  <p className="text-sm font-semibold text-gray-900">{current?.guestName ?? selected}</p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {thread?.name ?? current?.name ?? formatPhone(selected)}
+                    {thread && <span className="ml-2 align-middle text-[11px] font-normal text-gray-400">{(ROLE[thread.role] ?? ROLE.guest).label}</span>}
+                  </p>
                   <p className="text-xs text-gray-500">
-                    {selected}
+                    <a href={`tel:${selected}`} className="hover:text-gray-800 hover:underline">{formatPhone(selected)}</a>
                     {thread?.conversation && ` · ${thread.conversation.step.replace(/_/g, ' ')}`}
                   </p>
                 </div>
@@ -232,6 +265,12 @@ export default function WhatsAppPage() {
               </header>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+                {threadError && (
+                  <p className="mb-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" /> Could not load this conversation: {threadError}
+                  </p>
+                )}
+                {!thread && !threadError && <p className="text-center text-sm text-gray-500">Loading…</p>}
                 {thread?.messages.length === 0 && <p className="text-center text-sm text-gray-500">No messages with this number.</p>}
                 {thread?.messages.map((m, i) => {
                   const prev = thread.messages[i - 1]
@@ -285,6 +324,7 @@ export default function WhatsAppPage() {
                       <div key={t.id}>
                         <p className="font-medium text-gray-800">
                           {t.ref} · {t.status.replace(/_/g, ' ')} · {t.direction} · {t.placeName} · R {t.fare}
+                          {thread.role === 'driver' && t.guestName && ` · guest ${t.guestName}`}
                           {t.scheduledAt && ` · ${dayOf(t.scheduledAt)} ${timeOf(t.scheduledAt)}`}
                         </p>
                         <ul className="mt-1 space-y-0.5 text-gray-500">

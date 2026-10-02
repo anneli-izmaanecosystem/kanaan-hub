@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Plus, Edit2, Check, X, AlertTriangle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, formatPhone, getJson } from '@/lib/utils'
 
 type Driver = {
   id: number; name: string; phone: string; plate: string
@@ -23,12 +23,12 @@ export default function DriversPage() {
   const [addForm, setAddForm] = useState<Partial<Driver>>({ active: true, onDuty: true })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/drivers').then(r => r.json()).then(d => {
-      setDrivers(Array.isArray(d) ? d : [])
-      setLoading(false)
-    })
+    getJson<Driver[]>('/api/drivers')
+      .then(setDrivers, (err: Error) => setLoadError(err.message))
+      .finally(() => setLoading(false))
   }, [])
 
   async function add() {
@@ -85,6 +85,13 @@ export default function DriversPage() {
   }
 
   if (loading) return <div className="text-sm text-gray-400">Loading…</div>
+
+  // An empty list here would read as "no drivers", and adding one would fail anyway.
+  if (loadError) return (
+    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      <AlertTriangle size={15} className="mt-0.5 shrink-0" /> Could not load drivers: {loadError}
+    </div>
+  )
 
   const onDutyCount = drivers.filter(d => d.active && d.onDuty).length
 
@@ -176,7 +183,7 @@ export default function DriversPage() {
                     <td className="px-4 py-2.5 text-gray-600">
                       {isEditing
                         ? <input className={inp} value={form.phone ?? ''} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
-                        : <span className="font-mono text-xs">{d.phone}</span>}
+                        : <span className="font-mono text-xs">{formatPhone(d.phone)}</span>}
                     </td>
                     <td className="px-4 py-2.5 text-gray-600">
                       {isEditing ? (

@@ -127,6 +127,7 @@ destinations = Table(
     Column("lng", Numeric(10, 7), nullable=False),
     Column("fixed_fare", Numeric(10, 2)),
     Column("active", Boolean, nullable=False),
+    Column("created_at", DateTime),
 )
 
 transfer_settings = Table(
@@ -149,6 +150,7 @@ transfer_settings = Table(
     Column("ops_phone", Text),
     Column("ops_escalation_whatsapp", Text),
     Column("mute_ops_commentary", Boolean),
+    Column("updated_at", DateTime),
 )
 
 

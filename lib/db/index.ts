@@ -74,11 +74,15 @@ function getDb() {
       // Kept on globalThis so a dev hot-reload of this module reuses the pool instead
       // of opening another one each time and exhausting the server's connection cap.
       const g = globalThis as typeof globalThis & { __kanaanPgPool?: Pool }
-      const pool = g.__kanaanPgPool ?? (g.__kanaanPgPool = new Pool({ connectionString: url, max: 5 }))
       // `timestamp` columns are timezone-less, and defaultNow() writes the session's local
       // time into them. Pin every session to UTC so what is stored never depends on
-      // where the database happens to be running.
-      pool.on('connect', client => { client.query("SET timezone = 'UTC'").catch(() => {}) })
+      // where the database happens to be running. It goes in the connection's startup
+      // options rather than a SET on connect: the pool hands a new client to its caller
+      // straight away, so a SET would overlap the caller's first query, which pg warns
+      // is deprecated and pg 9 will refuse. (PGlite ignores the option; it is UTC anyway.)
+      const pool = g.__kanaanPgPool ?? (g.__kanaanPgPool = new Pool({
+        connectionString: url, max: 5, options: '-c timezone=UTC',
+      }))
       _db = drizzlePg(pool, { schema }) as unknown as ReturnType<typeof drizzle>
     } else {
       const client = url ? neon(url) : (offlineClient() as unknown as ReturnType<typeof neon>)

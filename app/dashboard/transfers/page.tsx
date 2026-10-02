@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Phone, MapPin, CreditCard, AlertTriangle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, formatPhone, getJson } from '@/lib/utils'
 
 type Driver = { name: string; phone: string; plate: string; vehicle: string | null }
 type Trip = {
   id: number; ref: string; direction: string; status: string
   guestPhone: string; guestName: string | null; roomLabel: string | null
-  placeName: string | null; distanceKm: string | null
+  placeName: string | null; pickupName: string | null; distanceKm: string | null
   scheduledAt: string | null; fare: string | null
   heldAt: string | null; capturedAt: string | null; releasedAt: string | null
   driver: Driver | null
@@ -59,14 +59,20 @@ export default function TransfersTodayPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Kept apart from `error` (a refused action) so the 30s refresh does not clear that.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [t, d] = await Promise.all([
-      fetch(`/api/trips?scope=${scope}`).then(r => r.json()),
-      fetch('/api/drivers').then(r => r.json()),
-    ])
-    setTrips(Array.isArray(t) ? t : [])
-    setDrivers(Array.isArray(d) ? d : [])
+    try {
+      const [t, d] = await Promise.all([
+        getJson<Trip[]>(`/api/trips?scope=${scope}`),
+        getJson<DriverRow[]>('/api/drivers'),
+      ])
+      setTrips(t); setDrivers(d); setLoadError(null)
+    } catch (err) {
+      // The last board that loaded stays up under the warning.
+      setLoadError((err as Error).message)
+    }
     setLoading(false)
   }, [scope])
 
@@ -120,19 +126,25 @@ export default function TransfersTodayPage() {
         </p>
       </div>
 
+      {loadError && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" /> Could not load the board: {loadError}
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
         </div>
       )}
 
-      {onDuty.length === 0 && (
+      {!loadError && onDuty.length === 0 && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           No drivers are on duty, so there is nobody to allocate a request to.
         </div>
       )}
 
-      {trips.length === 0 && (
+      {!loadError && trips.length === 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
           <p className="text-sm text-gray-500">No trips {scope === 'today' ? 'today' : 'yet'}.</p>
           <p className="mt-1 text-xs text-gray-400">
@@ -191,19 +203,25 @@ function Section({
 
                   <p className="mt-1.5 flex items-center gap-1.5 text-sm text-gray-800">
                     <MapPin size={13} className="shrink-0 text-gray-400" />
+                    {/* Set only for a trip between two other points; otherwise one end is the farm. */}
+                    {t.pickupName && <span className="text-gray-500">{t.pickupName} →</span>}
                     {t.placeName ?? 'destination not set'}
                     {t.distanceKm && <span className="text-gray-400">· {Number(t.distanceKm)} km</span>}
                   </p>
 
                   <p className="mt-0.5 text-xs text-gray-500">
-                    {time(t.scheduledAt)} · {t.roomLabel ?? 'room not given'} ·{' '}
-                    <a href={`tel:${t.guestPhone}`} className="hover:text-gray-800 hover:underline">{t.guestPhone}</a>
+                    {time(t.scheduledAt)} ·{' '}
+                    {t.guestName && <><span className="font-medium text-gray-700">{t.guestName}</span> · </>}
+                    {t.roomLabel ?? 'room not given'} ·{' '}
+                    <a href={`tel:${t.guestPhone}`} className="hover:text-gray-800 hover:underline">{formatPhone(t.guestPhone)}</a>
                   </p>
 
                   {t.driver && (
                     <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-600">
                       <Phone size={12} className="shrink-0 text-gray-400" />
-                      {t.driver.name} · {t.driver.plate}
+                      {t.driver.name} ·{' '}
+                      <a href={`tel:${t.driver.phone}`} className="hover:text-gray-800 hover:underline">{formatPhone(t.driver.phone)}</a>
+                      {' '}· {t.driver.plate}
                       {t.driver.vehicle && <span className="text-gray-400">· {t.driver.vehicle}</span>}
                     </p>
                   )}
