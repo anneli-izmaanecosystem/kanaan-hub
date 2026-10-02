@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.bot import scheduler
 from app.config import get_settings
-from app.routers import admin, bot, conversations, internal, messages, payments, templates, webhook
+from app.routers import admin, bot, conversations, dashboard, internal, messages, payments, templates, webhook
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -48,6 +48,7 @@ app.include_router(conversations.router)
 app.include_router(messages.router)
 app.include_router(payments.router)
 app.include_router(bot.router)
+app.include_router(dashboard.router)
 app.include_router(admin.router)
 
 if get_settings().simulator:
