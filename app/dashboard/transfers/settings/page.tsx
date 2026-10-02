@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { AlertTriangle, Check } from 'lucide-react'
+import { getJson } from '@/lib/utils'
 
 type Settings = {
   fareBase: number; farePerKm: number; fareMinimum: number
@@ -20,9 +21,10 @@ export default function TransferSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/transfer-settings').then(r => r.json()).then(setS)
+    getJson<Settings>('/api/transfer-settings').then(setS, (err: Error) => setLoadError(err.message))
   }, [])
 
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
@@ -42,6 +44,13 @@ export default function TransferSettingsPage() {
     else setError((await res.json().catch(() => ({}))).error ?? 'Could not save')
     setSaving(false)
   }
+
+  // Without the stored values the form would show blanks, and saving it would send them.
+  if (loadError) return (
+    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      <AlertTriangle size={15} className="mt-0.5 shrink-0" /> Could not load the rates and rules: {loadError}
+    </div>
+  )
 
   if (!s) return <div className="text-sm text-gray-400">Loading…</div>
 
