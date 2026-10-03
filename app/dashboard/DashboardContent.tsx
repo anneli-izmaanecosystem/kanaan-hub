@@ -135,8 +135,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     // Real Housekeeping department payroll cost (gross pay + employer UIF) per finalised
     // run, Kanaan entity only — replaces the flat "1 lady" estimate below wherever a
     // finalised run exists for that month; months with no run yet fall back to the estimate.
+    // Bucketed by period END, not start: the Sep 2026 run was captured as 2026-08-31 →
+    // 2026-09-30, so a start-date bucket landed it in August (double-counting Aug, leaving
+    // Sep on the estimate).
     db.select({
-      periodStart: payrollRuns.periodStart,
+      periodEnd:   payrollRuns.periodEnd,
       grossPay:    payrollEntries.grossPay,
       uifEmployer: payrollEntries.uifEmployer,
     })
@@ -148,8 +151,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         eq(entities.entityType, 'kanaan'),
         eq(workers.department, 'Housekeeping'),
         eq(payrollRuns.status, 'finalised'),
-        gte(payrollRuns.periodStart, trendRangeStart),
-        lte(payrollRuns.periodStart, trendRangeEnd),
+        gte(payrollRuns.periodEnd, trendRangeStart),
+        lte(payrollRuns.periodEnd, trendRangeEnd),
       )),
   ])
   // Occupancy is measured in bed-nights, not room-nights: room types range from a 2-sleeper
@@ -166,15 +169,18 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const roomCapacity = new Map(activeRooms.map(r => [r.id, r.capacity]))
   const roomType     = new Map(activeRooms.map(r => [r.id, r.type]))
   const capacityRooms = activeRooms.filter(r => !wholeUnitAliasNames.has(r.name))
-  const totalSleepers = capacityRooms.reduce((s, r) => s + r.capacity, 0)
   const sleepersByType = new Map<string, number>()
   for (const r of capacityRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
-  const totalRooms = capacityRooms.length
-  // Camping is excluded from the Occupancy Trend chart (below) — its low-volume, highly
-  // seasonal bookings would otherwise swing the whole-property trend line in a way that
-  // doesn't reflect the main accommodation base. It still appears in the Occupancy by Room
-  // Type breakdown, and the month KPI card and breakeven analysis stay all-inclusive.
-  const nonCampingSleepers = totalSleepers - (sleepersByType.get('camping') ?? 0)
+  // Backpackers (dorm) is excluded from the average occupancy — both the month KPI card and
+  // the trend — per Anneli 2026-10-03. It still shows in the Occupancy by Room Type breakdown,
+  // and its bed-nights still drive breakeven laundry/revenue.
+  const avgOccupancyRooms = capacityRooms.filter(r => r.type !== 'dorm')
+  const avgSleepers = avgOccupancyRooms.reduce((s, r) => s + r.capacity, 0)
+  const avgRooms = avgOccupancyRooms.length
+  // Camping is additionally excluded from the Occupancy Trend chart (below) — its low-volume,
+  // highly seasonal bookings would otherwise swing the trend line in a way that doesn't
+  // reflect the main accommodation base.
+  const trendSleepers = avgSleepers - (sleepersByType.get('camping') ?? 0)
 
   function bedNightsInRange(rows: { roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
     const rangeStartMs = new Date(rangeStart).getTime()
@@ -256,9 +262,10 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // Bed-night occupancy: beds_occupied = room.capacity (a booking blocks its whole room, per
   // the 409 conflict check in the booking API), not guest headcount — a couple in an 8-sleeper
   // family unit still occupies all 8 beds as far as saleable inventory is concerned.
-  const availableBedNights = totalSleepers * daysInMonth
+  const availableBedNights = avgSleepers * daysInMonth
   const monthBedNights = bedNightsInRange(monthBookings, monthStart, monthEnd)
-  const occupancyRate = availableBedNights > 0 ? (monthBedNights.total / availableBedNights) * 100 : 0
+  const monthAvgBedNights = monthBedNights.total - (monthBedNights.byType.get('dorm') ?? 0)
+  const occupancyRate = availableBedNights > 0 ? (monthAvgBedNights / availableBedNights) * 100 : 0
   const occupancyByType = ['premium', 'budget', 'dorm', 'camping'].map(type => {
     const sleepers = sleepersByType.get(type) ?? 0
     const available = sleepers * daysInMonth
@@ -275,11 +282,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const { total, byType } = bedNightsInRange(trendBookings, mStart, mEnd)
     // `bedNights` stays all-inclusive (camping included) since the breakeven analysis below
     // needs real total revenue-driving bed-nights. `rate` — what the chart actually plots —
-    // excludes camping; see nonCampingSleepers above.
-    const nonCampingTotal = total - (byType.get('camping') ?? 0)
-    const nonCampingAvailable = nonCampingSleepers * mDays
+    // excludes camping and Backpackers; see trendSleepers above.
+    const trendTotal = total - (byType.get('camping') ?? 0) - (byType.get('dorm') ?? 0)
+    const trendAvailable = trendSleepers * mDays
     const actualRevenue = actualRevenueInRange(trendBookings, mStart, mEnd)
-    return { ym, bedNights: total, actualRevenue, rate: nonCampingAvailable > 0 ? (nonCampingTotal / nonCampingAvailable) * 100 : 0 }
+    return { ym, bedNights: total, actualRevenue, rate: trendAvailable > 0 ? (trendTotal / trendAvailable) * 100 : 0 }
   })
 
   // Breakeven model — Kanaan Guest Farm Unit Economics (excl. VAT), per Anneli's 2026-09-01
@@ -289,7 +296,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // or overstated profit by 30–80% against what actually happened. ADR is kept below only to
   // solve the breakeven bed-nights *threshold* (a fixed reference line, not a per-month figure) —
   // every cost figure is that doc's fixed model, calibrated against its own 54-sleeper/30-day
-  // baseline (1,620 bed-nights/month), independent of whatever totalSleepers resolves to above.
+  // baseline (1,620 bed-nights/month), independent of the live room capacities above.
   const ADR_EXCL_VAT             = 252.17 // short-term rate, R290 incl. VAT — breakeven-threshold input only
   const AVG_LENGTH_OF_STAY       = 2      // nights per stay — sets how often a bed's laundry turns over
   const LAUNDRY_PER_STAY_EXCL_VAT = 31.64 // per single-bed set, net + 10%
@@ -304,7 +311,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // payroll module — supersedes HOUSEKEEPING_FLAT above wherever a finalised run exists.
   const housekeepingCostByMonth = new Map<string, number>()
   for (const row of housekeepingPayroll) {
-    const ym = row.periodStart.slice(0, 7)
+    const ym = row.periodEnd.slice(0, 7)
     const cost = parseFloat(row.grossPay) + parseFloat(row.uifEmployer)
     housekeepingCostByMonth.set(ym, (housekeepingCostByMonth.get(ym) ?? 0) + cost)
   }
@@ -377,7 +384,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             <div>
               <p className="text-xs text-gray-500">Occupancy Rate</p>
               <p className="text-2xl font-semibold text-gray-900">{occupancyRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {totalSleepers} beds, {totalRooms} rooms</p>
+              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {avgSleepers} beds, {avgRooms} rooms · excl. Backpackers</p>
             </div>
           </div>
         </div>
@@ -453,7 +460,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
 
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-sm font-medium text-gray-700 mb-1">Occupancy Trend — Last 12 Months</h2>
-          <p className="text-xs text-gray-400 mb-4">Excludes camping — low, seasonal volume otherwise swings the whole-property trend</p>
+          <p className="text-xs text-gray-400 mb-4">Excludes camping and Backpackers</p>
           <div className="flex items-end gap-1.5 h-32">
             {occupancyTrend.map(t => {
               const heightPct = Math.max(2, Math.min(100, t.rate))
