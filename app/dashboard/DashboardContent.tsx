@@ -171,16 +171,16 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const capacityRooms = activeRooms.filter(r => !wholeUnitAliasNames.has(r.name))
   const sleepersByType = new Map<string, number>()
   for (const r of capacityRooms) sleepersByType.set(r.type, (sleepersByType.get(r.type) ?? 0) + r.capacity)
-  // Backpackers (dorm) is excluded from the average occupancy — both the month KPI card and
-  // the trend — per Anneli 2026-10-03. It still shows in the Occupancy by Room Type breakdown,
-  // and its bed-nights still drive breakeven laundry/revenue.
-  const avgOccupancyRooms = capacityRooms.filter(r => r.type !== 'dorm')
+  // Average occupancy (month KPI card and trend) covers rooms only — premium + budget.
+  // Backpackers (dorm) and camping are both excluded, per Anneli 2026-10-03, so the card and
+  // the trend chart use the same bed base. Both still show in the Occupancy by Room Type
+  // breakdown, and their bed-nights still drive breakeven laundry/revenue.
+  const AVG_OCCUPANCY_TYPES = new Set(['premium', 'budget'])
+  const avgOccupancyRooms = capacityRooms.filter(r => AVG_OCCUPANCY_TYPES.has(r.type))
   const avgSleepers = avgOccupancyRooms.reduce((s, r) => s + r.capacity, 0)
   const avgRooms = avgOccupancyRooms.length
-  // Camping is additionally excluded from the Occupancy Trend chart (below) — its low-volume,
-  // highly seasonal bookings would otherwise swing the trend line in a way that doesn't
-  // reflect the main accommodation base.
-  const trendSleepers = avgSleepers - (sleepersByType.get('camping') ?? 0)
+  const avgBedNights = (byType: Map<string, number>) =>
+    [...byType].reduce((s, [type, n]) => s + (AVG_OCCUPANCY_TYPES.has(type) ? n : 0), 0)
 
   function bedNightsInRange(rows: { roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
     const rangeStartMs = new Date(rangeStart).getTime()
@@ -264,7 +264,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   // family unit still occupies all 8 beds as far as saleable inventory is concerned.
   const availableBedNights = avgSleepers * daysInMonth
   const monthBedNights = bedNightsInRange(monthBookings, monthStart, monthEnd)
-  const monthAvgBedNights = monthBedNights.total - (monthBedNights.byType.get('dorm') ?? 0)
+  const monthAvgBedNights = avgBedNights(monthBedNights.byType)
   const occupancyRate = availableBedNights > 0 ? (monthAvgBedNights / availableBedNights) * 100 : 0
   const occupancyByType = ['premium', 'budget', 'dorm', 'camping'].map(type => {
     const sleepers = sleepersByType.get(type) ?? 0
@@ -282,9 +282,9 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     const { total, byType } = bedNightsInRange(trendBookings, mStart, mEnd)
     // `bedNights` stays all-inclusive (camping included) since the breakeven analysis below
     // needs real total revenue-driving bed-nights. `rate` — what the chart actually plots —
-    // excludes camping and Backpackers; see trendSleepers above.
-    const trendTotal = total - (byType.get('camping') ?? 0) - (byType.get('dorm') ?? 0)
-    const trendAvailable = trendSleepers * mDays
+    // is rooms only (premium + budget), same base as the KPI card; see AVG_OCCUPANCY_TYPES above.
+    const trendTotal = avgBedNights(byType)
+    const trendAvailable = avgSleepers * mDays
     const actualRevenue = actualRevenueInRange(trendBookings, mStart, mEnd)
     return { ym, bedNights: total, actualRevenue, rate: trendAvailable > 0 ? (trendTotal / trendAvailable) * 100 : 0 }
   })
@@ -384,7 +384,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             <div>
               <p className="text-xs text-gray-500">Occupancy Rate</p>
               <p className="text-2xl font-semibold text-gray-900">{occupancyRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {avgSleepers} beds, {avgRooms} rooms · excl. Backpackers</p>
+              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {avgSleepers} beds, {avgRooms} rooms · excl. Backpackers &amp; camping</p>
             </div>
           </div>
         </div>
