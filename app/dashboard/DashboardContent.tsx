@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
-import { bookings, payrollRuns, payrollEntries, workers, rooms, entities } from '@/lib/db/schema'
-import { eq, gte, lte, and, count, ne, sql } from 'drizzle-orm'
+import { bookings, bookingRooms, payrollRuns, payrollEntries, workers, rooms, entities } from '@/lib/db/schema'
+import { eq, gte, lte, and, count, ne, sql, inArray } from 'drizzle-orm'
 import { fmt } from '@/lib/utils'
 import { todaySA } from '@/lib/date-sa'
 import Link from 'next/link'
@@ -120,6 +120,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
     db.select({ id: rooms.id, name: rooms.name, type: rooms.type, capacity: rooms.capacity })
       .from(rooms).where(eq(rooms.active, true)),
     db.select({
+      id:          bookings.id,
       roomId:      bookings.roomId,
       checkIn:     bookings.checkIn,
       checkOut:    bookings.checkOut,
@@ -155,6 +156,20 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         lte(payrollRuns.periodEnd, trendRangeEnd),
       )),
   ])
+  // A group booking can hold several rooms (booking_rooms); bookings.roomId is only the first.
+  // Occupancy must count every linked room — counting just roomId understated Sep 2026 by
+  // ~40% of bed-nights (e.g. Todani School's 7 rooms counted as Room 1 alone).
+  const linkedBookingIds = [...new Set([...monthBookings, ...trendBookings].map(b => b.id))]
+  const linkRows = linkedBookingIds.length
+    ? await db.select({ bookingId: bookingRooms.bookingId, roomId: bookingRooms.roomId })
+        .from(bookingRooms).where(inArray(bookingRooms.bookingId, linkedBookingIds))
+    : []
+  const linkedRoomIds = new Map<number, Set<number>>()
+  for (const l of linkRows) {
+    if (!linkedRoomIds.has(l.bookingId)) linkedRoomIds.set(l.bookingId, new Set())
+    linkedRoomIds.get(l.bookingId)!.add(l.roomId)
+  }
+
   // Occupancy is measured in bed-nights, not room-nights: room types range from a 2-sleeper
   // twin to an 8-sleeper family unit, so counting each as "1 room" understates how full the
   // property actually is. Bookings block the whole room (the API 409s on any overlap), so a
@@ -182,21 +197,28 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const avgBedNights = (byType: Map<string, number>) =>
     [...byType].reduce((s, [type, n]) => s + (AVG_OCCUPANCY_TYPES.has(type) ? n : 0), 0)
 
-  function bedNightsInRange(rows: { roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
+  function bedNightsInRange(rows: { id: number; roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
     const rangeStartMs = new Date(rangeStart).getTime()
     const rangeEndMs   = new Date(rangeEnd).getTime() + 86_400_000 // checkOut is exclusive
     let total = 0
     const byType = new Map<string, number>()
+    const occupiedRoomNights = new Set<string>() // a room-night is counted once, even if two bookings overlap it
     for (const b of rows) {
-      const capacity = roomCapacity.get(b.roomId)
-      if (capacity === undefined) continue // room since deactivated — excluded from both sides of the ratio
       const s = Math.max(new Date(b.checkIn).getTime(), rangeStartMs)
       const e = Math.min(new Date(b.checkOut).getTime(), rangeEndMs)
-      const nights = Math.max(0, (e - s) / 86_400_000)
-      const bedNights = nights * capacity
-      total += bedNights
-      const type = roomType.get(b.roomId)!
-      byType.set(type, (byType.get(type) ?? 0) + bedNights)
+      const roomIds = new Set([b.roomId, ...(linkedRoomIds.get(b.id) ?? [])])
+      for (const roomId of roomIds) {
+        const capacity = roomCapacity.get(roomId)
+        if (capacity === undefined) continue // room since deactivated — excluded from both sides of the ratio
+        const type = roomType.get(roomId)!
+        for (let t = s; t < e; t += 86_400_000) {
+          const key = `${roomId}:${t}`
+          if (occupiedRoomNights.has(key)) continue
+          occupiedRoomNights.add(key)
+          total += capacity
+          byType.set(type, (byType.get(type) ?? 0) + capacity)
+        }
+      }
     }
     return { total, byType }
   }
