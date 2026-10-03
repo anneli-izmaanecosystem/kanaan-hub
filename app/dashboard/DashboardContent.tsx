@@ -126,6 +126,8 @@ export default async function DashboardContent({ searchParamsPromise }: { search
       checkOut:    bookings.checkOut,
       totalAmount: bookings.totalAmount,
       vatIncluded: bookings.vatIncluded,
+      adults:      bookings.adults,
+      children:    bookings.children,
     })
       .from(bookings)
       .where(and(
@@ -196,31 +198,51 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   const avgRooms = avgOccupancyRooms.length
   const avgBedNights = (byType: Map<string, number>) =>
     [...byType].reduce((s, [type, n]) => s + (AVG_OCCUPANCY_TYPES.has(type) ? n : 0), 0)
+  // Room occupancy counts saleable units: each room is 1, except a whole-unit alias (Room 8 =
+  // the whole Backpackers dorm) which stands for its individual dorm-bed units.
+  const roomName = new Map(activeRooms.map(r => [r.id, r.name]))
+  const roomUnits = (roomId: number) =>
+    wholeUnitAliasNames.has(roomName.get(roomId)!) ? roomCapacity.get(roomId)! : 1
+  const roomsByType = new Map<string, number>()
+  for (const r of capacityRooms) roomsByType.set(r.type, (roomsByType.get(r.type) ?? 0) + 1)
 
-  function bedNightsInRange(rows: { id: number; roomId: number; checkIn: string; checkOut: string }[], rangeStart: string, rangeEnd: string) {
+  // Returns two measures per room type:
+  //  - bed-nights (`total`/`byType`): every bed in a booked room — drives breakeven laundry.
+  //  - guest-nights (`paxByType`): actual guests (adults + children) — drives occupancy %, per
+  //    Anneli 2026-10-03 ("use pax"). A multi-room booking's guests are spread over its rooms in
+  //    proportion to bed capacity, and capped at those beds (extra mattresses/campers don't push
+  //    a room past 100%).
+  function bedNightsInRange(rows: { id: number; roomId: number; checkIn: string; checkOut: string; adults: number; children: number }[], rangeStart: string, rangeEnd: string) {
     const rangeStartMs = new Date(rangeStart).getTime()
     const rangeEndMs   = new Date(rangeEnd).getTime() + 86_400_000 // checkOut is exclusive
     let total = 0
     const byType = new Map<string, number>()
+    const paxByType = new Map<string, number>()
+    const roomNightsByType = new Map<string, number>()
     const occupiedRoomNights = new Set<string>() // a room-night is counted once, even if two bookings overlap it
     for (const b of rows) {
       const s = Math.max(new Date(b.checkIn).getTime(), rangeStartMs)
       const e = Math.min(new Date(b.checkOut).getTime(), rangeEndMs)
-      const roomIds = new Set([b.roomId, ...(linkedRoomIds.get(b.id) ?? [])])
+      // rooms since deactivated are excluded from both sides of the ratio
+      const roomIds = [...new Set([b.roomId, ...(linkedRoomIds.get(b.id) ?? [])])].filter(id => roomCapacity.has(id))
+      const bookingBeds = roomIds.reduce((sum, id) => sum + roomCapacity.get(id)!, 0)
+      const guests = Math.min((b.adults ?? 1) + (b.children ?? 0), bookingBeds)
       for (const roomId of roomIds) {
-        const capacity = roomCapacity.get(roomId)
-        if (capacity === undefined) continue // room since deactivated — excluded from both sides of the ratio
+        const capacity = roomCapacity.get(roomId)!
         const type = roomType.get(roomId)!
+        const roomGuests = bookingBeds > 0 ? guests * capacity / bookingBeds : 0
         for (let t = s; t < e; t += 86_400_000) {
           const key = `${roomId}:${t}`
           if (occupiedRoomNights.has(key)) continue
           occupiedRoomNights.add(key)
           total += capacity
           byType.set(type, (byType.get(type) ?? 0) + capacity)
+          paxByType.set(type, (paxByType.get(type) ?? 0) + roomGuests)
+          roomNightsByType.set(type, (roomNightsByType.get(type) ?? 0) + roomUnits(roomId))
         }
       }
     }
-    return { total, byType }
+    return { total, byType, paxByType, roomNightsByType }
   }
 
   // Actual revenue (excl. VAT) for a booking set, pro-rated to the nights that fall in range —
@@ -281,34 +303,43 @@ export default async function DashboardContent({ searchParamsPromise }: { search
   }
   const adr = occupiedGuestNights > 0 ? totalRevenueExclVat / occupiedGuestNights : 0
 
-  // Bed-night occupancy: beds_occupied = room.capacity (a booking blocks its whole room, per
-  // the 409 conflict check in the booking API), not guest headcount — a couple in an 8-sleeper
-  // family unit still occupies all 8 beds as far as saleable inventory is concerned.
+  // Pax occupancy: guest-nights ÷ available bed-nights (per Anneli 2026-10-03). A couple in a
+  // 6-sleeper room counts as 2 of 6 beds, not all 6 — see bedNightsInRange.
   const availableBedNights = avgSleepers * daysInMonth
   const monthBedNights = bedNightsInRange(monthBookings, monthStart, monthEnd)
-  const monthAvgBedNights = avgBedNights(monthBedNights.byType)
-  const occupancyRate = availableBedNights > 0 ? (monthAvgBedNights / availableBedNights) * 100 : 0
+  const monthAvgGuestNights = avgBedNights(monthBedNights.paxByType)
+  const occupancyRate = availableBedNights > 0 ? (monthAvgGuestNights / availableBedNights) * 100 : 0
+  // Room occupancy: room-nights sold ÷ room-nights available, same rooms-only base.
+  const availableRoomNights = avgRooms * daysInMonth
+  const roomOccupancyRate = availableRoomNights > 0 ? (avgBedNights(monthBedNights.roomNightsByType) / availableRoomNights) * 100 : 0
   const occupancyByType = ['premium', 'budget', 'dorm', 'camping'].map(type => {
     const sleepers = sleepersByType.get(type) ?? 0
-    const available = sleepers * daysInMonth
-    const booked = monthBedNights.byType.get(type) ?? 0
-    return { type, sleepers, rate: available > 0 ? (booked / available) * 100 : 0 }
+    const roomCount = roomsByType.get(type) ?? 0
+    const pax = monthBedNights.paxByType.get(type) ?? 0
+    const roomNights = monthBedNights.roomNightsByType.get(type) ?? 0
+    return {
+      type, sleepers, roomCount,
+      rate:     sleepers  > 0 ? (pax / (sleepers * daysInMonth)) * 100 : 0,
+      roomRate: roomCount > 0 ? (roomNights / (roomCount * daysInMonth)) * 100 : 0,
+    }
   }).filter(t => t.sleepers > 0)
 
-  // Trend: bed-night occupancy for each of the last 12 months, bucketed from one wide query.
+  // Trend: pax occupancy for each of the last 12 months, bucketed from one wide query.
   const occupancyTrend = trendMonths.map(ym => {
     const [y, m] = ym.split('-').map(Number)
     const mStart = `${ym}-01`
     const mDays = new Date(y, m, 0).getDate()
     const mEnd = `${ym}-${String(mDays).padStart(2, '0')}`
-    const { total, byType } = bedNightsInRange(trendBookings, mStart, mEnd)
-    // `bedNights` stays all-inclusive (camping included) since the breakeven analysis below
-    // needs real total revenue-driving bed-nights. `rate` — what the chart actually plots —
-    // is rooms only (premium + budget), same base as the KPI card; see AVG_OCCUPANCY_TYPES above.
-    const trendTotal = avgBedNights(byType)
+    const { total, paxByType, roomNightsByType } = bedNightsInRange(trendBookings, mStart, mEnd)
+    // `bedNights` stays all-inclusive (camping included, every bed in a booked room) since the
+    // breakeven laundry below is per bed set. `rate` — what the chart plots — is pax occupancy,
+    // rooms only (premium + budget), same base as the KPI card; see AVG_OCCUPANCY_TYPES above.
+    const trendTotal = avgBedNights(paxByType)
     const trendAvailable = avgSleepers * mDays
     const actualRevenue = actualRevenueInRange(trendBookings, mStart, mEnd)
-    return { ym, bedNights: total, actualRevenue, rate: trendAvailable > 0 ? (trendTotal / trendAvailable) * 100 : 0 }
+    const roomAvailable = avgRooms * mDays
+    const roomRate = roomAvailable > 0 ? (avgBedNights(roomNightsByType) / roomAvailable) * 100 : 0
+    return { ym, bedNights: total, actualRevenue, rate: trendAvailable > 0 ? (trendTotal / trendAvailable) * 100 : 0, roomRate }
   })
 
   // Breakeven model — Kanaan Guest Farm Unit Economics (excl. VAT), per Anneli's 2026-09-01
@@ -405,8 +436,11 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             <div className="rounded-lg bg-green-50 p-2"><TrendingUp size={18} className="text-green-600" /></div>
             <div>
               <p className="text-xs text-gray-500">Occupancy Rate</p>
-              <p className="text-2xl font-semibold text-gray-900">{occupancyRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {avgSleepers} beds, {avgRooms} rooms · excl. Backpackers &amp; camping</p>
+              <div className="flex items-baseline gap-4">
+                <p className="text-2xl font-semibold text-gray-900">{roomOccupancyRate.toFixed(1)}% <span className="text-xs font-normal text-gray-500">rooms</span></p>
+                <p className="text-2xl font-semibold text-gray-900">{occupancyRate.toFixed(1)}% <span className="text-xs font-normal text-gray-500">pax</span></p>
+              </div>
+              <p className="text-xs text-gray-400">{monthLabel(selectedMonth)} · {avgRooms} rooms, {avgSleepers} beds · excl. Backpackers &amp; camping</p>
             </div>
           </div>
         </div>
@@ -461,7 +495,7 @@ export default async function DashboardContent({ searchParamsPromise }: { search
         </Link>
       </div>
 
-      {/* Occupancy breakdown + trend (bed-night basis) */}
+      {/* Occupancy breakdown + trend — rooms (room-nights sold) and pax (guests ÷ beds) */}
       <div className="grid grid-cols-2 gap-6 mb-8">
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-sm font-medium text-gray-700 mb-4">Occupancy by Room Type — {monthLabel(selectedMonth)}</h2>
@@ -469,10 +503,17 @@ export default async function DashboardContent({ searchParamsPromise }: { search
             {occupancyByType.map(t => (
               <div key={t.type}>
                 <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="capitalize text-gray-600">{t.type} <span className="text-gray-400">({t.sleepers} beds)</span></span>
-                  <span className="font-medium text-gray-900">{t.rate.toFixed(1)}%</span>
+                  <span className="capitalize text-gray-600">{t.type} <span className="text-gray-400">({t.roomCount} rooms, {t.sleepers} beds)</span></span>
+                  <span className="text-gray-900">
+                    <span className="font-medium text-blue-600">{t.roomRate.toFixed(1)}%</span> rooms
+                    <span className="text-gray-300"> · </span>
+                    <span className="font-medium text-green-600">{t.rate.toFixed(1)}%</span> pax
+                  </span>
                 </div>
-                <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden mb-0.5">
+                  <div className="h-full rounded-full bg-blue-400" style={{ width: `${Math.min(100, t.roomRate)}%` }} />
+                </div>
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
                   <div className="h-full rounded-full bg-green-500" style={{ width: `${Math.min(100, t.rate)}%` }} />
                 </div>
               </div>
@@ -485,20 +526,27 @@ export default async function DashboardContent({ searchParamsPromise }: { search
           <p className="text-xs text-gray-400 mb-4">Excludes camping and Backpackers</p>
           <div className="flex items-end gap-1.5 h-32">
             {occupancyTrend.map(t => {
-              const heightPct = Math.max(2, Math.min(100, t.rate))
+              const roomH = Math.max(2, Math.min(100, t.roomRate))
+              const paxH  = Math.max(2, Math.min(100, t.rate))
               const isCurrent = t.ym === currentYM
               return (
-                <div key={t.ym} className="flex-1 flex flex-col items-center justify-end h-full group relative">
-                  <span className="text-[10px] text-gray-500 mb-1">{t.rate.toFixed(0)}%</span>
-                  <div
-                    className={`w-full rounded-t ${isCurrent ? 'bg-gray-900' : 'bg-green-400'}`}
-                    style={{ height: `${heightPct}%` }}
-                    title={`${monthLabel(t.ym)}: ${t.rate.toFixed(1)}%`}
-                  />
+                <div key={t.ym} className="flex-1 flex flex-col items-center justify-end h-full">
+                  <span className="text-[9px] leading-tight text-blue-600">{t.roomRate.toFixed(0)}%</span>
+                  <span className="text-[9px] leading-tight text-green-600 mb-1">{t.rate.toFixed(0)}%</span>
+                  <div className="flex items-end gap-px w-full h-full">
+                    <div className={`flex-1 rounded-t ${isCurrent ? 'bg-blue-700' : 'bg-blue-400'}`} style={{ height: `${roomH}%` }}
+                      title={`${monthLabel(t.ym)} rooms: ${t.roomRate.toFixed(1)}%`} />
+                    <div className={`flex-1 rounded-t ${isCurrent ? 'bg-green-700' : 'bg-green-400'}`} style={{ height: `${paxH}%` }}
+                      title={`${monthLabel(t.ym)} pax: ${t.rate.toFixed(1)}%`} />
+                  </div>
                   <span className="text-[10px] text-gray-400 mt-1">{monthLabel(t.ym).slice(0, 3)}</span>
                 </div>
               )
             })}
+          </div>
+          <div className="flex items-center gap-4 mt-3 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block" /> Rooms</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Pax</span>
           </div>
         </div>
       </div>
