@@ -101,6 +101,15 @@ def normalise_phone(value: Any) -> Optional[str]:
 THREAD_TRIP_COLUMNS = ("id", "ref", "status", "direction", "guest_name", "place_name", "scheduled_at", "fare")
 
 
+def _event_out(e: Any) -> dict[str, Any]:
+    """A trip event for the timeline. A pickup code's details (its salt and HMAC) stay in
+    the database: the code is for the guest alone."""
+    event = _out(e)
+    if event["event"].startswith("pickup_code"):
+        event["detail"] = None
+    return event
+
+
 @router.get("/conversations")
 def conversations():
     """One row per guest or driver who has ever exchanged a message, newest activity first,
@@ -169,7 +178,7 @@ def conversation(phone: str):
 
     by_trip: dict[int, list[dict[str, Any]]] = {}
     for e in events:
-        by_trip.setdefault(e["trip_id"], []).append(_out(e))
+        by_trip.setdefault(e["trip_id"], []).append(_event_out(e))
     return {
         "phone": phone,
         "role": role,
@@ -203,6 +212,7 @@ def list_trips(scope: str = "today"):
 
     with hub_db.begin() as c:
         rs = c.execute(stmt.order_by(Tr.c.scheduled_at.desc()).limit(200)).mappings().all()
+    by_card = _card_paid(r["id"] for r in rs if r["captured_at"])
 
     out = []
     for r in rs:
@@ -211,8 +221,26 @@ def list_trips(scope: str = "today"):
         # A draft is a guest who abandoned the chat part-way: real, but not a booking.
         if row["status"] == "draft" and scope != "all":
             continue
-        out.append({**_out(row), "driver": driver if driver["name"] else None})
+        out.append({**_out(row), "paymentMethod": _payment_method(row["id"], row["captured_at"], by_card),
+                    "driver": driver if driver["name"] else None})
     return out
+
+
+def _card_paid(trip_ids: Any) -> set[int]:
+    """Which of these paid trips were paid on the driver's card machine - the rest via Paystack."""
+    ids = list(trip_ids)
+    if not ids:
+        return set()
+    E = hub_db.trip_events
+    with hub_db.begin() as c:
+        return set(c.execute(select(E.c.trip_id).where(E.c.trip_id.in_(ids), E.c.event == T.CARD_PAID_EVENT)).scalars())
+
+
+def _payment_method(trip_id: int, captured_at: Any, by_card: set[int]) -> Optional[str]:
+    """How a paid trip was paid: "card" (the driver's card machine) or "paystack"."""
+    if not captured_at:
+        return None
+    return "card" if trip_id in by_card else "paystack"
 
 
 def _trip_or_404(trip_id: int) -> hub_db.Row:
@@ -225,7 +253,10 @@ def _trip_or_404(trip_id: int) -> hub_db.Row:
 @router.get("/trips/{trip_id}")
 def get_trip(trip_id: int):
     trip = _trip_or_404(trip_id)
-    return {**_out(trip), "events": [_out(e) for e in T.events_for(trip.id)]}
+    events = T.events_for(trip.id)
+    by_card = {trip.id} if any(e.event == T.CARD_PAID_EVENT for e in events) else set()
+    return {**_out(trip), "paymentMethod": _payment_method(trip.id, trip.captured_at, by_card),
+            "events": [_event_out(e) for e in events]}
 
 
 @router.patch("/trips/{trip_id}")
@@ -254,6 +285,28 @@ def act_on_trip(trip_id: int, body: dict[str, Any] = Body(...)):
         T.record(trip.id, "ops", "no_show", body.get("reason") or "marked from the board")
 
     return _out(T.get_trip(trip.id))
+
+
+# ── day trip requests ────────────────────────────────────────────────────────
+
+
+@router.get("/day-trips")
+def day_trip_requests():
+    """Guests who asked for a Day Trip in the chat (not offered yet - they were told "coming
+    soon"): how many in all, and the latest, newest first - who asked, for what day and
+    time, and where each request stands."""
+    from sqlalchemy import func
+
+    from app.db import SessionLocal  # kept in the service's own database (migrations/003)
+    from app.models import DayTripRequest as D
+
+    with SessionLocal() as db:
+        count = db.scalar(select(func.count()).select_from(D))
+        rows = db.scalars(select(D).order_by(D.created_at.desc()).limit(500)).all()
+    return {"count": count, "requests": [{
+        "id": r.id, "phone": r.phone_number, "guestName": r.guest_name, "requestType": r.request_type,
+        "status": r.status, "requestedFor": _value(r.requested_for), "leaveNow": r.leave_now, "createdAt": _value(r.created_at),
+    } for r in rows]}
 
 
 # ── drivers ──────────────────────────────────────────────────────────────────

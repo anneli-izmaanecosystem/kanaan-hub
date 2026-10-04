@@ -214,7 +214,8 @@
     "raised": "2026-10-01",
     "area": "Payment",
     "asked": "Show 'Your car is confirmed' first, then the fare message with only 'Pay now' (no 'Pay during ride').",
-    "status": "done"
+    "status": "done",
+    "note": "Since C38 (2026-10-03) the fare message has 'Pay now' and 'Pay later'; 'Pay during ride' stays gone."
   },
   {
     "id": "C30",
@@ -254,5 +255,53 @@
     "asked": "Deploy the changed chat flow (C25-C32) so it can be tested on mobile phones.",
     "status": "done",
     "note": "kanaan-service deployed 2026-10-01 with the user's go-ahead (deploy/k8s/deploy.sh); pod healthy, /health 200, simulator off in production. The 4 new templates were already APPROVED on Meta. No database change."
+  },
+  {
+    "id": "C35",
+    "raised": "2026-10-03",
+    "area": "Conversation",
+    "asked": "Before the pickup, ask the trip type: Day Trip or One Way Trip. One Way Trip carries on exactly as before. Day Trip answers 'Day Trip Service – Coming Soon' with a way back to One Way Trip, and shows no locations, quotes no fare and books nothing. Keep the choice internally (ONE_WAY / DAY_TRIP) for the future day trip.",
+    "status": "done",
+    "note": "New step awaiting_trip_type after the date/time (Now or a picked time); the choice is kept in the conversation draft as tripType. Pickup retries inside the pickup stage do not ask it again. Plain interactive buttons, no new template. Not stored on the trip row (that needs a database column, left for the day-trip build). Local only - not deployed."
+  },
+  {
+    "id": "C36",
+    "raised": "2026-10-03",
+    "area": "Pickup",
+    "asked": "After the pickup is chosen, tell the guest when the driver is estimated to reach it: the current South African time (Africa/Johannesburg, not the guest's, server's or India's clock) plus the existing estimated travel time - e.g. 14:15 + 35 minutes = 14:50, and 23:40 + 35 minutes = 00:15 with the next day's date. Call it an estimate. Reuse the existing travel time; no new routing.",
+    "status": "done",
+    "note": "Shown only for a car wanted now ('Now') and a pickup away from the farm: the drive is the pickup's existing durationMin (Google Routes from the farm, or the estimate). A car booked for later keeps its booked time - 'now + drive' would be wrong for it. South African time is now the IANA zone Africa/Johannesburg everywhere the bot reads or shows a time (when.SAST, from the tzdata package added to requirements.txt) instead of a fixed +02:00. New message, no template. Local only - not deployed; the deploy also installs tzdata."
+  },
+  {
+    "id": "C37",
+    "raised": "2026-10-03",
+    "area": "Ride",
+    "asked": "Verify the pickup with a code: after the driver's arrival the guest confirms they can see the driver, only that guest is sent a 6-digit code (OTP) for that ride, the driver types it, and only a match lets the existing flow carry on ('Ride started'). Secure random, stored hashed, 10-minute expiry, at most 5 wrong tries, scoped to the ride and guest, no way round it, double taps act once.",
+    "status": "done",
+    "note": "Reuses the existing steps: 'I have arrived' (the pickup arrival; 'Reached destination' is the drop-off) and the approved kn_guest_driver_arrived template with 'Yes, I can see him' / 'Not yet' - the requested 'YES, I CAN SEE THE DRIVER' wording would need a new template on Meta. 'Yes' now sends the code (pickup_code.py) instead of giving the driver 'Ride started' at once; a match gives him 'Ride started', and a typed 'Ride started' no longer gets round it. Stored as trip_events (HMAC keyed by a server secret, bound to the trip) - no database change. Max 3 codes a ride; codes masked in wa_messages, the admin log and the portal timeline. Local only - not deployed."
+  },
+  {
+    "id": "C38",
+    "raised": "2026-10-03",
+    "area": "Payment",
+    "asked": "Wherever the guest has 'Pay now', offer 'Pay now' and 'Pay later'. Pay now: a page with Paystack's privacy policy and an Agree button first, then Paystack's card page as today; once paid, the status reaches the guest, admin and driver. Pay later: two ways - Card payment (the guest swipes their card on the driver's card machine; then Guest 'Payment received via Card.', Admin 'Payment received — Card Payment.', Driver 'Payment Status: Paid — Card Payment.' and the flow carries on as after a Pay now payment) or Paystack payment. Only the templates really needed; nothing that already works disturbed.",
+    "status": "done",
+    "note": "Pay later sits beside Pay now on the fare offer and on the declined / closed-page retries until the driver reaches the destination; at the destination the fare is due, so the Paystack link stays a single Pay now (a WhatsApp link message has one button). Card payment: the driver and Anneli are told when it is chosen; at the destination the guest is asked to pay on the machine and the driver gets 'Card payment done' - his tap marks the trip paid (trip_events fare_paid_card), sends the three messages, and gives him 'Ride complete'. Paystack payment: the link comes at the destination, as before. Every Paystack link now opens this service's page first (/payments/pay/<reference>): what Paystack says about card security, links to Paystack's own privacy policy (https://paystack.com/privacy/merchant) and security article, and Agree (noted on the trip) then Paystack. That page refuses a trip already paid, so no one pays twice. The admin board shows 'Paid — Card' or 'Paid — Paystack'. No new Meta template: every new message is a reply inside the 24-hour window, and Anneli's trip-closed card (approved kn_ops_trip_closed_v3) carries how it was paid. No database change. Local only - not deployed."
+  },
+  {
+    "id": "C39",
+    "raised": "2026-10-04",
+    "area": "Admin portal",
+    "asked": "Store the requests of guests who tap Day Trip, and add a tab in the admin portal where the admin can check the day trip requests.",
+    "status": "done",
+    "note": "Each Day Trip tap is kept in a new table in the WhatsApp service's own database, kanaan_day_trip_requests (migrations/003): the guest's number, their name if an earlier booking gave it, the day and time they chose (or Now), and when they asked. A second tap for the same time is the same request. The portal reads it through the service (GET /dashboard/day-trips, /api/day-trips) on a new 'Day trip requests' tab under Transportation, with Call and WhatsApp links. Read-only. The chat itself is unchanged. Deploying needs scripts/migrate.py run once against the service's database (adds the one table; nothing existing changes). Local only - not deployed."
+  },
+  {
+    "id": "C40",
+    "raised": "2026-10-04",
+    "area": "Day Trip",
+    "asked": "Store a Day Trip Request once the guest has chosen Day Trip and given their full name: full name, WhatsApp number, type DAY_TRIP, a status, created time - no booking, fare, distance or pickup/drop-off. Reuse the guest's existing details and do not ask twice; no duplicate from a repeated webhook, but a later request is allowed. Show them on the existing Day Trip Requests tab with Full Name, WhatsApp Number, Request Type, Date/Time, Status and 'Day Trip Requests (N)' counted by the backend. One Way Trip unchanged.",
+    "status": "done",
+    "note": "The chat asked no name on the Day Trip path, so after a Day Trip tap: a name the chat already has (earlier in this booking, an earlier trip, an earlier Day Trip request) is reused; otherwise 'What is your full name?' is asked, and the request is kept when it is answered - then the existing 'Coming Soon' reply, unchanged. There is no guest table for WhatsApp guests (trips keep name and number), so the request keeps the number as the guest's key, like trips. Same table as C39 (migrations/003, still undeployed) with request_type (DAY_TRIP) and status ('requested', the trips' word for a request waiting on the admin) added. Duplicates: a repeated webhook is ignored as before (wa_messages), a name sent twice at once moves the chat on once (the same step claim as Send request), and (number, chosen day and time) is unique - another day or time is a new request. GET /dashboard/day-trips now returns {count, requests}; the tab shows 'Day Trip Requests (N)' and refreshes every 30 s, as the board does. No new template; One Way Trip untouched. Local only - not deployed."
   }
 ]

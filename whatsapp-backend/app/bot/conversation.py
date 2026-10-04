@@ -29,7 +29,8 @@ from app.bot.places import PRESETS, SHARED, distance_between, preset_place, reso
 from app.bot.reply import FLOW_REPLY, Reply, context_id, is_location, read_reply, said
 from app.bot.settings_store import TransferSettings, booking_window_error, fare_for, js_round, load_settings
 from app.bot.wa import send_buttons, send_flow, send_list, send_location, send_location_request, send_text, to_wa_id
-from app.bot.when import format_day_name, format_time, format_when_long, from_iso, iso_z, parse_when
+from app.bot.when import (estimated_arrival, format_arrival, format_day_name, format_duration, format_time,
+                          format_when_long, from_iso, iso_z, parse_when)
 from app.config import get_settings
 
 log = logging.getLogger("kanaan.bot.conversation")
@@ -40,6 +41,8 @@ class STEPS:
     start = "awaiting_start"
     when = "awaiting_when"
     datetime = "awaiting_datetime"
+    trip_type = "awaiting_trip_type"
+    day_trip_name = "awaiting_day_trip_name"
     frm = "awaiting_from"
     to = "awaiting_to"
     place_confirm = "awaiting_place_confirm"
@@ -55,6 +58,8 @@ class BTN:
     book = "book"
     when_now = "when:now"
     when_later = "when:later"
+    trip_day = "trip:day"
+    trip_one_way = "trip:one_way"
     at_farm = "from:farm"
     send_location = "from:location"
     from_closer = "from:closer"
@@ -73,6 +78,13 @@ class BTN:
     cancel_yes = "cancel:yes"
     cancel_no = "cancel:no"
     review_skip = "review:skip"
+
+
+class TRIP_TYPE:
+    """draft["tripType"]: the kind of trip the guest chose. Only a one-way trip can be
+    booked; a day trip is offered and answered with "coming soon" until it is built."""
+    one_way = "ONE_WAY"
+    day_trip = "DAY_TRIP"
 
 
 # Either end of the trip: the farm, or a place dict from places.py.
@@ -159,6 +171,78 @@ def ask_datetime(to: str) -> str:
     return STEPS.datetime
 
 
+def ask_trip_type(to: str) -> str:
+    """Asked once the time is set, just before the pickup."""
+    send_buttons(to, "What kind of trip would you like?", [(BTN.trip_day, "Day Trip"), (BTN.trip_one_way, "One Way Trip")])
+    return STEPS.trip_type
+
+
+def refuse_day_trip(to: str) -> str:
+    """Day trips are not offered yet: say so, with One Way Trip one tap away. The step
+    stays the same, so that tap carries on exactly as if it had been chosen first."""
+    send_buttons(to, "Day Trip Service – Coming Soon\n\n"
+                     "This service is currently unavailable and will be introduced in the future.\n\n"
+                     "Please select One Way Trip to continue with our currently available transfer service.",
+                 [(BTN.trip_one_way, "One Way Trip")])
+    return STEPS.trip_type
+
+
+def ask_day_trip_name(to: str) -> str:
+    """Day Trip, from a guest whose name is not known yet: the name, for their request."""
+    send_text(to, "What is your full name?")
+    return STEPS.day_trip_name
+
+
+def known_name(phone: str, draft: dict[str, Any]) -> Optional[str]:
+    """The guest's full name if the chat already has it - given earlier in this booking, on
+    an earlier trip, or with an earlier day trip request - so it is not asked again."""
+    if draft.get("name"):
+        return draft["name"]
+    last = T.last_trip(phone)
+    if last and last.guest_name:
+        return last.guest_name
+    from app.db import SessionLocal
+    from app.models import DayTripRequest as D
+    try:
+        with SessionLocal() as db:
+            return db.scalar(select(D.guest_name).where(D.phone_number == phone, D.guest_name.is_not(None))
+                             .order_by(D.created_at.desc()).limit(1))
+    except Exception:
+        log.exception("could not look up an earlier day trip request from %s", phone)
+        return None
+
+
+def day_trip_requested(phone: str, to: str, draft: dict[str, Any]) -> str:
+    """Day Trip, with the guest's name: the request is kept, then the usual "coming soon"."""
+    keep_day_trip_request(phone, draft)
+    return refuse_day_trip(to)
+
+
+def keep_day_trip_request(phone: str, draft: dict[str, Any]) -> None:
+    """Who asked for a day trip (full name and WhatsApp number), and for when - kept for the
+    admin portal (Transportation > Day trip requests), since the chat itself books nothing.
+    The same guest asking again for the same day and time is the same request; a request
+    for another day or time is a new one. A failure is logged and never stops the chat."""
+    from app.db import SessionLocal  # the service's own database, beside the admin log
+    from app.models import DayTripRequest
+
+    if not draft.get("scheduledAt"):
+        return
+    try:
+        with SessionLocal() as db:
+            db.execute(pg_insert(DayTripRequest.__table__).values(
+                id=str(uuid.uuid4()),
+                phone_number=phone,
+                guest_name=draft.get("name"),
+                requested_for=db_time(from_iso(draft["scheduledAt"])),
+                leave_now=bool(draft.get("leaveNow")),
+                created_at=db_time(now()),
+            ).on_conflict_do_nothing(index_elements=["phone_number", "requested_for"]))
+            db.commit()
+    except Exception:
+        log.exception("could not keep the day trip request from %s", phone)
+
+
 FARM_ROW = {"title": "Kanaan Guest Farm", "description": "R40, Hazyview"}
 
 
@@ -190,6 +274,19 @@ def ask_pickup_location(to: str) -> str:
         'Tap "Send location" below, then choose your current location or drop a pin where the driver should meet you.',
     )
     return STEPS.frm
+
+
+def tell_driver_arrival(to: str, pickup: dict[str, Any]) -> None:
+    """For a car wanted now: when the driver should reach the pickup - the current South
+    African time plus the drive to it, the same duration the pickup was measured with
+    (from the farm). An estimate: traffic is not counted."""
+    minutes = pickup.get("durationMin")
+    if not minutes:
+        return
+    at = now()
+    send_text(to, "Estimated Driver Arrival\n\n"
+                  f"Your driver is estimated to reach your pickup location at {format_arrival(estimated_arrival(int(minutes), at), at)}.\n\n"
+                  f"Estimated travel time: {format_duration(int(minutes))}.")
 
 
 def ask_to(to: str, frm: Optional[End] = None) -> str:
@@ -385,7 +482,9 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
                 save_conversation(phone, ask_when(to), draft)
                 return
             draft["scheduledAt"] = iso_z(when)
-            save_conversation(phone, ask_from(to), draft)
+            # The driver sets off as soon as possible, so an arrival time can be estimated.
+            draft["leaveNow"] = True
+            save_conversation(phone, ask_trip_type(to), draft)
             return
         if reply_id == BTN.when_later:
             save_conversation(phone, ask_datetime(to), draft)
@@ -421,6 +520,40 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
         _handle_datetime(phone, to, when, draft)
         return
 
+    if step == STEPS.day_trip_name:
+        # The full name for a Day Trip request. A double-sent name arrives twice at once:
+        # only the message that moves the conversation off this step keeps the request.
+        if text and not reply_id:
+            if not _claim_step(phone, STEPS.day_trip_name, STEPS.trip_type):
+                return
+            draft["name"] = text[:60]
+            save_conversation(phone, day_trip_requested(phone, to, draft), draft)
+            return
+        if not reply_id:
+            save_conversation(phone, ask_day_trip_name(to), draft)
+            return
+        # A tap on the trip type question is answered just as it would be there.
+        step = STEPS.trip_type
+
+    if step == STEPS.trip_type:
+        if reply_id == BTN.trip_one_way or said(reply, "one way trip", "one way"):
+            draft["tripType"] = TRIP_TYPE.one_way
+            save_conversation(phone, ask_from(to), draft)
+            return
+        if reply_id == BTN.trip_day or said(reply, "day trip"):
+            # Kept as a Day Trip request once the guest's full name is known; nothing is
+            # quoted or booked.
+            draft["tripType"] = TRIP_TYPE.day_trip
+            name = known_name(phone, draft)
+            if not name:
+                save_conversation(phone, ask_day_trip_name(to), draft)
+                return
+            draft["name"] = name
+            save_conversation(phone, day_trip_requested(phone, to, draft), draft)
+            return
+        save_conversation(phone, ask_trip_type(to), draft)
+        return
+
     if step == STEPS.frm:
         if reply_id in (BTN.send_location, BTN.from_closer):
             save_conversation(phone, ask_pickup_location(to), draft)
@@ -451,6 +584,8 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
                 return
             if end.get("preset"):
                 show_pin(to, end)
+            if draft.get("leaveNow"):
+                tell_driver_arrival(to, end)
         draft["from"] = end
         save_conversation(phone, ask_to(to, end), draft)
         return
@@ -595,7 +730,7 @@ def _handle_datetime(phone: str, to: str, when, draft: dict[str, Any]) -> None:
         save_conversation(phone, ask_datetime(to), draft)
         return
     draft["scheduledAt"] = iso_z(when)
-    save_conversation(phone, ask_from(to), draft)
+    save_conversation(phone, ask_trip_type(to), draft)
 
 
 def _same_spot(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -693,22 +828,29 @@ def handle_trip_reply(phone: str, message: dict[str, Any], reply: Reply, convo: 
         save_conversation(phone, STEPS.idle, {})
         return True
 
-    # Pay now — offered once Anneli has allocated a driver, and still good after the ride
-    # closes (the tap may come late). "Pay during ride" is on older offers only.
+    # Pay now / Pay later — offered once Anneli has allocated a driver; Pay now is still good
+    # after the ride closes (the tap may come late). Pay later leads to Card payment (the
+    # driver's card machine) or Paystack payment, both at the destination. "Pay during
+    # ride" is on older offers only.
     if rid == "guest:pay:noshow":
         target = trip or T.last_trip(phone)
         if target:
             T.guest_pay_noshow(target.id)
         return True
 
-    if rid in ("guest:pay:now", "guest:pay:after"):
+    pay = {
+        T.PAY_NOW[0]: T.guest_pay_now,
+        T.PAY_LATER[0]: T.guest_pay_later,
+        T.PAY_BY_CARD[0]: T.guest_pay_by_card,
+        T.PAY_BY_PAYSTACK[0]: T.guest_pay_by_paystack,
+        "guest:pay:after": T.guest_pay_after,
+    }
+    if rid in pay:
         target = trip or T.last_trip(phone)
         if not target or target.status in ("requested", "draft"):
             send_text(to, "Nothing to pay yet - you will be asked once your car is confirmed.")
-        elif rid == "guest:pay:now":
-            T.guest_pay_now(target.id)
         else:
-            T.guest_pay_after(target.id)
+            pay[rid](target.id)
         return True
 
     if not trip or trip.status not in T.ACTIVE_STATUSES:
@@ -727,6 +869,9 @@ def handle_trip_reply(phone: str, message: dict[str, Any], reply: Reply, convo: 
     if trip.status == "driver_waiting" and not (rid == "guest:at_drop:yes" or said(reply, B["we_are_here"])):
         if rid == "guest:can_see" or said(reply, B["can_see"]):
             T.guest_confirmed_pickup(trip.id)
+            return True
+        if rid == T.NEW_CODE[0]:
+            T.pickup_code_again(trip.id)
             return True
         if said(reply, B["not_yet"]):
             T.guest_cannot_see_driver(trip.id)

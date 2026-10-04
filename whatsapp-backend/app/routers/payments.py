@@ -18,7 +18,7 @@ import html
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -70,7 +70,10 @@ def record(
     row.card_last4 = auth.get("last4") or row.card_last4
     row.gateway_response = tx.get("gateway_response") or row.gateway_response
     row.last_event = event or row.last_event
-    row.raw = tx
+    # The link Paystack gave when the payment was started, which its later reports of the
+    # transaction leave out: the consent page still needs it to send the guest on.
+    link = (row.raw or {}).get("authorization_url")
+    row.raw = {**tx, "authorization_url": link} if link and not tx.get("authorization_url") else tx
     row.updated_at = utcnow()
     db.commit()
     db.refresh(row)
@@ -181,34 +184,118 @@ def paystack_callback(
         except paystack.PaystackError:
             outcome = "unknown"
 
-    wa = "https://wa.me/" + "".join(c for c in settings.kanaan_whatsapp_number if c.isdigit())
     title, message = {
         "paid": ("Payment received", "Thank you for your payment. You can go back to WhatsApp now."),
         "failed": ("Payment did not go through", "No money was taken. Go back to WhatsApp and tap \"Try again\" to use the same or another card."),
         "cancelled": ("Payment cancelled", "No money was taken. You can pay later from WhatsApp whenever you are ready."),
     }.get(outcome, ("Payment not completed", 'We could not confirm your payment. Go back to WhatsApp and tap "Pay now" to try again.'))
+    return _page(settings, title, f"<p>{html.escape(message)}</p>")
+
+
+def _page(settings: Settings, title: str, content: str, consent: bool = False) -> HTMLResponse:
+    """A page the guest sees in their phone's browser, with the way back to the chat."""
+    wa = "https://wa.me/" + "".join(c for c in settings.kanaan_whatsapp_number if c.isdigit())
     return HTMLResponse(f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} - Kanaan Guest Farm</title>
+<title>{html.escape(title)} - Kanaan Guest Farm</title>
 <style>
   body {{ margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #f0f2f5; color: #111b21; }}
   main {{ max-width: 420px; margin: 15vh auto 0; padding: 32px 24px; background: #fff; border-radius: 12px; text-align: center; }}
   h1 {{ font-size: 22px; margin: 0 0 12px; }}
   p {{ font-size: 16px; line-height: 1.5; color: #54656f; margin: 0 0 24px; }}
   a {{ display: inline-block; padding: 12px 24px; border-radius: 24px; background: #1f4d3a; color: #fff; text-decoration: none; font-weight: 600; }}
+  main.consent {{ margin-top: 6vh; text-align: left; }}
+  .consent h1, .consent .amount {{ text-align: center; }}
+  .amount {{ font-size: 20px; font-weight: 600; color: #111b21; }}
+  ul {{ margin: 0 0 20px; padding-left: 20px; color: #3b4a54; font-size: 15px; line-height: 1.5; }}
+  li {{ margin-bottom: 10px; }}
+  .policy {{ margin-bottom: 20px; font-size: 15px; }}
+  .policy a {{ display: block; padding: 6px 0; background: none; color: #1f4d3a; text-decoration: underline; font-weight: 600; }}
+  .small {{ font-size: 14px; margin-bottom: 16px; }}
+  button {{ width: 100%; padding: 14px; border: 0; border-radius: 24px; background: #1f4d3a; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; }}
+  .back {{ display: block; margin-top: 12px; background: #e8ecef; color: #111b21; text-align: center; }}
 </style>
 </head>
 <body>
-<main>
-  <h1>{title}</h1>
-  <p>{html.escape(message)}</p>
-  <a href="{wa}">Back to WhatsApp</a>
+<main{' class="consent"' if consent else ''}>
+  <h1>{html.escape(title)}</h1>
+  {content}
+  <a class="back" href="{wa}">Back to WhatsApp</a>
 </main>
 </body>
 </html>""")
+
+
+# ── public: the guest's "Pay now" ────────────────────────────────────────────
+#
+# The Pay now button in WhatsApp opens this page first, not Paystack: what Paystack does
+# with the guest's card and personal details, and an Agree button that goes on to Paystack's
+# own payment page. The statements below are Paystack's own (its help centre, "How secure
+# is Paystack"); the full policy is Paystack's page, linked rather than copied, so it is
+# always the current one.
+
+PAYSTACK_PRIVACY_URL = "https://paystack.com/privacy/merchant"
+PAYSTACK_SECURITY_URL = "https://support.paystack.com/hc/en-us/articles/360009881160-How-secure-is-Paystack"
+AGREED = "paystack_policy_agreed"  # trip_events: the guest tapped Agree
+
+
+def _payable(db: Session, reference: str) -> tuple[Optional[Payment], Optional[str], Optional[str]]:
+    """(payment row, Paystack link, why it cannot be paid) for a consent page."""
+    row = db.scalar(select(Payment).where(Payment.reference == reference))
+    link = (row.raw or {}).get("authorization_url") if row else None
+    if not row or not link:
+        return row, None, 'This payment link is not known. Go back to WhatsApp and tap "Pay now" for a new one.'
+    if row.status == "success":
+        return row, None, "This payment has already been made. Thank you - nothing more to pay."
+    if get_settings().bot_configured and row.trip_id and row.purpose == "fare":
+        from app.bot.trip import get_trip  # late: the hub database is only there when the bot is
+        trip = get_trip(row.trip_id)
+        # Paid another way since this link was sent (on the driver's card machine, or by a
+        # newer link): paying here would charge the guest twice.
+        if trip and trip.captured_at:
+            return row, None, f"Trip {trip.ref} is already paid. Thank you - nothing more to pay."
+    return row, link, None
+
+
+@router.get("/pay/{reference}", response_class=HTMLResponse)
+def consent_page(reference: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    row, link, closed = _payable(db, reference)
+    if closed:
+        return _page(settings, "Nothing to pay", f"<p>{html.escape(closed)}</p>")
+    amount = f"R {(row.amount_cents or 0) / 100:,.2f}".replace(",", " ")
+    what = "No-show fee" if row.purpose == "noshow" else "Fare"
+    trip = f" - trip {html.escape(row.trip_ref)}" if row.trip_ref else ""
+    return _page(settings, "Secure payment with Paystack", f"""<p class="amount">{what}: {amount}{trip}</p>
+  <ul>
+    <li>You pay on Paystack's own secure payment page. Kanaan Guest Farm never sees or stores your card details.</li>
+    <li>Paystack is certified PCI DSS Level 1, the highest security standard in the card payments industry, and encrypts card data.</li>
+    <li>Paystack handles your personal information under its privacy policy.</li>
+  </ul>
+  <div class="policy">
+    <a href="{PAYSTACK_PRIVACY_URL}" target="_blank" rel="noopener">Read Paystack's Privacy Policy</a>
+    <a href="{PAYSTACK_SECURITY_URL}" target="_blank" rel="noopener">How Paystack keeps payments safe</a>
+  </div>
+  <p class="small">By tapping Agree you accept Paystack's Privacy Policy and continue to Paystack to pay.</p>
+  <form method="post"><button type="submit">Agree</button></form>""", consent=True)
+
+
+@router.post("/pay/{reference}")
+def consent_agreed(reference: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Agree: noted on the trip, then on to Paystack's payment page."""
+    row, link, closed = _payable(db, reference)
+    if closed:
+        return _page(settings, "Nothing to pay", f"<p>{html.escape(closed)}</p>")
+    if settings.bot_configured and row.trip_id:
+        from app.bot.trip import record as record_event
+        try:
+            record_event(row.trip_id, "guest", AGREED, reference)
+        except Exception:
+            import logging
+            logging.getLogger("kanaan.payments").exception("could not record the agreement for %s", reference)
+    return RedirectResponse(link, status_code=303)
 
 
 # ── internal API ─────────────────────────────────────────────────────────────

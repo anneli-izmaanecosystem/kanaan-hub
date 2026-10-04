@@ -113,3 +113,19 @@ class Payment(Base):
     forward_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class DayTripRequest(Base):
+    """A guest tapped "Day Trip" in the booking chat. Day trips are not offered yet, so the
+    request is kept for the admin portal to follow up - see migrations/003."""
+
+    __tablename__ = "kanaan_day_trip_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    phone_number: Mapped[str] = mapped_column(String, nullable=False)
+    guest_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    requested_for: Mapped[datetime] = mapped_column(nullable=False)
+    leave_now: Mapped[bool] = mapped_column(nullable=False, default=False)
+    request_type: Mapped[str] = mapped_column(String, nullable=False, default="DAY_TRIP")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="requested")  # as a trip waiting on the admin
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

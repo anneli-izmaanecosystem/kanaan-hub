@@ -65,6 +65,8 @@ def enable() -> None:
     wa.capture = _Capture()
     paystack.start_payment = _fake_start_payment
     paystack.verify_transaction = _fake_verify
+    # The consent page on this machine, not the address in .env's callback URL.
+    paystack.consent_url = lambda settings, reference: f"/payments/pay/{reference}"
 
 
 class _Capture(list):
@@ -278,7 +280,7 @@ def reset():
     from app.db import SessionLocal
     with SessionLocal() as db:
         db.execute(text("delete from kanaan_whatsapp_logs")); db.execute(text("delete from kanaan_whatsapp_flows"))
-        db.execute(text("delete from kanaan_payments")); db.commit()
+        db.execute(text("delete from kanaan_payments")); db.execute(text("delete from kanaan_day_trip_requests")); db.commit()
     with _lock:
         _log.clear()
     _payments.clear()

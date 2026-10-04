@@ -49,13 +49,13 @@ def to_wa_id(phone: str) -> str:
     return phone.removeprefix("+")
 
 
-def _send(payload: dict[str, Any], trip_id: Optional[int] = None) -> Optional[str]:
+def _send(payload: dict[str, Any], trip_id: Optional[int] = None, redact: Optional[str] = None) -> Optional[str]:
     settings = get_settings()
     if capture is not None:
         wamid = f"wamid.test-{_RUN}-{next(_fake_ids)}"
         capture.append({**payload, "_id": wamid, "_trip_id": trip_id})
     elif not settings.whatsapp_configured:
-        log.warning("WhatsApp not configured - would have sent: %s", json.dumps(payload))
+        log.warning("WhatsApp not configured - would have sent: %s", json.dumps(_masked(payload, redact)))
         return None
     else:
         url = f"{settings.graph_base_url}/{settings.whatsapp_phone_number_id}/messages"
@@ -72,11 +72,20 @@ def _send(payload: dict[str, Any], trip_id: Optional[int] = None) -> Optional[st
         wamid = ((body.get("messages") or [{}])[0]).get("id")
 
     if wamid and "to" in payload:
-        _record(payload, wamid, trip_id)
+        _record(payload, wamid, trip_id, redact)
     return wamid
 
 
 # ── recording ────────────────────────────────────────────────────────────────
+
+
+def _masked(payload: dict[str, Any], redact: Optional[str]) -> dict[str, Any]:
+    """The payload as logs may keep it: a secret that went to one person (a pickup code)
+    is masked in the message text."""
+    if not redact or payload.get("type") != "text":
+        return payload
+    text_ = payload["text"]
+    return {**payload, "text": {**text_, "body": text_["body"].replace(redact, "•" * len(redact))}}
 
 
 def _describe(p: dict[str, Any]) -> tuple[str, str, Optional[str]]:
@@ -108,10 +117,11 @@ def _describe(p: dict[str, Any]) -> tuple[str, str, Optional[str]]:
     return kind, "", None
 
 
-def _record(payload: dict[str, Any], wamid: str, trip_id: Optional[int]) -> None:
+def _record(payload: dict[str, Any], wamid: str, trip_id: Optional[int], redact: Optional[str] = None) -> None:
     from app.bot.roles import role_for  # late: roles reads settings through hub_db
 
     phone = to_e164(payload["to"])
+    payload = _masked(payload, redact)
     kind, body, template_name = _describe(payload)
     try:
         with hub_db.begin() as c:
@@ -145,9 +155,9 @@ def link_to_trip(wamid: Optional[str], trip_id: Optional[int]) -> None:
 # ── message shapes ───────────────────────────────────────────────────────────
 
 
-def send_text(to: str, body: str, trip_id: Optional[int] = None) -> Optional[str]:
-    """Plain text. Only valid inside the 24-hour window."""
-    return _send({"to": to, "type": "text", "text": {"body": body, "preview_url": False}}, trip_id)
+def send_text(to: str, body: str, trip_id: Optional[int] = None, redact: Optional[str] = None) -> Optional[str]:
+    """Plain text. Only valid inside the 24-hour window. `redact` is sent but not recorded."""
+    return _send({"to": to, "type": "text", "text": {"body": body, "preview_url": False}}, trip_id, redact)
 
 
 def send_buttons(to: str, body: str, buttons: list[Button], trip_id: Optional[int] = None) -> Optional[str]:
