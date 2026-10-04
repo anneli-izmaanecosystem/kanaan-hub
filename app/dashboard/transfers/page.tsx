@@ -11,6 +11,7 @@ type Trip = {
   placeName: string | null; pickupName: string | null; distanceKm: string | null
   scheduledAt: string | null; fare: string | null
   heldAt: string | null; capturedAt: string | null; releasedAt: string | null
+  paymentMethod: 'card' | 'paystack' | null  // how a paid trip was paid: the driver's card machine, or Paystack
   driver: Driver | null
 }
 type DriverRow = { id: number; name: string; plate: string; onDuty: boolean; active: boolean }
@@ -46,7 +47,7 @@ function money(v: string | null) {
 
 /** What is happening to the guest's money, in words rather than three timestamps. */
 function holdState(t: Trip): { label: string; tone: string } {
-  if (t.capturedAt) return { label: 'Charged',  tone: 'text-green-700' }
+  if (t.capturedAt) return { label: t.paymentMethod === 'card' ? 'Paid — Card' : 'Paid — Paystack', tone: 'text-green-700' }
   if (t.releasedAt) return { label: 'Released', tone: 'text-gray-500' }
   if (t.heldAt)     return { label: 'Held',     tone: 'text-amber-700' }
   return { label: 'Not held', tone: 'text-gray-400' }

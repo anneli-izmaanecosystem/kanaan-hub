@@ -10,6 +10,7 @@ const tabs = [
   { href: '/dashboard/transfers/drivers',      label: 'Drivers' },
   { href: '/dashboard/transfers/destinations', label: 'Destinations' },
   { href: '/dashboard/transfers/settings',     label: 'Rates & rules' },
+  { href: '/dashboard/transfers/day-trips',    label: 'Day trip requests' },
 ]
 
 export default function TransfersLayout({ children }: { children: React.ReactNode }) {

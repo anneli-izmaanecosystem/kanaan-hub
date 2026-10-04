@@ -4,15 +4,24 @@ Guests type departure times in whatever shape comes naturally, so this accepts t
 handful of forms that actually turn up and returns None for everything else — the
 conversation then asks again rather than guessing at a 05:30 airport run.
 
-South Africa is UTC+2 all year with no DST, so a fixed offset is correct and needs no
-timezone database (the slim image has none).
+Instants are kept in UTC (the server's own timezone never enters into it) and turned into
+South African time for reading and display, using the IANA zone Africa/Johannesburg. The
+slim image has no system timezone database, so the zone comes from the tzdata package.
 """
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-SAST = timezone(timedelta(hours=2), "SAST")
+try:
+    SAST = ZoneInfo("Africa/Johannesburg")
+except ZoneInfoNotFoundError:
+    # tzdata missing from an install: keep the bot answering rather than failing to start.
+    # South Africa has kept UTC+2 since 1944, so the times read the same either way.
+    logging.getLogger("kanaan.bot.when").error("no timezone data for Africa/Johannesburg (install tzdata) - using UTC+2")
+    SAST = timezone(timedelta(hours=2), "SAST")
 
 MONTHS = ["january", "february", "march", "april", "may", "june",
           "july", "august", "september", "october", "november", "december"]
@@ -128,6 +137,31 @@ def format_time(at: datetime) -> str:
 def format_day_name(at: datetime) -> str:
     """'Saturday'"""
     return DAYS[_sa(at).weekday()].capitalize()
+
+
+def estimated_arrival(minutes: int, at: Optional[datetime] = None) -> datetime:
+    """When a drive of `minutes` started at `at` (default: now) gets there, in South
+    African time. Datetime arithmetic, so the hour, midnight and the date roll over."""
+    start = at or datetime.now(timezone.utc)
+    return _sa(start + timedelta(minutes=minutes))
+
+
+def format_arrival(arrival: datetime, at: Optional[datetime] = None) -> str:
+    """'14:50 South Africa time', or with the date when that is not today in South Africa:
+    '00:15 on 4 October 2026 (South Africa time)'."""
+    s = _sa(arrival)
+    if s.date() == _sa(at or datetime.now(timezone.utc)).date():
+        return f"{s:%H:%M} South Africa time"
+    return f"{s:%H:%M} on {s.day} {MONTHS[s.month - 1].capitalize()} {s.year} (South Africa time)"
+
+
+def format_duration(minutes: int) -> str:
+    """'35 minutes', '1 hour 20 minutes', '2 hours'"""
+    hours, mins = divmod(int(minutes), 60)
+    parts = [f"{hours} hour{'' if hours == 1 else 's'}"] if hours else []
+    if mins or not hours:
+        parts.append(f"{mins} minute{'' if mins == 1 else 's'}")
+    return " ".join(parts)
 
 
 def sa_date(at: datetime) -> str:

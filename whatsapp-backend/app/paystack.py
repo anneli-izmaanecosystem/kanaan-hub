@@ -13,6 +13,7 @@ import json
 import re
 import time
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -84,6 +85,17 @@ def start_payment(
         sep = "&" if "?" in settings.paystack_callback_url else "?"
         body["metadata"]["cancel_action"] = f"{settings.paystack_callback_url}{sep}reference={reference}&cancelled=1"
     return _call(settings, "POST", "/transaction/initialize", body)
+
+
+def consent_url(settings: Settings, reference: str) -> Optional[str]:
+    """Where the guest's "Pay now" button opens: this service's page with Paystack's privacy
+    policy and an Agree button, which goes on to Paystack's own card page (routers/payments.py
+    consent_page). This service's public address is taken from the callback URL; without
+    one there is no page to send the guest to, so None - and the button opens Paystack."""
+    marker = "/payments/paystack/callback"
+    if marker not in settings.paystack_callback_url:
+        return None
+    return settings.paystack_callback_url.split(marker)[0] + f"/payments/pay/{quote(reference, safe='')}"
 
 
 def verify_transaction(settings: Settings, reference: str) -> dict[str, Any]:

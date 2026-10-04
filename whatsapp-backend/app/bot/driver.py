@@ -1,7 +1,8 @@
-"""The driver's side. He only ever taps: Noted on the trip card, then I have left / I have
-arrived / Ride started / Reached destination / Ride complete on the day. "Ride started" is
-offered once, when the guest says "Yes, I can see him"; "Ride complete" only once the fare
-is paid."""
+"""The driver's side. He taps: Noted on the trip card, then I have left / I have arrived /
+Ride started / Reached destination / Ride complete on the day - and at the pickup types the
+6-digit code the guest reads him (pickup_code.py). "Ride started" is offered once, when
+that code matches; "Ride complete" only once the fare is paid - by Paystack, or on his card
+machine at the drop-off (Card payment done)."""
 
 from datetime import timedelta
 from typing import Any
@@ -10,6 +11,7 @@ from sqlalchemy import select
 
 from app.bot import hub_db, trip as T
 from app.bot.hub_db import Row, now
+from app.bot.pickup_code import read_code
 from app.bot.reply import context_id, read_reply, said
 from app.bot.settings_store import load_settings
 from app.bot.wa import send_text, to_wa_id
@@ -71,15 +73,23 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         T.driver_arrived(trip.id, driver)
         return
 
-    # The guest is in the car. The button comes once the guest can see the driver; typed, it
-    # is also accepted for a guest who never tapped, and from "on my way" for a driver who
-    # skipped "I have arrived".
+    # The code the guest read out. Checked against this driver's own trip.
+    code = read_code(reply.text) if not reply.reply_id else None
+    if code and trip.status in ("driver_waiting", "driver_en_route"):
+        T.driver_entered_code(trip.id, driver, code, message.get("id"))
+        return
+
+    # The guest is in the car. The button comes once the guest's code has matched, and a
+    # typed "Ride started" is held to the same rule - there is no way round the code.
     if reply.reply_id == T.RIDE_STARTED[0] or said(reply, B["ride_started"]):
         if trip.status == "in_progress":
             _ride_step(to, trip, f"Trip {trip.ref} has already started. ")
             return
         if trip.status not in ("driver_waiting", "driver_en_route"):
             send_text(to, f"Trip {trip.ref} is marked as {status} - tap I have left and I have arrived first.")
+            return
+        if not T.pickup_verified(trip):
+            _not_started(to, trip)
             return
         T.driver_started_ride(trip.id, driver)
         return
@@ -93,6 +103,12 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
             _complete_or_wait(to, trip)
             return
         T.driver_reached_destination(trip.id, driver)
+        return
+
+    # The guest paid on his card machine at the drop-off. Only the button counts: it is the
+    # driver's word that the machine approved the payment.
+    if reply.reply_id == T.CARD_PAID[0]:
+        T.driver_card_paid(trip.id, driver)
         return
 
     if reply.reply_id == T.RIDE_COMPLETE[0] or said(reply, B["ride_complete"]):
@@ -118,11 +134,16 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
 
 
 def _not_started(to: str, trip: Row) -> None:
-    """A drop-off button before the ride has started."""
-    if trip.status == "driver_waiting" and T.guest_saw_driver(trip):
+    """A drop-off button, or a Ride started the code has not earned yet, before the ride has started."""
+    if trip.status in ("driver_waiting", "driver_en_route") and T.pickup_verified(trip):
         send_text(to, f"Trip {trip.ref} has not started yet. Tap Ride started above once the guest is in the car.")
+    elif trip.status in ("driver_waiting", "driver_en_route") and T.guest_saw_driver(trip):
+        send_text(to, f"Trip {trip.ref} has not started yet. Type the 6-digit verification code the guest reads you - "
+                      "Ride started appears once it matches.")
     elif trip.status == "driver_waiting":
-        send_text(to, f"Trip {trip.ref} has not started yet. Ride started will appear here once the guest confirms they can see you.")
+        send_text(to, f"Trip {trip.ref} has not started yet. Once the guest confirms they can see you, they get a code to read to you.")
+    elif trip.status == "driver_en_route":
+        send_text(to, f"Trip {trip.ref} has not started yet. Tap I have arrived above at the pickup - the guest then gets a code to read to you.")
     else:
         send_text(to, f"Trip {trip.ref} has not started yet.")
 
@@ -139,6 +160,9 @@ def _complete_or_wait(to: str, trip: Row, started: str = "") -> None:
     """At the drop-off: Ride complete if the fare is paid, else why not yet."""
     if T.ride_can_complete(trip):
         send_text(to, f"{started}Tap Ride complete above once you have dropped the guest off.")
+    elif T.payment_choice(trip) == "card":
+        send_text(to, f"{started}The guest has not paid the R {T.fare(trip)} fare yet. Take it on your card machine and tap "
+                      "Card payment done above - Ride complete will appear here once it is paid.")
     else:
         send_text(to, f"{started}The guest has not paid the R {T.fare(trip)} fare yet - Ride complete will appear here "
                       "as soon as they do. If they cannot pay, please call Anneli.")

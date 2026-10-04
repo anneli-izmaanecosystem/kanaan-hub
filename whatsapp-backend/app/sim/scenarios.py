@@ -93,11 +93,12 @@ def _close_leftovers() -> None:
 
 def _book(to_id: str, to_title: str, frm_id: str = "from:farm", frm_title: str = "Kanaan Guest Farm",
           name: str = "Sam Botha") -> list[dict[str, Any]]:
-    """Guest: hi -> Book a car -> Now -> pickup -> drop-off -> Yes -> name. Returns all messages."""
+    """Guest: hi -> Book a car -> Now -> One Way Trip -> pickup -> drop-off -> Yes -> name. Returns all messages."""
     log: list[dict[str, Any]] = []
     ms = _do("guest", kind="text", text="hi"); log += ms
     ms = _do("guest", kind="button", id="book", title="Book a car", context=_out(ms, "guest")["wamid"]); log += ms
     ms = _do("guest", kind="button", id="when:now", title="Now", context=_out(ms, "guest")["wamid"]); log += ms
+    ms = _do("guest", kind="button", id="trip:one_way", title="One Way Trip", context=_out(ms, "guest", lambda m: m["buttons"])["wamid"]); log += ms
     ms = _do("guest", kind="list", id=frm_id, title=frm_title, context=_out(ms, "guest", lambda m: m.get("list"))["wamid"]); log += ms
     ms = _do("guest", kind="list", id=to_id, title=to_title, context=_out(ms, "guest", lambda m: m.get("list"))["wamid"]); log += ms
     ms = _do("guest", kind="button", id="place:yes", title="Yes, that one", context=_out(ms, "guest", lambda m: m["buttons"])["wamid"]); log += ms
@@ -115,6 +116,27 @@ def _accept(ms: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return log
 
 
+def _code(ms: list[dict[str, Any]]) -> Optional[str]:
+    """The pickup code in the guest's 'Driver Verification' message."""
+    m = _out(ms, "guest", lambda m: m["text"].startswith("Driver Verification"))
+    found = re.search(r"\b(\d{6})\b", m["text"]) if m else None
+    return found.group(1) if found else None
+
+
+def _consent(url: str) -> tuple[Any, Any]:
+    """The page the guest's Pay now opens, and what tapping Agree on it does."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    client = TestClient(app)
+    return client.get(url), client.post(url, follow_redirects=False)
+
+
+def _board_method(trip_id: int) -> Optional[str]:
+    """How the admin board says the trip was paid."""
+    from app.routers.dashboard import list_trips
+    return next((t["paymentMethod"] for t in list_trips("all") if t["id"] == trip_id), None)
+
+
 def _no_duplicates(log: list[dict[str, Any]]) -> bool:
     return not any("DUPLICATE" in (m.get("warn") or "") for m in log)
 
@@ -124,7 +146,10 @@ def _no_duplicates(log: list[dict[str, Any]]) -> bool:
 
 def s_farm_pay_now() -> None:
     """Farm -> Perry's Bridge, pay now after acceptance, full ride and review."""
+    from app.routers.dashboard import day_trip_requests
+    day_trips_before = day_trip_requests()["count"]
     log = _book("to:preset:perrys", "Perry's Bridge")
+    _check("One Way Trip: no Day Trip request is kept", day_trip_requests()["count"] == day_trips_before, ["C40"])
     pickup_q = next(m for m in log if m["dir"] == "out" and "Where should the driver collect you?" in m["text"])
     _check("Pickup is a dropdown with Kanaan, Perry's Bridge, Lowveld Mall (Engen), the airport, my location, somewhere else",
            _rows(pickup_q) == ["from:farm", "from:preset:perrys", "from:preset:lowveld", "from:preset:airport", "from:location", "from:other"],
@@ -143,8 +168,8 @@ def s_farm_pay_now() -> None:
     confirmed = _out(ms, "guest", lambda m: (m.get("template") or "").startswith("kn_guest_trip_confirmed"))
     offer = _out(ms, "guest", lambda m: "guest:pay:now" in _ids(m))
     _check("Payment is offered only after Anneli accepts", offer is not None, ["C01"])
-    _check("'Your car is confirmed' comes first, then the fare with only 'Pay now' (no 'Pay during ride')",
-           bool(confirmed and offer and ms.index(confirmed) < ms.index(offer) and _ids(offer) == ["guest:pay:now"]), ["C29"])
+    _check("'Your car is confirmed' comes first, then the fare with 'Pay now' and 'Pay later'",
+           bool(confirmed and offer and ms.index(confirmed) < ms.index(offer) and _ids(offer) == ["guest:pay:now", "guest:pay:later"]), ["C29", "C38"])
     _check("The confirmation has no cancel button (kn_guest_trip_confirmed_v4)",
            bool(confirmed and confirmed["template"] == "kn_guest_trip_confirmed_v4" and not confirmed["buttons"]), ["C28"])
     after_confirmed = ms[ms.index(confirmed):] if confirmed else ms
@@ -166,6 +191,14 @@ def s_farm_pay_now() -> None:
            bool(_out(ms, "guest", lambda m: "can no longer be cancelled" in m["text"]) and _out(ms, "ops", lambda m: "asked to cancel" in m["text"])
                 and _latest_trip()["status"] == "allocated"), ["C28"])
     ms = _do("guest", kind="button", id="guest:pay:now", title="Pay now", context=offer["wamid"]); log += ms
+    from app.routers.payments import PAYSTACK_PRIVACY_URL
+    link = _out(ms, "guest", lambda m: m.get("cta"))
+    page, agreed = _consent(link["cta"]["url"]) if link else (None, None)
+    _check("'Pay now' opens a page with Paystack's privacy policy and an 'Agree' button - not Paystack straight away",
+           bool(link and link["cta"]["url"].startswith("/payments/pay/") and page.status_code == 200
+                and PAYSTACK_PRIVACY_URL in page.text and ">Agree</button>" in page.text), ["C38"])
+    _check("'Agree' goes on to Paystack's payment page (here, the simulated one)",
+           bool(agreed is not None and agreed.status_code == 303 and agreed.headers["location"].startswith("/sim/pay/")), ["C38"])
     ms = _pay(ms, "success"); log += ms
     _check("Paid: guest, driver and Anneli are each told",
            _out(ms, "guest", lambda m: "Payment of R 20 received" in m["text"]) and _out(ms, "driver", lambda m: "has paid" in m["text"])
@@ -177,8 +210,18 @@ def s_farm_pay_now() -> None:
            bool(arrived and arrived["template"] == "kn_guest_driver_arrived")
            and not any("driver:started" in _ids(m) for m in ms if m["role"] == "driver"), ["C30"])
     ms = _do("guest", kind="template", title="Yes, I can see him", context=arrived["wamid"]); log += ms
-    _check("'Yes, I can see him' does not start the ride; the driver gets 'Ride started'",
-           _latest_trip()["status"] == "driver_waiting" and _ids(_out(ms, "driver", lambda m: m["buttons"])) == ["driver:started"], ["C17", "C07"])
+    code = _code(ms)
+    _check("'Yes, I can see him': the guest - and only the guest - gets a 6-digit verification code; no 'Ride started' yet",
+           bool(code) and not any(code in m["text"] for m in ms if m["role"] != "guest")
+           and _latest_trip()["status"] == "driver_waiting" and not any("driver:started" in _ids(m) for m in ms), ["C37"])
+    _check("The driver is asked to type the code", _out(ms, "driver", lambda m: "Guest Pickup Verification" in m["text"]), ["C37"])
+    ms = _do("driver", kind="text", text=f"{(int(code or 0) + 1) % 1_000_000:06d}"); log += ms
+    _check("A wrong code is refused ('Invalid verification code'); the ride does not move",
+           _out(ms, "driver", lambda m: "Invalid verification code" in m["text"]) and _latest_trip()["status"] == "driver_waiting", ["C37"])
+    ms = _do("driver", kind="text", text=code or ""); log += ms
+    _check("The right code: 'Pickup Verified', the driver gets 'Ride started' - and the ride has still not started",
+           _latest_trip()["status"] == "driver_waiting" and _ids(_out(ms, "driver", lambda m: m["buttons"])) == ["driver:started"]
+           and _out(ms, "driver", lambda m: m["text"].startswith("Pickup Verified")), ["C37", "C17", "C07"])
     _check("'Ride started' reaches the driver once in the whole trip",
            sum(1 for m in log if m["role"] == "driver" and "driver:started" in _ids(m)) == 1, ["C30", "C14"])
     ms = _do("driver", kind="button", id="driver:started", title="Ride started", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
@@ -209,8 +252,16 @@ def s_between_places_pay_at_destination() -> None:
     _check("Airport pickup: drop-off dropdown offers Kanaan and the other places, not the airport",
            "to:farm" in _rows(dest_q) and "to:preset:perrys" in _rows(dest_q) and "to:preset:airport" not in _rows(dest_q), ["C15"])
     _check("'We will collect you at ...' shows no distance from Kanaan", " km" not in dest_q["text"], ["C11"])
+    from app.bot.places import PRESETS, distance_between, distance_from_farm
+    from app.bot.when import format_duration
+    eta = next((m for m in log if m["dir"] == "out" and m["text"].startswith("Estimated Driver Arrival")), None)
+    drive = distance_from_farm(PRESETS["airport"]["lat"], PRESETS["airport"]["lng"])["durationMin"]
+    _check("Car wanted now from the airport: 'Your driver is estimated to reach your pickup location at HH:MM South Africa time'",
+           bool(eta and re.search(r"at \d{2}:\d{2} (South Africa time|on .+\(South Africa time\))\.", eta["text"])), ["C36"])
+    _check(f"The estimate uses the existing {drive}-minute drive to the pickup, shown as the travel time",
+           bool(eta and f"Estimated travel time: {format_duration(drive)}." in eta["text"]), ["C36"])
+    _check("The estimate comes before 'Where are you going?'", bool(eta and log.index(eta) < log.index(dest_q)), ["C36"])
     confirm = next(m for m in log if m["dir"] == "out" and "Is this the right spot?" in m["text"])
-    from app.bot.places import PRESETS, distance_between
     leg = distance_between(PRESETS["airport"]["lat"], PRESETS["airport"]["lng"], PRESETS["perrys"]["lat"], PRESETS["perrys"]["lng"])["distanceKm"]
     _check(f"Airport -> Perry's Bridge priced on the {leg:g} km drive between them, not from the farm",
            "Perry's Bridge" in confirm["text"] and f"{leg:g} km" in confirm["text"], ["C15"])
@@ -218,13 +269,15 @@ def s_between_places_pay_at_destination() -> None:
     pins = [m for m in ms if m["role"] == "driver" and m["kind"] == "location"]
     _check("Driver gets only the pickup pin (the airport), not the drop-off",
            len(pins) == 1 and "Pickup: Kruger" in pins[0]["text"], ["C26", "C15"])
-    _check("The fare message has only 'Pay now'", _ids(_out(ms, "guest", lambda m: m["buttons"])) == ["guest:pay:now"], ["C29"])
+    _check("The fare message has 'Pay now' and 'Pay later'",
+           _ids(_out(ms, "guest", lambda m: m["buttons"])) == ["guest:pay:now", "guest:pay:later"], ["C29", "C38"])
     # The guest does not pay up front.
     ms = _do("driver", kind="template", title="I have left"); log += ms
     arrived_q = _out(ms, "driver", lambda m: m["buttons"])
     ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=arrived_q["wamid"]); log += ms
     arrived = _out(ms, "guest", lambda m: m.get("template"))
     ms = _do("guest", kind="template", title="Yes, I can see him", context=arrived["wamid"]); log += ms
+    ms = _do("driver", kind="text", text=_code(ms) or ""); log += ms
     ms = _do("driver", kind="button", id="driver:started", title="Ride started", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
     _check("Ride started unpaid: no payment link yet - it comes at the destination", not _out(ms, "guest", lambda m: m.get("cta")), ["C31"])
     reached_q = _out(ms, "driver", lambda m: m["buttons"])
@@ -255,6 +308,7 @@ def s_pickup_too_far() -> None:
     ms = _do("guest", kind="text", text="hi"); log += ms
     ms = _do("guest", kind="button", id="book", title="Book a car", context=_out(ms, "guest")["wamid"]); log += ms
     ms = _do("guest", kind="button", id="when:now", title="Now", context=_out(ms, "guest")["wamid"]); log += ms
+    ms = _do("guest", kind="button", id="trip:one_way", title="One Way Trip", context=_out(ms, "guest", lambda m: m["buttons"])["wamid"]); log += ms
     ms = _do("guest", kind="list", id="from:location", title="Share my location", context=_out(ms, "guest", lambda m: m.get("list"))["wamid"]); log += ms
     _check("'Share my location' opens the location picker", _out(ms, "guest", lambda m: m.get("location_request")), ["C02"])
     ms = _do("guest", kind="location", lat=19.0760, lng=72.8777); log += ms
@@ -277,8 +331,8 @@ def s_payment_outcomes() -> None:
     ms = _do("guest", kind="button", id="guest:pay:now", title="Pay now", context=offer["wamid"]); log += ms
     ms = _pay(ms, "failed"); log += ms
     retry = _out(ms, "guest", lambda m: m["buttons"])
-    _check("Declined: guest told why, with only 'Try again'",
-           retry and "did not go through (Declined)" in retry["text"] and _ids(retry) == ["guest:pay:now"], ["C06", "C29"])
+    _check("Declined: guest told why, with 'Try again' and 'Pay later'",
+           retry and "did not go through (Declined)" in retry["text"] and _ids(retry) == ["guest:pay:now", "guest:pay:later"], ["C06", "C38"])
     _check("Declined: driver and Anneli told", _out(ms, "driver", lambda m: "did not go through" in m["text"]) and _out(ms, "ops", lambda m: "failed" in m["text"]), ["C06"])
     ms = _do("guest", kind="button", id="guest:pay:now", title="Try again", context=retry["wamid"]); log += ms
     ms = _pay(ms, "cancelled"); log += ms
@@ -296,6 +350,93 @@ def s_payment_outcomes() -> None:
     _check("'Cancel this trip' on an older confirmation: turned down, the trip stands",
            bool(_out(ms, "guest", lambda m: "can no longer be cancelled" in m["text"])) and _latest_trip()["status"] == "allocated", ["C28"])
     T.cancel_trip(_latest_trip()["id"], "ops", "scenario cleanup")
+    _check("No duplicate messages in this booking", _no_duplicates(log), ["C14", "C19"])
+
+
+def _ride_to_destination(log: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The driver leaves, arrives, takes the guest's code, starts the ride and reaches the
+    destination. Returns what Ride started and Reached destination sent."""
+    ms = _do("driver", kind="template", title="I have left"); log += ms
+    ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
+    ms = _do("guest", kind="template", title="Yes, I can see him", context=_out(ms, "guest", lambda m: m.get("template"))["wamid"]); log += ms
+    ms = _do("driver", kind="text", text=_code(ms) or ""); log += ms
+    started = _do("driver", kind="button", id="driver:started", title="Ride started", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += started
+    reached = _do("driver", kind="button", id="driver:reached", title="Reached destination",
+                  context=_out(started, "driver", lambda m: m["buttons"])["wamid"]); log += reached
+    return started, reached
+
+
+def s_pay_later_card() -> None:
+    """Pay later -> Card payment: the driver takes the fare on his card machine at the drop-off."""
+    log = _book("to:preset:perrys", "Perry's Bridge")
+    ms = _accept(log); log += ms
+    offer = _out(ms, "guest", lambda m: "guest:pay:later" in _ids(m))
+    ms = _do("guest", kind="button", id="guest:pay:later", title="Pay later", context=offer["wamid"]); log += ms
+    how = _out(ms, "guest", lambda m: m["buttons"])
+    _check("'Pay later' offers two ways to pay: 'Card payment' and 'Paystack payment'",
+           _ids(how) == ["guest:pay:card", "guest:pay:paystack"], ["C38"])
+    ms = _do("guest", kind="button", id="guest:pay:card", title="Card payment", context=how["wamid"]); log += ms
+    _check("'Card payment': the guest pays by card on the driver's card machine at the destination - nothing charged now",
+           bool(_out(ms, "guest", lambda m: "card machine when you reach your destination" in m["text"]))
+           and not _out(ms, "guest", lambda m: m.get("cta")) and _latest_trip()["captured_at"] is None, ["C38"])
+    _check("'Card payment': the driver is told to have his card machine, and Anneli is told",
+           bool(_out(ms, "driver", lambda m: "on your card machine at the drop-off" in m["text"]) and _out(ms, "ops", lambda m: "card machine" in m["text"])), ["C38"])
+    started, ms = _ride_to_destination(log)
+    _check("'Ride started' reminds the driver the guest pays on his card machine",
+           bool(_out(started, "driver", lambda m: m["text"].startswith("Ride started.") and "card machine" in m["text"])), ["C38"])
+    card_q = _out(ms, "driver", lambda m: m["buttons"])
+    _check("At the destination: no Paystack link - the guest is asked to pay on the driver's card machine",
+           not _out(ms, "guest", lambda m: m.get("cta")) and bool(_out(ms, "guest", lambda m: "by card on the driver's card machine" in m["text"])), ["C38"])
+    _check("At the destination: the driver gets 'Card payment done', not 'Ride complete' yet",
+           _ids(card_q) == ["driver:card_paid"] and not any("driver:complete" in _ids(m) for m in ms), ["C38", "C18"])
+    ms = _do("driver", kind="text", text="Ride complete"); log += ms
+    _check("A 'Ride complete' before the card payment is refused",
+           bool(_out(ms, "driver", lambda m: "has not paid" in m["text"])) and _latest_trip()["status"] == "in_progress", ["C38", "C18"])
+    tap = {"kind": "button", "id": "driver:card_paid", "title": "Card payment done", "context": card_q["wamid"] if card_q else None}
+    ms = _together(("driver", tap), ("driver", tap)); log += ms
+    _check("Card payment done - guest: 'Payment received via Card.' (once, though tapped twice)",
+           sum(1 for m in ms if m["role"] == "guest" and m["text"].startswith("Payment received via Card.")) == 1, ["C38", "C14"])
+    _check("Card payment done - Anneli: 'Payment received — Card Payment.'",
+           sum(1 for m in ms if m["role"] == "ops" and m["text"].startswith("Payment received — Card Payment.")) == 1, ["C38"])
+    complete = _out(ms, "driver", lambda m: "driver:complete" in _ids(m))
+    _check("Card payment done - driver: 'Payment Status: Paid — Card Payment.' with 'Ride complete', as after any payment",
+           bool(complete and complete["text"].startswith("Payment Status: Paid — Card Payment."))
+           and sum(1 for m in ms if "driver:complete" in _ids(m)) == 1, ["C38", "C18"])
+    _check("The trip is paid, and the admin board shows it paid by card",
+           _latest_trip()["captured_at"] is not None and _board_method(_latest_trip()["id"]) == "card", ["C38"])
+    ms = _do("driver", kind="button", id="driver:complete", title="Ride complete", context=complete["wamid"] if complete else None); log += ms
+    closed = _out(ms, "ops", lambda m: m.get("template") == "kn_ops_trip_closed_v3")
+    _check("Ride complete: trip closed, review offered; Anneli's closing card says paid on the card machine",
+           _latest_trip()["status"] == "completed" and bool(_out(ms, "guest", lambda m: m.get("list")))
+           and bool(closed and "paid by card on the driver's card machine" in closed["text"]), ["C38", "C05"])
+    _check("No duplicate messages in this booking", _no_duplicates(log), ["C14", "C19"])
+
+
+def s_pay_later_paystack() -> None:
+    """Pay later -> Paystack payment: the link at the destination, through Paystack's privacy page."""
+    log = _book("to:preset:lowveld", "Lowveld Mall (Engen)")
+    ms = _accept(log); log += ms
+    offer = _out(ms, "guest", lambda m: "guest:pay:later" in _ids(m))
+    ms = _do("guest", kind="button", id="guest:pay:later", title="Pay later", context=offer["wamid"]); log += ms
+    how = _out(ms, "guest", lambda m: m["buttons"])
+    ms = _do("guest", kind="button", id="guest:pay:paystack", title="Paystack payment", context=how["wamid"]); log += ms
+    _check("'Paystack payment': the Paystack link will come at the destination - nothing sent or charged now",
+           bool(_out(ms, "guest", lambda m: m["text"].startswith("No problem. We will send you the Paystack payment link")))
+           and not _out(ms, "guest", lambda m: m.get("cta")) and _latest_trip()["captured_at"] is None, ["C38"])
+    started, ms = _ride_to_destination(log)
+    link = _out(ms, "guest", lambda m: m.get("cta"))
+    page, agreed = _consent(link["cta"]["url"]) if link else (None, None)
+    _check("At the destination: 'Pay now' opens Paystack's privacy page with 'Agree'; the driver waits",
+           bool(link and page.status_code == 200 and ">Agree</button>" in page.text) and not _out(ms, "driver", lambda m: m["buttons"]), ["C38", "C31"])
+    _check("'Agree' goes on to Paystack", bool(agreed is not None and agreed.status_code == 303), ["C38"])
+    ms = _pay(ms, "success"); log += ms
+    _check("Paid by Paystack: guest, driver ('Ride complete') and Anneli told; the admin board shows Paystack",
+           bool(_out(ms, "guest", lambda m: "received" in m["text"]) and _ids(_out(ms, "driver", lambda m: m["buttons"])) == ["driver:complete"]
+                and _out(ms, "ops", lambda m: "via Paystack" in m["text"])) and _board_method(_latest_trip()["id"]) == "paystack", ["C38", "C06"])
+    page, _ = _consent(link["cta"]["url"]) if link else (None, None)
+    _check("The paid link cannot be paid again", bool(page and ">Agree</button>" not in page.text and "already" in page.text), ["C38"])
+    ms = _do("driver", kind="button", id="driver:complete", title="Ride complete", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
+    _check("Ride complete: trip closed, review offered", _latest_trip()["status"] == "completed" and bool(_out(ms, "guest", lambda m: m.get("list"))), ["C38", "C05"])
     _check("No duplicate messages in this booking", _no_duplicates(log), ["C14", "C19"])
 
 
@@ -328,8 +469,12 @@ def s_double_taps() -> None:
     arrived = _out(ms, "guest", lambda m: m.get("template"))
     see = {"kind": "template", "title": "Yes, I can see him", "context": arrived["wamid"]}
     ms = _together(("guest", see), ("guest", see)); log += ms
+    _check("'Yes, I can see him' tapped twice at once: ONE verification code",
+           sum(1 for m in ms if m["role"] == "guest" and m["text"].startswith("Driver Verification")) == 1, ["C37", "C14"])
+    entry = {"kind": "text", "text": _code(ms) or ""}
+    ms = _together(("driver", entry), ("driver", entry)); log += ms
     started = [m for m in ms if m["role"] == "driver" and "driver:started" in _ids(m)]
-    _check("'Yes, I can see him' tapped twice at once: the driver gets ONE 'Ride started'", len(started) == 1, ["C30", "C14"])
+    _check("The right code typed twice at once: verified once, the driver gets ONE 'Ride started'", len(started) == 1, ["C37", "C30", "C14"])
     tap_started = {"kind": "button", "id": "driver:started", "title": "Ride started", "context": started[0]["wamid"] if started else None}
     ms = _together(("driver", tap_started), ("driver", tap_started)); log += ms
     reached = [m for m in ms if m["role"] == "driver" and "driver:reached" in _ids(m)]
@@ -369,19 +514,65 @@ def s_date_time_picker() -> None:
            [x["id"] for x in data.get("minutes", [])] == [f"{m:02d}" for m in range(0, 60, 5)] and len(data.get("hours", [])) > 0, ["C03"])
     tomorrow = (hub_db.now().astimezone(SAST) + timedelta(days=1)).date().isoformat()
     ms = _do("guest", kind="flow", date=tomorrow, hour="10", minute="25"); log += ms
+    ms = _do("guest", kind="button", id="trip:one_way", title="One Way Trip", context=_out(ms, "guest", lambda m: m["buttons"])["wamid"]); log += ms
     ms = _do("guest", kind="list", id="from:farm", title="Kanaan Guest Farm", context=_out(ms, "guest", lambda m: m.get("list"))["wamid"]); log += ms
     ms = _do("guest", kind="list", id="to:preset:perrys", title="Perry's Bridge", context=_out(ms, "guest", lambda m: m.get("list"))["wamid"]); log += ms
     ms = _do("guest", kind="button", id="place:yes", title="Yes, that one", context=_out(ms, "guest", lambda m: m["buttons"])["wamid"]); log += ms
     ms = _do("guest", kind="text", text="Sam Botha"); log += ms
     _check("The picked time (10:25) is on the quote", _out(ms, "guest", lambda m: "at 10:25" in m["text"]), ["C03"])
+    _check("A car booked for later: no 'now + drive' arrival estimate",
+           not any(m["dir"] == "out" and m["text"].startswith("Estimated Driver Arrival") for m in log), ["C36"])
+    ms = _do("guest", kind="text", text="cancel"); log += ms
+
+
+def s_trip_type() -> None:
+    """Day Trip is answered 'coming soon' with nothing booked; One Way Trip carries on."""
+    log: list[dict[str, Any]] = []
+    ms = _do("guest", kind="text", text="hi"); log += ms
+    ms = _do("guest", kind="button", id="book", title="Book a car", context=_out(ms, "guest")["wamid"]); log += ms
+    ms = _do("guest", kind="button", id="when:now", title="Now", context=_out(ms, "guest")["wamid"]); log += ms
+    trip_q = _out(ms, "guest", lambda m: m["buttons"])
+    _check("After the time, the trip type comes before the pickup: 'Day Trip' / 'One Way Trip'",
+           _ids(trip_q) == ["trip:day", "trip:one_way"] and not _out(ms, "guest", lambda m: m.get("list")), ["C35"])
+    before = _latest_trip()
+    from app.bot.conversation import known_name
+    from app.routers.dashboard import day_trip_requests
+    named = known_name(_sim().GUEST, {})  # known from an earlier run's trip or request
+    count_before = day_trip_requests()["count"]
+    ms = _do("guest", kind="button", id="trip:day", title="Day Trip", context=trip_q["wamid"]); log += ms
+    if named:
+        _check("Day Trip from a guest the chat already knows: their name is not asked again",
+               not _out(ms, "guest", lambda m: m["text"] == "What is your full name?"), ["C40"])
+    else:
+        _check("Day Trip from a new guest: their full name is asked first - nothing kept before it",
+               bool(_out(ms, "guest", lambda m: m["text"] == "What is your full name?")) and day_trip_requests()["count"] == count_before, ["C40"])
+        ms = _do("guest", kind="text", text="Sam Botha"); log += ms
+    data = day_trip_requests()
+    mine = [r for r in data["requests"] if r["phone"] == _sim().GUEST]
+    _check("Day Trip: kept for the Day Trip Requests tab - full name, WhatsApp number, Day Trip, status, time (Now) - count up by one",
+           data["count"] == count_before + 1 and bool(mine) and mine[0]["guestName"] == (named or "Sam Botha")
+           and mine[0]["requestType"] == "DAY_TRIP" and mine[0]["status"] == "requested" and mine[0]["leaveNow"] is True, ["C39", "C40"])
+    soon = _out(ms, "guest", lambda m: m["buttons"])
+    _check("Day Trip: 'Day Trip Service – Coming Soon', with only 'One Way Trip' to carry on",
+           soon and soon["text"].startswith("Day Trip Service – Coming Soon") and _ids(soon) == ["trip:one_way"], ["C35"])
+    after = _latest_trip()
+    _check("Day Trip: no pickup or destination list, no fare, no trip created",
+           not _out(ms, "guest", lambda m: m.get("list")) and not _out(ms, "guest", lambda m: "Fare" in m["text"])
+           and (after["id"] if after else None) == (before["id"] if before else None), ["C35"])
+    ms = _do("guest", kind="button", id="trip:one_way", title="One Way Trip", context=soon["wamid"]); log += ms
+    _check("One Way Trip after 'coming soon': the usual pickup dropdown",
+           _rows(_out(ms, "guest", lambda m: m.get("list")))[:1] == ["from:farm"], ["C35"])
     ms = _do("guest", kind="text", text="cancel"); log += ms
 
 
 SCENARIOS: dict[str, tuple[str, Callable[[], None]]] = {
+    "trip_type": ("Trip type: Day Trip coming soon, then One Way Trip", s_trip_type),
     "farm_pay_now": ("Farm -> Perry's Bridge, pay now, full ride", s_farm_pay_now),
     "between_places": ("Airport -> Perry's Bridge, paid at the destination", s_between_places_pay_at_destination),
     "too_far": ("Pickup past 50 km, then within range", s_pickup_too_far),
     "payments": ("Card declined, page closed, then paid", s_payment_outcomes),
+    "pay_later_card": ("Pay later: card on the driver's card machine", s_pay_later_card),
+    "pay_later_paystack": ("Pay later: Paystack link at the destination", s_pay_later_paystack),
     "double_taps": ("Double taps and old buttons (KN-1012)", s_double_taps),
     "date_time": ("Date and time picker with minutes", s_date_time_picker),
 }
@@ -392,7 +583,12 @@ def _conversation_checks() -> None:
     that needs a typed answer / nothing from the guest."""
     allowed = ("What is your full name", "Payment of R", "Thank you. ", "Your ride has started", "Your ride with",
                "No problem. We will send you the payment link", "That option is from an earlier message", "Sorry, I did not catch",
-               "Your car (")  # a cancel turned down: the next step is a call to Anneli
+               "Your car (",  # a cancel turned down: the next step is a call to Anneli
+               "Estimated Driver Arrival",  # always followed by "Where are you going?"
+               "Driver Verification",  # the next step is reading the code out to the driver
+               "Noted - you will pay", "No problem. We will send you the Paystack payment link",  # Pay later: nothing until the destination
+               "You have reached", "Please pay the R",  # pay on the driver's card machine, in person
+               "Payment received via Card.")
     sim = _sim()
     with sim._lock:
         dead = [m["text"].splitlines()[0][:60] for m in sim._log

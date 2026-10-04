@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import time
 from datetime import timedelta
@@ -37,6 +38,8 @@ os.environ.update({
     "WHATSAPP_PHONE_NUMBER_ID": PHONE_ID,
     "WHATSAPP_ACCESS_TOKEN": "test",
     "PAYSTACK_SECRET_KEY": "sk_test_stub",
+    # This service's public address, from which the Pay now consent page's link is made.
+    "PAYSTACK_CALLBACK_URL": "https://kanaan.test/kanaan/payments/paystack/callback",
     "GOOGLE_MAPS_API_KEY": "",
     "BOT_SCHEDULER_ENABLED": "false",
     "INTERNAL_MIRROR_SECRET": "internal-test",
@@ -192,6 +195,18 @@ def trip_row(ref=None):
         return c.execute(sql(q), {"r": ref}).mappings().first()
 
 
+def code_for(phone):
+    """The pickup code in the latest 'Driver Verification' message to this guest."""
+    m = next((m for m in reversed(sent) if to(m) == phone and m["type"] == "text"
+              and body_of(m).startswith("Driver Verification")), None)
+    return re.search(r"\b(\d{6})\b", body_of(m)).group(1) if m else None
+
+
+def read_out_code(guest, context=None):
+    """The driver types the code the guest reads him."""
+    return text(DRIVER, code_for(guest), context=context)
+
+
 # ── 1. booking, pickup shared too far away, then within range ───────────────
 print("1. guest books, pickup location too far, then within range")
 out = text(GUEST, "hi")
@@ -200,7 +215,38 @@ out = tap(GUEST, "book")
 check("When do you need the car?" in body_of(out[-1]), "asks when")
 tap(GUEST, "when:later")
 out = text(GUEST, "tomorrow 10:00")
+check(buttons(out[-1]) == ["trip:day", "trip:one_way"] and "What kind of trip" in body_of(out[-1]),
+      "time set: asks the trip type first - Day Trip / One Way Trip")
+trips_before = trip_row()
+
+
+def day_trips(phone=None):
+    """The Day Trip Requests tab's data: (count, requests - for `phone` only if given)."""
+    data = client.get("/dashboard/day-trips", headers={"X-Internal-Secret": "internal-test"}).json()
+    return data["count"], [r for r in data["requests"] if phone is None or r["phone"] == phone]
+
+
+out = tap(GUEST, "trip:day", "Day Trip")
+check(body_of(out[-1]) == "What is your full name?" and day_trips(GUEST)[1] == [],
+      "Day Trip from a new guest: their full name is asked - no request kept yet")
+out = text(GUEST, "Sam Botha")
+check(body_of(out[-1]).startswith("Day Trip Service – Coming Soon") and "currently unavailable" in body_of(out[-1])
+      and buttons(out[-1]) == ["trip:one_way"], "Day Trip, then the name: coming soon, with One Way Trip to carry on")
+check(not any(m.get("interactive", {}).get("type") == "list" for m in out) and not any("Fare" in body_of(m) for m in out),
+      "Day Trip: no location list and no fare")
+check(trip_row() == trips_before, "Day Trip: no trip created")
+out = tap(GUEST, "trip:day", "Day Trip")  # tapped again for the same time
+check(body_of(out[-1]).startswith("Day Trip Service – Coming Soon"), "Day Trip again: the name is not asked a second time")
+_day_trips = day_trips(GUEST)[1]
+check(len(_day_trips) == 1 and _day_trips[0]["guestName"] == "Sam Botha" and _day_trips[0]["leaveNow"] is False
+      and _day_trips[0]["requestedFor"].endswith("T08:00:00.000Z"),
+      "Day Trip: the request is kept for the admin portal - full name, number and the time chosen (10:00) - once, though tapped twice")
+out = text(GUEST, "what?")
+check(buttons(out[-1]) == ["trip:day", "trip:one_way"], "anything else at the trip type re-asks it")
+out = tap(GUEST, "trip:one_way", "One Way Trip")
 check(rows(out[-1]) == PICKUP_ROWS, "asks for pickup: farm, Perry's Bridge, Lowveld Mall, airport, my location, somewhere else")
+from app.bot.conversation import load_conversation as _convo  # noqa: E402
+check(_convo(GUEST).draft.get("tripType") == "ONE_WAY", "the chosen trip type is kept: ONE_WAY")
 out = tap(GUEST, "from:location")
 check(out[-1]["interactive"]["type"] == "location_request_message", "Send location opens the native location request")
 out = location(GUEST, 19.0760, 72.8777)  # Mumbai
@@ -209,6 +255,7 @@ check("We can only book cars by chat within 50 km" in body_of(out[-1]) and butto
 out = tap(GUEST, "from:closer")
 check(out[-1]["interactive"]["type"] == "location_request_message", "Pick within 50 km asks for the location again")
 out = location(GUEST, -25.0450, 31.1250)  # Hazyview
+check(not any(body_of(m).startswith("Estimated Driver Arrival") for m in out), "a booking for later: no driver arrival estimate")
 check("We will collect you at the location you shared.\nWhere are you going?" in body_of(out[-1])
       and out[-1]["interactive"]["type"] == "list", "pickup within range: the drop-off pick-list")
 check(" km" not in body_of(out[-1]).split("\n")[0], "the pickup message shows no distance from the farm")
@@ -241,9 +288,9 @@ check(trip["status"] == "allocated" and trip["driver_id"] == 1, "trip allocated 
 names = [(to(m), body_of(m)) for m in out]
 guest_out = [m for m in out if to(m) == GUEST]
 check(guest_out and body_of(guest_out[0]) == "kn_guest_trip_confirmed_v4", "guest gets the confirmation template first (v4: no cancel button)")
-pay_offer = next((m for m in out if to(m) == GUEST and buttons(m) == ["guest:pay:now"]), None)
+pay_offer = next((m for m in out if to(m) == GUEST and buttons(m) == ["guest:pay:now", "guest:pay:later"]), None)
 check(pay_offer is not None and guest_out.index(pay_offer) == 1,
-      "then the fare, with only Pay now - offered only now, after acceptance")
+      "then the fare, with Pay now and Pay later - offered only now, after acceptance")
 check(not any("cancel" in b for m in guest_out for b in buttons(m)), "no cancel button for the guest once the car is confirmed")
 driver_out = [m for m in out if to(m) == DRIVER]
 new_trip = next((m for m in driver_out if m["type"] == "template" and m["template"]["name"] == "kn_driver_new_trip_v2"), None)
@@ -279,6 +326,28 @@ check(not any("cancel" in b for m in out for b in buttons(m)), "a stray message 
 print("3. on the day")
 out = tap(GUEST, "guest:pay:now", context=pay_offer["_id"])
 check(any(m["type"] == "interactive" and m["interactive"]["type"] == "cta_url" for m in out), "Pay now sends the Paystack link")
+from app.routers.payments import AGREED, PAYSTACK_PRIVACY_URL  # noqa: E402
+
+
+def consent_path(msgs, guest):
+    """The path of the page the guest's Pay now button opens."""
+    url = next(m for m in msgs if to(m) == guest and m.get("interactive", {}).get("type") == "cta_url")["interactive"]["action"]["parameters"]["url"]
+    return "/payments/pay/" + url.split("/payments/pay/", 1)[1] if "/payments/pay/" in url else url
+
+
+link1 = next(m for m in out if m.get("interactive", {}).get("type") == "cta_url")["interactive"]["action"]["parameters"]["url"]
+ref1 = trip_row(trip["ref"])["payment_ref"]
+check(link1 == f"https://kanaan.test/kanaan/payments/pay/{ref1}", "Pay now opens this service's page first, not Paystack")
+page = client.get(consent_path(out, GUEST))
+check(page.status_code == 200 and PAYSTACK_PRIVACY_URL in page.text and "Privacy Policy" in page.text
+      and ">Agree</button>" in page.text and f"R {float(trip['fare']):.2f}" in page.text,
+      "the page shows Paystack's privacy policy, the amount and an Agree button")
+res = client.post(consent_path(out, GUEST), follow_redirects=False)
+with hub_db.begin() as c:
+    from sqlalchemy import text as sql
+    _agreed = c.execute(sql("select detail from trip_events where trip_id = :t and event = :e"), {"t": trip["id"], "e": AGREED}).scalars().all()
+check(res.status_code == 303 and res.headers["location"].startswith("https://paystack.test/") and _agreed == [ref1],
+      "Agree goes on to Paystack's payment page, and the agreement is noted on the trip")
 T.payment_received({"status": "success", "reference": "ref-1", "amount": 28000, "metadata": {"tripId": trip["id"], "purpose": "fare"}})
 T.payment_received({"status": "success", "reference": "ref-1", "amount": 28000, "metadata": {"tripId": trip["id"], "purpose": "fare"}})
 check(trip_row(trip["ref"])["captured_at"] is not None, "payment marks the trip paid (and is safe to repeat)")
@@ -291,8 +360,12 @@ check(not any(buttons(m) for m in out if to(m) == DRIVER), "arrived: no Ride sta
 arrived = next(m for m in out if to(m) == GUEST)
 out = template_tap(GUEST, "Yes, I can see him", context=arrived["_id"])
 check(trip_row(trip["ref"])["status"] == "driver_waiting", "guest can see the driver - the ride does not start on that")
-check(any(buttons(m) == ["driver:started"] and "The guest can see you" in body_of(m) for m in out if to(m) == DRIVER),
-      "driver told the guest can see them, with Ride started")
+check(code_for(GUEST) is not None and re.fullmatch(r"\d{6}", code_for(GUEST)), "the guest is sent a 6-digit verification code")
+check(any("Guest Pickup Verification" in body_of(m) and not buttons(m) and code_for(GUEST) not in body_of(m) for m in out if to(m) == DRIVER),
+      "the driver is asked to type the code - he is not sent it, and gets no Ride started yet")
+out = read_out_code(GUEST)
+check(any(buttons(m) == ["driver:started"] and body_of(m).startswith("Pickup Verified") for m in out if to(m) == DRIVER),
+      "the right code: Pickup Verified, with Ride started")
 out = tap(DRIVER, "driver:started", "Ride started")
 check(trip_row(trip["ref"])["status"] == "in_progress", "the driver's Ride started starts the ride")
 check([buttons(m) for m in out if to(m) == DRIVER and buttons(m)] == [["driver:reached"]],
@@ -318,7 +391,9 @@ print("4. farm pickup, too-far destination, cancellation")
 text(GUEST2, "hello")
 tap(GUEST2, "book")
 tap(GUEST2, "when:now")
+tap(GUEST2, "trip:one_way")
 out = tap(GUEST2, "from:farm")
+check(not any(body_of(m).startswith("Estimated Driver Arrival") for m in out), "collected at the farm: no drive, so no arrival estimate")
 check(out[-1]["interactive"]["type"] == "list" and "to:farm" not in rows(out[-1]) and "to:preset:airport" in rows(out[-1]),
       "picked up at the farm: destination list without the farm")
 out = text(GUEST2, "blyde river canyon")
@@ -343,6 +418,7 @@ text(GUEST2, "hi")
 tap(GUEST2, "book")
 tap(GUEST2, "when:later")
 text(GUEST2, "tomorrow 09:00")
+tap(GUEST2, "trip:one_way")
 tap(GUEST2, "from:farm")
 text(GUEST2, "hazyview")
 tap(GUEST2, "place:yes")
@@ -370,10 +446,10 @@ print("6b. template fallback")
 _real_send = wa._send
 
 
-def _pending_v2(payload, trip_id=None):
+def _pending_v2(payload, trip_id=None, redact=None):
     if payload.get("type") == "template" and payload["template"]["name"] == "kn_driver_new_trip_v2":
         raise wa.WhatsAppError("(#132001) Template name does not exist in the translation", 404)
-    return _real_send(payload, trip_id)
+    return _real_send(payload, trip_id, redact)
 
 
 with hub_db.begin() as c:  # a fresh request to allocate (trip3 was cancelled above)
@@ -392,10 +468,10 @@ NEW_PENDING = {"kn_guest_trip_confirmed_v4", "kn_guest_trip_confirmed_v3", "kn_g
                "kn_driver_trip_reminder_v2", "kn_guest_trip_reminder_evening_v3", "kn_guest_driver_waiting_v2"}
 
 
-def _pending_new(payload, trip_id=None):
+def _pending_new(payload, trip_id=None, redact=None):
     if payload.get("type") == "template" and payload["template"]["name"] in NEW_PENDING:
         raise wa.WhatsAppError("(#132001) Template name does not exist in the translation", 404)
-    return _real_send(payload, trip_id)
+    return _real_send(payload, trip_id, redact)
 
 
 with hub_db.begin() as c:
@@ -429,7 +505,7 @@ T.cancel_trip(trip3["id"], "ops", "test cleanup")
 print("6c. Reached destination asks an unpaid guest to pay; Ride complete waits for it")
 GUEST4 = "+27000000006"
 for step in (lambda: text(GUEST4, "hi"), lambda: tap(GUEST4, "book"), lambda: tap(GUEST4, "when:later"),
-             lambda: text(GUEST4, "tomorrow 11:00"), lambda: tap(GUEST4, "from:farm"), lambda: text(GUEST4, "numbi"),
+             lambda: text(GUEST4, "tomorrow 11:00"), lambda: tap(GUEST4, "trip:one_way"), lambda: tap(GUEST4, "from:farm"), lambda: text(GUEST4, "numbi"),
              lambda: tap(GUEST4, "place:yes"), lambda: text(GUEST4, "Kim"), lambda: tap(GUEST4, "quote:confirm")):
     step()
 trip4 = trip_row()
@@ -443,6 +519,7 @@ check(any("when you reach your destination" in body_of(m) for m in out), "Pay du
 template_tap(DRIVER, "I have left")
 out = tap(DRIVER, "driver:arrived")
 template_tap(GUEST4, "Yes, I can see him", context=next(m for m in out if to(m) == GUEST4)["_id"])
+read_out_code(GUEST4)
 out = tap(DRIVER, "driver:started", "Ride started")
 check(not any(m.get("interactive", {}).get("type") == "cta_url" for m in out), "ride started unpaid: no payment link yet")
 d4 = [m for m in out if to(m) == DRIVER]
@@ -489,7 +566,7 @@ check(ev.get("review_rating") == "2" and ev.get("review_comment") == "Driver was
 print("6d. payment outcomes")
 GUEST5 = "+27000000007"
 for step in (lambda: text(GUEST5, "hi"), lambda: tap(GUEST5, "book"), lambda: tap(GUEST5, "when:later"),
-             lambda: text(GUEST5, "tomorrow 12:00"), lambda: tap(GUEST5, "from:farm"), lambda: text(GUEST5, "sabie"),
+             lambda: text(GUEST5, "tomorrow 12:00"), lambda: tap(GUEST5, "trip:one_way"), lambda: tap(GUEST5, "from:farm"), lambda: text(GUEST5, "sabie"),
              lambda: tap(GUEST5, "place:yes"), lambda: text(GUEST5, "Max"), lambda: tap(GUEST5, "quote:confirm")):
     step()
 trip5 = trip_row()
@@ -513,8 +590,8 @@ report = scheduler.tick()
 new = sent[start:]
 g = [m for m in new if to(m) == GUEST5]
 check(trip5["ref"] in report.get("paymentsFailed", []), "scheduler finds the declined payment")
-check(any("did not go through (Declined)" in body_of(m) and buttons(m) == ["guest:pay:now"] for m in g),
-      "failed: guest told why, with Try again only")
+check(any("did not go through (Declined)" in body_of(m) and buttons(m) == ["guest:pay:now", "guest:pay:later"] for m in g),
+      "failed: guest told why, with Try again and Pay later")
 check(any("did not go through" in body_of(m) for m in new if to(m) == DRIVER), "failed: driver told")
 check(any("failed: Declined" in body_of(m) for m in new if to(m) == OPS), "failed: Anneli told with the reason")
 start = len(sent)
@@ -544,7 +621,7 @@ new = sent[start:]
 check(trip_row(trip5["ref"])["captured_at"] is not None and trip5["ref"] in report.get("paymentsFound", []),
       "a success whose webhook went missing is found and marks the trip paid")
 check(any("Payment of R 320 received" in body_of(m) for m in new if to(m) == GUEST5), "paid: guest told")
-check(any("has paid the R 320 fare by card. No cash to collect" in body_of(m) for m in new if to(m) == DRIVER), "paid: driver told")
+check(any("has paid the R 320 fare by card via Paystack. Nothing to collect" in body_of(m) for m in new if to(m) == DRIVER), "paid: driver told")
 check(any("R 320 paid by card" in body_of(m) for m in new if to(m) == OPS), "paid: Anneli told")
 T.cancel_trip(trip5["id"], "ops", "test cleanup")
 
@@ -552,7 +629,7 @@ T.cancel_trip(trip5["id"], "ops", "test cleanup")
 print("6e. driver taps Ride started")
 GUEST6 = "+27000000008"
 for step in (lambda: text(GUEST6, "hi"), lambda: tap(GUEST6, "book"), lambda: tap(GUEST6, "when:later"),
-             lambda: text(GUEST6, "tomorrow 13:00"), lambda: tap(GUEST6, "from:farm"), lambda: text(GUEST6, "graskop"),
+             lambda: text(GUEST6, "tomorrow 13:00"), lambda: tap(GUEST6, "trip:one_way"), lambda: tap(GUEST6, "from:farm"), lambda: text(GUEST6, "graskop"),
              lambda: tap(GUEST6, "place:yes"), lambda: text(GUEST6, "Ria"), lambda: tap(GUEST6, "quote:confirm")):
     step()
 trip6 = trip_row()
@@ -560,9 +637,17 @@ T.allocate_driver(trip6["id"], 1, "board")
 template_tap(DRIVER, "I have left")
 out = tap(DRIVER, "driver:arrived")
 check(not any(buttons(m) for m in out if to(m) == DRIVER)
-      and any("once they confirm they can see you" in body_of(m) for m in out if to(m) == DRIVER),
-      "after arriving the driver waits for the guest - no Ride started yet")
-# the guest gets in without tapping "Yes, I can see him": a typed "Ride started" still starts it
+      and any("they get a 6-digit verification code" in body_of(m) for m in out if to(m) == DRIVER),
+      "after arriving the driver waits for the guest and their code - no Ride started yet")
+# no way round the code: a typed "Ride started" before the guest confirms, or before the code
+out = text(DRIVER, "Ride started")
+check(trip_row(trip6["ref"])["status"] == "driver_waiting" and not any(to(m) == GUEST6 for m in out),
+      "the guest has not confirmed: a typed Ride started does not start the ride")
+template_tap(GUEST6, "Yes, I can see him")
+out = text(DRIVER, "Ride started")
+check(trip_row(trip6["ref"])["status"] == "driver_waiting" and any("verification code" in body_of(m) for m in out if to(m) == DRIVER),
+      "code sent but not typed: Ride started is still refused, and the driver is told to type the code")
+read_out_code(GUEST6)
 out = text(DRIVER, "Ride started")
 check(trip_row(trip6["ref"])["status"] == "in_progress", "Ride started puts the trip in progress")
 started = next((m for m in out if to(m) == GUEST6), None)
@@ -588,17 +673,19 @@ check(trip_row(trip6["ref"])["status"] == "completed", "once paid, Ride complete
 
 # while kn_guest_ride_started is in review, the guest gets the same news as a plain message
 text(GUEST6, "hi"); tap(GUEST6, "book"); tap(GUEST6, "when:later"); text(GUEST6, "tomorrow 15:00")
-tap(GUEST6, "from:farm"); text(GUEST6, "sabie"); tap(GUEST6, "place:yes"); text(GUEST6, "Ria"); tap(GUEST6, "quote:confirm")
+tap(GUEST6, "trip:one_way"); tap(GUEST6, "from:farm"); text(GUEST6, "sabie"); tap(GUEST6, "place:yes"); text(GUEST6, "Ria"); tap(GUEST6, "quote:confirm")
 trip7 = trip_row()
 T.allocate_driver(trip7["id"], 1, "board")
 template_tap(DRIVER, "I have left")
 tap(DRIVER, "driver:arrived")
+template_tap(GUEST6, "Yes, I can see him")
+read_out_code(GUEST6)
 
 
-def _pending_ride_started(payload, trip_id=None):
+def _pending_ride_started(payload, trip_id=None, redact=None):
     if payload.get("type") == "template" and payload["template"]["name"] == "kn_guest_ride_started":
         raise wa.WhatsAppError("(#132001) Template name does not exist in the translation", 404)
-    return _real_send(payload, trip_id)
+    return _real_send(payload, trip_id, redact)
 
 
 wa._send = _pending_ride_started
@@ -611,7 +698,7 @@ T.cancel_trip(trip7["id"], "ops", "test cleanup")
 # ── 6f. no dead ends: every stopping point offers the next tap ───────────────
 print("6f. interactive at every step")
 GUEST7 = "+27000000009"
-text(GUEST7, "hi"); tap(GUEST7, "book"); tap(GUEST7, "when:now"); tap(GUEST7, "from:farm")
+text(GUEST7, "hi"); tap(GUEST7, "book"); tap(GUEST7, "when:now"); tap(GUEST7, "trip:one_way"); tap(GUEST7, "from:farm")
 out = text(GUEST7, "zzzz nowhere")
 check(out[-1]["interactive"]["type"] == "location_request_message", "place not found: Send location offered with the retry")
 text(GUEST7, "hazyview"); tap(GUEST7, "place:yes"); text(GUEST7, "Zed")
@@ -627,7 +714,7 @@ check(any(buttons(m) == ["book"] for m in out if to(m) == GUEST7), "cancelled: B
 out = tap(GUEST7, "book")
 check("When do you need the car?" in body_of(out[-1]), "Book a car starts a fresh booking")
 # on the day: not yet -> the retry button is right there
-tap(GUEST7, "when:now"); tap(GUEST7, "from:farm"); text(GUEST7, "hazyview"); tap(GUEST7, "place:yes"); text(GUEST7, "Zed")
+tap(GUEST7, "when:now"); tap(GUEST7, "trip:one_way"); tap(GUEST7, "from:farm"); text(GUEST7, "hazyview"); tap(GUEST7, "place:yes"); text(GUEST7, "Zed")
 tap(GUEST7, "quote:confirm")
 trip8 = trip_row()
 T.allocate_driver(trip8["id"], 1, "board")
@@ -635,9 +722,12 @@ template_tap(DRIVER, "I have left")
 tap(DRIVER, "driver:arrived")
 out = template_tap(GUEST7, "Not yet")
 check(any(buttons(m) == ["guest:can_see"] for m in out if to(m) == GUEST7), "'Not yet' comes with a Yes, I can see him button")
+check(not any(body_of(m).startswith("Driver Verification") for m in out), "'Not yet': no verification code")
 out = tap(GUEST7, "guest:can_see", "Yes, I can see him")
-check(trip_row(trip8["ref"])["status"] == "driver_waiting" and any(buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER),
-      "that button tells the driver, who gets Ride started")
+check(trip_row(trip8["ref"])["status"] == "driver_waiting" and any("Guest Pickup Verification" in body_of(m) for m in out if to(m) == DRIVER),
+      "that button sends the guest a code, and the driver is asked to type it")
+out = read_out_code(GUEST7)
+check(any(buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER), "the code matches: the driver gets Ride started")
 T.cancel_trip(trip8["id"], "ops", "test cleanup")
 
 plain = sorted({body_of(m).split("\n")[0][:70] for m in sent if m["type"] == "text" and to(m).startswith("+2700000000")
@@ -649,9 +739,18 @@ for p in plain:
 # ── 6g. preset places ────────────────────────────────────────────────────────
 print("6g. preset pickup and drop-off places")
 GUEST8 = "+27000000010"
-text(GUEST8, "hi"); tap(GUEST8, "book"); tap(GUEST8, "when:now")
+text(GUEST8, "hi"); tap(GUEST8, "book"); tap(GUEST8, "when:now"); tap(GUEST8, "trip:one_way")
 # collected at the airport: the pin, then the same drop-off list as the pickup
+_t0 = hub_db.now()
 out = pick(GUEST8, "from:preset:airport", "Kruger Intl Airport")
+_t1 = hub_db.now()
+from app.bot.when import estimated_arrival as _arrive, format_arrival as _fmt_arrival, format_duration as _fmt_dur  # noqa: E402
+_mins = _convo(GUEST8).draft["from"]["durationMin"]
+eta = next((m for m in out if m["type"] == "text" and body_of(m).startswith("Estimated Driver Arrival")), None)
+_eta_texts = {f"Your driver is estimated to reach your pickup location at {_fmt_arrival(_arrive(_mins, t_), t_)}." for t_ in (_t0, _t1)}
+check(eta is not None and any(e in body_of(eta) for e in _eta_texts) and f"Estimated travel time: {_fmt_dur(_mins)}." in body_of(eta),
+      f"car wanted now, collected at the airport: arrival = South African time now + the {_mins}-minute drive")
+check(eta is not None and out.index(eta) < len(out) - 1, "the estimate comes before the drop-off question")
 pin = next((m for m in out if m["type"] == "location"), None)
 check(pin is not None and pin["location"]["name"] == "Kruger Mpumalanga International Airport"
       and abs(pin["location"]["latitude"] + 25.3832) < 0.001, "picking the airport sends its map pin")
@@ -692,7 +791,7 @@ T.allocate_driver(trip_p2p["id"], 1, "board")
 pins = [m for m in sent[start:] if to(m) == DRIVER and m["type"] == "location"]
 check(len(pins) == 1 and "Pickup: Kruger" in pins[0]["location"]["name"], "the driver gets a pin for the pickup only, not the drop-off")
 T.cancel_trip(trip_p2p["id"], "ops", "test cleanup")
-text(GUEST8, "hi"); tap(GUEST8, "book"); tap(GUEST8, "when:now")
+text(GUEST8, "hi"); tap(GUEST8, "book"); tap(GUEST8, "when:now"); tap(GUEST8, "trip:one_way")
 out = pick(GUEST8, "from:farm", "Kanaan Guest Farm")
 check(out[-1]["interactive"]["type"] == "list" and "to:farm" not in rows(out[-1])
       and {"to:preset:perrys", "to:preset:lowveld", "to:preset:airport", "to:location", "to:other"} <= set(rows(out[-1])),
@@ -724,10 +823,35 @@ check(_fare(49, _s) == 412, "airport by formula, 49 km: R412")
 check(_fare(49, _s, fixed_fare=750) == 750, "a fixed price wins over the formula")
 check(_fixed() == {"airport": 750.0}, "fixed prices read from the backend setting; malformed entries skipped")
 
+# Driver arrival: South African time + the drive, rolling over the hour, midnight and the year
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+from app.bot.when import SAST as _SAST  # noqa: E402
+
+
+def _sa_now(*fields):
+    """The server's clock (UTC) at the moment Johannesburg reads `fields`."""
+    return _dt(*fields, tzinfo=_SAST).astimezone(_tz.utc)
+
+
+def _eta(minutes, *fields):
+    return _fmt_arrival(_arrive(minutes, _sa_now(*fields)), _sa_now(*fields))
+
+
+check(str(_SAST) == "Africa/Johannesburg", "times are South African: the IANA zone Africa/Johannesburg, not a fixed offset")
+check(_eta(35, 2026, 10, 3, 14, 15) == "14:50 South Africa time", "14:15 + 35 minutes = 14:50 South Africa time")
+check(_eta(80, 2026, 10, 3, 16, 40) == "18:00 South Africa time" and _fmt_dur(80) == "1 hour 20 minutes",
+      "16:40 + 1 hour 20 minutes = 18:00 (across the hour)")
+check(_eta(30, 2026, 10, 3, 14, 15) == "14:45 South Africa time" and _eta(30, 2026, 10, 3, 14, 20) == "14:50 South Africa time",
+      "worked out from the time of asking: 14:15 -> 14:45, 14:20 -> 14:50")
+check(_eta(35, 2026, 10, 3, 23, 40) == "00:15 on 4 October 2026 (South Africa time)", "23:40 + 35 minutes: 00:15 with the next day's date")
+check(_eta(20, 2026, 12, 31, 23, 50) == "00:10 on 1 January 2027 (South Africa time)", "across the new year")
+check(_fmt_dur(1) == "1 minute" and _fmt_dur(60) == "1 hour" and _fmt_dur(125) == "2 hours 5 minutes", "travel time in words")
+
 # a fixed price is used, and shown only at the quote
 GUEST9 = "+27000000011"
 text(GUEST9, "hi"); tap(GUEST9, "book")
-out = tap(GUEST9, "when:now")
+tap(GUEST9, "when:now")
+out = tap(GUEST9, "trip:one_way")
 check(not any("R " in r.get("description", "") + r.get("title", "") for m in out if m.get("interactive", {}).get("type") == "list"
               for s_ in m["interactive"]["action"]["sections"] for r in s_["rows"]), "the pick-list shows no prices")
 pick(GUEST9, "from:preset:airport", "Kruger Intl Airport")
@@ -744,7 +868,7 @@ import threading  # noqa: E402
 
 GUEST10 = "+27000000012"
 for step in (lambda: text(GUEST10, "hi"), lambda: tap(GUEST10, "book"), lambda: tap(GUEST10, "when:now"),
-             lambda: tap(GUEST10, "from:farm"), lambda: text(GUEST10, "hazyview"), lambda: tap(GUEST10, "place:yes"),
+             lambda: tap(GUEST10, "trip:one_way"), lambda: tap(GUEST10, "from:farm"), lambda: text(GUEST10, "hazyview"), lambda: tap(GUEST10, "place:yes"),
              lambda: text(GUEST10, "Kai Moe")):
     step()
 # "Send request" tapped twice at once: one trip
@@ -774,8 +898,17 @@ def together(*calls):
 
 # guest "Yes, I can see him" double-tapped
 new = together(*[(template_tap, (GUEST10, "Yes, I can see him"), {"context": arrived_card["_id"]})] * 2)
+check(sum(1 for m in new if to(m) == GUEST10 and body_of(m).startswith("Driver Verification")) == 1
+      and sum(1 for m in new if to(m) == DRIVER and "Guest Pickup Verification" in body_of(m)) == 1,
+      "'Yes, I can see him' double-tapped: ONE code for the guest, the driver asked ONCE")
+# the right code typed twice at the same instant: verified once, ONE Ride started
+_c10 = code_for(GUEST10)
+new = together(*[(text, (DRIVER, _c10), {})] * 2)
 started_prompts = [m for m in new if to(m) == DRIVER and buttons(m) == ["driver:started"]]
-check(len(started_prompts) == 1, "'Yes, I can see him' double-tapped: the driver gets ONE Ride started")
+with hub_db.begin() as c:
+    from sqlalchemy import text as sql
+    _verified = c.execute(sql("select count(*) from trip_events where trip_id = :t and event = 'pickup_verified'"), {"t": trip11["id"]}).scalar()
+check(len(started_prompts) == 1 and _verified == 1, "the right code sent twice at once: verified once, the driver gets ONE Ride started")
 # "Ride started" double-tapped
 new = together(*[(tap, (DRIVER, "driver:started", "Ride started"), {"context": started_prompts[0]["_id"]})] * 2)
 check(trip_row(trip11["ref"])["status"] == "in_progress", "the ride is started")
@@ -806,14 +939,15 @@ check(any("is already closed" in body_of(m) for m in out), "a later tap on the c
 bad_orders = 0
 for n in range(8):
     for step in (lambda: text(GUEST10, "hi"), lambda: tap(GUEST10, "book"), lambda: tap(GUEST10, "when:now"),
-                 lambda: tap(GUEST10, "from:farm"), lambda: text(GUEST10, "hazyview"), lambda: tap(GUEST10, "place:yes"),
+                 lambda: tap(GUEST10, "trip:one_way"), lambda: tap(GUEST10, "from:farm"), lambda: text(GUEST10, "hazyview"), lambda: tap(GUEST10, "place:yes"),
                  lambda: text(GUEST10, "Kai Moe"), lambda: tap(GUEST10, "quote:confirm")):
         step()
     t_n = trip_row()
     T.allocate_driver(t_n["id"], 1, "board")
     template_tap(DRIVER, "I have left")
     arr = tap(DRIVER, "driver:arrived")
-    see = template_tap(GUEST10, "Yes, I can see him", context=next(m for m in arr if to(m) == GUEST10)["_id"])
+    template_tap(GUEST10, "Yes, I can see him", context=next(m for m in arr if to(m) == GUEST10)["_id"])
+    see = read_out_code(GUEST10)
     go = tap(DRIVER, "driver:started", "Ride started", context=next(m for m in see if to(m) == DRIVER and buttons(m))["_id"])
     reach_n = next(m for m in go if to(m) == DRIVER and buttons(m) == ["driver:reached"])
     paid = {"status": "success", "reference": f"ref-race-{n}", "amount": 5000, "metadata": {"tripId": t_n["id"], "purpose": "fare"}}
@@ -836,7 +970,12 @@ first = out[-1]
 out = tap(GUEST11, "book", "Book a car", context=first["_id"])
 when_q = out[-1]
 out = tap(GUEST11, "when:now", "Now", context=when_q["_id"])
+trip_q = out[-1]
+out = tap(GUEST11, "trip:one_way", "One Way Trip", context=trip_q["_id"])
 pickup_q = out[-1]
+out = tap(GUEST11, "trip:day", "Day Trip", context=trip_q["_id"])   # the trip type question again
+check(any("earlier message and can no longer be used" in body_of(m) for m in out) and rows(out[-1]) == PICKUP_ROWS,
+      "Day Trip tapped on the old trip type question: refused, the pickup question sent again")
 start = len(sent)
 out = tap(GUEST11, "when:later", "Pick a day and time", context=when_q["_id"])   # the "When?" question again
 check(any("earlier message and can no longer be used" in body_of(m) for m in out)
@@ -913,7 +1052,9 @@ if past:
     check("already passed" in body_of(out[0]) and out[-1]["interactive"]["type"] == "flow", "a slot already gone today reopens the picker")
 tomorrow = (today + timedelta(days=1)).isoformat()
 out = flow_done(GUEST3, tomorrow, "10", "25")
-check(rows(out[-1]) == PICKUP_ROWS, "confirmed date and time moves on to the pickup question")
+check(buttons(out[-1]) == ["trip:day", "trip:one_way"], "confirmed date and time moves on to the trip type")
+out = tap(GUEST3, "trip:one_way", "One Way Trip")
+check(rows(out[-1]) == PICKUP_ROWS, "One Way Trip moves on to the pickup question")
 tap(GUEST3, "from:farm")
 text(GUEST3, "phabeni")
 tap(GUEST3, "place:yes")
@@ -924,6 +1065,375 @@ from app.bot import flows as _flows  # noqa: E402
 check(_flows.picked_datetime({"date": tomorrow, "time": "14:00"}) is not None
       and _flows.picked_datetime({"date": tomorrow, "hour": "14", "minute": "45"}).minute == 45,
       "answers from both picker versions are understood")
+
+# ── 6k. the pickup verification code (OTP) ───────────────────────────────────
+print("6k. pickup verification code")
+from sqlalchemy import text as sql  # noqa: E402
+from app.bot import pickup_code as PC  # noqa: E402
+
+GUEST12, GUEST13 = "+27000000014", "+27000000015"
+
+
+def arrived_trip(guest):
+    """A trip booked now by `guest` from the farm, allocated to the test driver, who has arrived."""
+    for step in (lambda: text(guest, "hi"), lambda: tap(guest, "book"), lambda: tap(guest, "when:now"),
+                 lambda: tap(guest, "trip:one_way"), lambda: tap(guest, "from:farm"), lambda: text(guest, "hazyview"),
+                 lambda: tap(guest, "place:yes"), lambda: text(guest, "Otto Guest"), lambda: tap(guest, "quote:confirm")):
+        step()
+    t_ = trip_row()
+    T.allocate_driver(t_["id"], 1, "board")
+    T.driver_left(t_["id"], T.get_driver(1))
+    arrived_ = T.driver_arrived(t_["id"], T.get_driver(1))  # noqa: F841
+    return trip_row(t_["ref"])
+
+
+def events(trip_id, name):
+    with hub_db.begin() as c:
+        return c.execute(sql("select * from trip_events where trip_id = :t and event = :e order by id"), {"t": trip_id, "e": name}).mappings().all()
+
+
+def expire_code(trip_id):
+    """The trip's latest code, as if its 10 minutes were up."""
+    row = events(trip_id, PC.SENT)[-1]
+    detail = json.loads(row["detail"]); detail["expires"] = "2000-01-01T00:00:00.000Z"
+    with hub_db.begin() as c:
+        c.execute(sql("update trip_events set detail = :d where id = :i"), {"d": json.dumps(detail), "i": row["id"]})
+
+
+def age_code(trip_id, seconds=120):
+    """The trip's codes, as if sent `seconds` earlier (past the double-tap window, still valid)."""
+    with hub_db.begin() as c:
+        c.execute(sql("update trip_events set at = at - make_interval(secs => :s) where trip_id = :t and event = :e"),
+                  {"s": seconds, "t": trip_id, "e": PC.SENT})
+
+
+# A: the right code, end to end - and the code reaches the guest only, and no log keeps it
+tA = arrived_trip(GUEST12)
+start = len(sent)
+out = template_tap(GUEST12, "Yes, I can see him")
+cA = code_for(GUEST12)
+check(cA is not None and re.fullmatch(r"\d{6}", cA) is not None, "A: 'Yes, I can see him' sends the guest a 6-digit code")
+check(all(cA not in json.dumps(m) for m in sent[start:] if to(m) != GUEST12), "A: the code goes to that guest only - not the driver, not Anneli")
+with hub_db.begin() as c:
+    kept = c.execute(sql("select body, payload from wa_messages where phone = :p and body like 'Driver Verification%' order by id desc limit 1"),
+                     {"p": GUEST12}).mappings().first()
+check(kept is not None and cA not in kept["body"] and cA not in kept["payload"], "A: the message log keeps a masked copy, never the code")
+check(all(cA not in (e["detail"] or "") for e in events(tA["id"], PC.SENT)), "A: the trip keeps an HMAC of the code, never the code")
+check("valid until" in body_of(next(m for m in reversed(sent) if to(m) == GUEST12)) and "South Africa time" in body_of(
+    next(m for m in reversed(sent) if to(m) == GUEST12)), "A: the code says until when it is valid, in South African time")
+out = text(DRIVER, cA)
+check(any(body_of(m).startswith("Pickup Verified") and buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER)
+      and len(events(tA["id"], PC.VERIFIED)) == 1, "A: the right code verifies the pickup; the driver gets Ride started")
+with hub_db.begin() as c:
+    typed = c.execute(sql("select body from wa_messages where phone = :p and direction = 'inbound' order by id desc limit 1"), {"p": DRIVER}).scalar()
+check(typed == "[verification code]", "A: the code the driver typed is masked in the message log too")
+out = text(DRIVER, cA)
+check(any("already verified" in body_of(m) for m in out if to(m) == DRIVER) and not any(buttons(m) for m in out)
+      and len(events(tA["id"], PC.VERIFIED)) == 1, "H: the right code again: 'already verified' - nothing runs twice")
+out = tap(DRIVER, "driver:started", "Ride started")
+check(trip_row(tA["ref"])["status"] == "in_progress", "A: Ride started then starts the ride, as before")
+T.cancel_trip(tA["id"], "ops", "test cleanup")
+
+# B: wrong codes - refused, counted, and after 5 the code is used up
+tB = arrived_trip(GUEST12)
+template_tap(GUEST12, "Yes, I can see him")
+cB = code_for(GUEST12)
+wrong = f"{(int(cB) + 1) % 1_000_000:06d}"
+out = text(DRIVER, wrong)
+check(any("Invalid verification code" in body_of(m) and "4 tries left" in body_of(m) for m in out if to(m) == DRIVER)
+      and trip_row(tB["ref"])["status"] == "driver_waiting" and len(events(tB["id"], PC.WRONG)) == 1,
+      "B: a wrong code is refused, the ride does not move, the try is counted")
+out = text(DRIVER, "Ride started")
+check(trip_row(tB["ref"])["status"] == "driver_waiting", "B: a typed Ride started does not get round it")
+for _ in range(4):
+    out = text(DRIVER, wrong)
+check(any("maximum number of attempts" in body_of(m) for m in out if to(m) == DRIVER)
+      and any(buttons(m) == ["guest:code:new"] for m in out if to(m) == GUEST12), "B: the 5th wrong code uses it up; the guest is offered a new one")
+out = text(DRIVER, cB)
+check(any("maximum number of attempts" in body_of(m) for m in out if to(m) == DRIVER) and not events(tB["id"], PC.VERIFIED),
+      "B: once used up, even the right code is refused")
+tap(GUEST12, "guest:code:new", "Send a new code")
+cB2 = code_for(GUEST12)
+check(len(events(tB["id"], PC.SENT)) == 2, "B: Send a new code sends a fresh code")
+out = text(DRIVER, cB2)
+check(any(body_of(m).startswith("Pickup Verified") for m in out if to(m) == DRIVER), "B: the new code works")
+T.cancel_trip(tB["id"], "ops", "test cleanup")
+
+# C: an expired code is refused; the guest can get a new one
+tC = arrived_trip(GUEST12)
+template_tap(GUEST12, "Yes, I can see him")
+cC = code_for(GUEST12)
+expire_code(tC["id"])
+out = text(DRIVER, cC)
+check(any("expired" in body_of(m) for m in out if to(m) == DRIVER) and not events(tC["id"], PC.VERIFIED)
+      and any(buttons(m) == ["guest:code:new"] and "expired" in body_of(m) for m in out if to(m) == GUEST12),
+      "C: the right code after 10 minutes is refused, and the guest is offered a new one")
+template_tap(GUEST12, "Yes, I can see him")
+check(len(events(tC["id"], PC.SENT)) == 2, "C: 'Yes, I can see him' again after expiry sends a new code")
+out = read_out_code(GUEST12)
+check(any(body_of(m).startswith("Pickup Verified") for m in out if to(m) == DRIVER), "C: and that one works")
+T.cancel_trip(tC["id"], "ops", "test cleanup")
+
+# D: the guest cannot see the driver - no code, no way to start
+tD = arrived_trip(GUEST12)
+out = template_tap(GUEST12, "Not yet")
+check(not any(body_of(m).startswith("Driver Verification") for m in out) and not events(tD["id"], PC.SENT), "D: 'Not yet' sends no code")
+out = text(DRIVER, "123456")
+check(any("has not confirmed they can see you" in body_of(m) for m in out if to(m) == DRIVER) and not events(tD["id"], PC.VERIFIED),
+      "D: a code typed before the guest confirmed verifies nothing")
+out = text(DRIVER, "Ride started")
+check(trip_row(tD["ref"])["status"] == "driver_waiting", "D: the pickup is not verified, so Ride started is refused")
+T.cancel_trip(tD["id"], "ops", "test cleanup")
+
+# E, F: two guests, two rides, one driver - each code works for its own ride only
+tE1 = arrived_trip(GUEST12)
+tE2 = arrived_trip(GUEST13)
+out1 = template_tap(GUEST12, "Yes, I can see him")
+c1 = code_for(GUEST12)
+start = len(sent)
+out2 = template_tap(GUEST13, "Yes, I can see him")
+c2 = code_for(GUEST13)
+check(all(c2 not in json.dumps(m) for m in sent[start:] if to(m) != GUEST13), "F: guest B's code goes to guest B only")
+prompt1 = next(m for m in out1 if to(m) == DRIVER and "Guest Pickup Verification" in body_of(m))
+prompt2 = next(m for m in out2 if to(m) == DRIVER and "Guest Pickup Verification" in body_of(m))
+out = text(DRIVER, c1, context=prompt2["_id"])
+check(any("Invalid verification code" in body_of(m) for m in out if to(m) == DRIVER)
+      and not events(tE2["id"], PC.VERIFIED) and not events(tE1["id"], PC.VERIFIED), "E: ride A's code does not verify ride B")
+_s1 = PC.check(T.events_for(tE1["id"]))
+check(PC.matches(tE1["id"], _s1.stored, c1) and not PC.matches(tE2["id"], _s1.stored, c1), "E: a code is bound to its own trip")
+out = text(DRIVER, c2, context=prompt2["_id"])
+check(any(body_of(m).startswith("Pickup Verified") for m in out if to(m) == DRIVER)
+      and events(tE2["id"], PC.VERIFIED) and not events(tE1["id"], PC.VERIFIED), "F: ride B's own code verifies ride B only")
+out = text(DRIVER, c1, context=prompt1["_id"])
+check(events(tE1["id"], PC.VERIFIED), "F: and ride A's own code verifies ride A")
+T.cancel_trip(tE1["id"], "ops", "test cleanup")
+T.cancel_trip(tE2["id"], "ops", "test cleanup")
+
+# G: repeated taps - one arrival, no flood of codes, at most 3 codes a ride
+tG = arrived_trip(GUEST12)
+out = tap(DRIVER, "driver:arrived")
+check(any("already marked as driver waiting" in body_of(m) for m in out) and len(events(tG["id"], "driver_arrived")) == 1,
+      "G: I have arrived again: one arrival, nothing changes")
+template_tap(GUEST12, "Yes, I can see him")
+first_code = code_for(GUEST12)
+out = template_tap(GUEST12, "Yes, I can see him")
+check(len(events(tG["id"], PC.SENT)) == 1 and not any(to(m) == GUEST12 for m in out), "G: 'Yes' again straight away: no second code")
+age_code(tG["id"])
+out = template_tap(GUEST12, "Yes, I can see him")
+check(len(events(tG["id"], PC.SENT)) == 1 and any(buttons(m) == ["guest:code:new"] and "valid until" in body_of(m) for m in out if to(m) == GUEST12),
+      "G: 'Yes' again later: pointed back to the code that still works - no new one")
+out = tap(GUEST12, "guest:code:new", "Send a new code")
+check(len(events(tG["id"], PC.SENT)) == 2 and any("no longer works" in body_of(m) for m in out if to(m) == DRIVER),
+      "G: Send a new code replaces it, and the driver is told")
+out = text(DRIVER, first_code)
+check(any("Invalid verification code" in body_of(m) for m in out if to(m) == DRIVER), "G: the replaced code no longer works")
+tap(GUEST12, "guest:code:new", "Send a new code")
+check(len(events(tG["id"], PC.SENT)) == 2, "G: Send a new code tapped straight away again changes nothing")
+age_code(tG["id"]); tap(GUEST12, "guest:code:new", "Send a new code")
+age_code(tG["id"]); out = tap(GUEST12, "guest:code:new", "Send a new code")
+check(len(events(tG["id"], PC.SENT)) == 3 and any("cannot send another" in body_of(m) for m in out if to(m) == GUEST12),
+      "G: at most 3 codes a ride")
+T.cancel_trip(tG["id"], "ops", "test cleanup")
+
+# ── 6l. Pay later: on the driver's card machine, or by Paystack link ────────
+print("6l. pay later")
+GUEST14, GUEST15 = "+27000000016", "+27000000017"
+
+
+def booked_trip(guest):
+    """A trip booked for tomorrow by `guest` from the farm, confirmed with the test driver.
+    Returns the trip and what the confirmation sent."""
+    for step in (lambda: text(guest, "hi"), lambda: tap(guest, "book"), lambda: tap(guest, "when:later"),
+                 lambda: text(guest, "tomorrow 16:00"), lambda: tap(guest, "trip:one_way"), lambda: tap(guest, "from:farm"),
+                 lambda: text(guest, "hazyview"), lambda: tap(guest, "place:yes"), lambda: text(guest, "Lee Guest"),
+                 lambda: tap(guest, "quote:confirm")):
+        step()
+    t_ = trip_row()
+    start = len(sent)
+    T.allocate_driver(t_["id"], 1, "board")
+    return trip_row(t_["ref"]), sent[start:]
+
+
+def to_destination(guest):
+    """The driver collects `guest` (code and all) and reaches the destination."""
+    template_tap(DRIVER, "I have left")
+    tap(DRIVER, "driver:arrived")
+    template_tap(guest, "Yes, I can see him")
+    read_out_code(guest)
+    started_ = tap(DRIVER, "driver:started", "Ride started")
+    return started_, tap(DRIVER, "driver:reached", "Reached destination")
+
+
+def board_method(ref):
+    res = client.get("/dashboard/trips", params={"scope": "all"}, headers={"X-Internal-Secret": "internal-test"})
+    return next(t_ for t_ in res.json() if t_["ref"] == ref)["paymentMethod"]
+
+
+# L: Card payment - the driver takes the fare on his card machine at the drop-off
+tL, out = booked_trip(GUEST14)
+offer = next(m for m in out if to(m) == GUEST14 and m["type"] == "interactive" and buttons(m))
+check(buttons(offer) == ["guest:pay:now", "guest:pay:later"], "L: the fare comes with Pay now and Pay later")
+out = tap(GUEST14, "guest:pay:now", "Pay now", context=offer["_id"])
+early_link = consent_path(out, GUEST14)  # opened, but not paid
+out = tap(GUEST14, "guest:pay:later", "Pay later", context=offer["_id"])
+how = next(m for m in out if to(m) == GUEST14)
+check(buttons(how) == ["guest:pay:card", "guest:pay:paystack"] and "card machine" in body_of(how) and "Paystack link" in body_of(how),
+      "L: Pay later offers Card payment (the driver's card machine) and Paystack payment")
+out = tap(GUEST14, "guest:pay:card", "Card payment", context=how["_id"])
+check(any("card machine when you reach your destination" in body_of(m) for m in out if to(m) == GUEST14)
+      and not any(m.get("interactive", {}).get("type") == "cta_url" for m in out),
+      "L: Card payment - the guest will pay on the machine at the destination; no link")
+check(any("on your card machine at the drop-off" in body_of(m) for m in out if to(m) == DRIVER)
+      and any("card machine" in body_of(m) for m in out if to(m) == OPS), "L: the driver (who brings the machine) and Anneli are told")
+out = tap(GUEST14, "guest:pay:card", "Card payment", context=how["_id"])
+check(not any(to(m) in (DRIVER, OPS) for m in out) and trip_row(tL["ref"])["captured_at"] is None,
+      "L: Card payment again tells the driver and Anneli nothing new; choosing marks nothing paid")
+started, out = to_destination(GUEST14)
+check(any(body_of(m).startswith("Ride started.") and "card machine at the drop-off" in body_of(m) for m in started if to(m) == DRIVER),
+      "L: Ride started reminds the driver the guest pays on his card machine")
+check(not any(m.get("interactive", {}).get("type") == "cta_url" for m in out)
+      and any("by card on the driver's card machine" in body_of(m) for m in out if to(m) == GUEST14),
+      "L: at the destination the guest is asked to pay on the card machine - no Paystack link")
+card_q = next((m for m in out if to(m) == DRIVER and buttons(m)), None)
+check(card_q is not None and buttons(card_q) == ["driver:card_paid"] and any("card machine" in body_of(m) for m in out if to(m) == OPS),
+      "L: the driver gets Card payment done (no Ride complete yet); Anneli is told")
+out = tap(DRIVER, "driver:complete", "Ride complete")
+check(trip_row(tL["ref"])["status"] == "in_progress" and any("Card payment done" in body_of(m) for m in out if to(m) == DRIVER),
+      "L: Ride complete before the card payment is refused")
+new = together(*[(tap, (DRIVER, "driver:card_paid", "Card payment done"), {"context": card_q["_id"]})] * 2)
+check(sum(1 for m in new if to(m) == GUEST14 and body_of(m).startswith("Payment received via Card.")) == 1,
+      "L: guest - 'Payment received via Card.' (once, though tapped twice)")
+check(sum(1 for m in new if to(m) == OPS and body_of(m).startswith("Payment received — Card Payment.")) == 1,
+      "L: Anneli - 'Payment received — Card Payment.'")
+check(sum(1 for m in new if to(m) == DRIVER and body_of(m).startswith("Payment Status: Paid — Card Payment.") and buttons(m) == ["driver:complete"]) == 1,
+      "L: driver - 'Payment Status: Paid — Card Payment.' with Ride complete, once")
+check(trip_row(tL["ref"])["captured_at"] is not None and len(events(tL["id"], T.CARD_PAID_EVENT)) == 1 and board_method(tL["ref"]) == "card",
+      "L: the trip is paid, by card - and the admin board shows it")
+res = client.get(early_link)
+check(res.status_code == 200 and "already paid" in res.text and ">Agree</button>" not in res.text,
+      "L: the Paystack link opened earlier now says the trip is paid - no second charge")
+out = tap(DRIVER, "driver:complete", "Ride complete")
+closed_card = next((m for m in out if to(m) == OPS and m["type"] == "template"), None)
+check(trip_row(tL["ref"])["status"] == "completed" and any("already paid" in body_of(m) for m in out if to(m) == GUEST14)
+      and any(m.get("interactive", {}).get("type") == "list" for m in out if to(m) == GUEST14),
+      "L: Ride complete closes the trip as after any payment - the review follows")
+check(closed_card is not None and "paid by card on the driver's card machine" in params_of(closed_card)[2],
+      "L: Anneli's trip-closed card says it was paid on the card machine")
+
+# P: Paystack payment - the link comes at the destination, through Paystack's privacy page
+tP, out = booked_trip(GUEST15)
+offer = next(m for m in out if to(m) == GUEST15 and m["type"] == "interactive" and buttons(m))
+out = tap(GUEST15, "guest:pay:later", "Pay later", context=offer["_id"])
+how = next(m for m in out if to(m) == GUEST15)
+out = tap(GUEST15, "guest:pay:paystack", "Paystack payment", context=how["_id"])
+check(any("Paystack payment link when you reach your destination" in body_of(m) for m in out if to(m) == GUEST15)
+      and not any(m.get("interactive", {}).get("type") == "cta_url" for m in out) and not any(to(m) == DRIVER for m in out),
+      "P: Paystack payment - the link comes at the destination; nothing sent now")
+started, out = to_destination(GUEST15)
+check(not any("card machine" in body_of(m) for m in started if to(m) == DRIVER), "P: no card machine for the driver")
+refP = trip_row(tP["ref"])["payment_ref"]
+check(consent_path(out, GUEST15) == f"/payments/pay/{refP}" and not any(buttons(m) for m in out if to(m) == DRIVER),
+      "P: at the destination Pay now opens the Paystack privacy page; Ride complete waits")
+page = client.get(f"/payments/pay/{refP}")
+res = client.post(f"/payments/pay/{refP}", follow_redirects=False)
+check(">Agree</button>" in page.text and res.status_code == 303 and res.headers["location"].startswith("https://paystack.test/"),
+      "P: Agree goes on to Paystack")
+start = len(sent)
+T.payment_received({"status": "success", "reference": refP, "amount": 28000, "metadata": {"tripId": tP["id"], "purpose": "fare"}})
+new = sent[start:]
+check(any("received" in body_of(m) for m in new if to(m) == GUEST15) and any(buttons(m) == ["driver:complete"] for m in new if to(m) == DRIVER)
+      and any("via Paystack" in body_of(m) for m in new if to(m) == OPS) and board_method(tP["ref"]) == "paystack",
+      "P: paid - guest, driver (Ride complete) and Anneli told; the board shows Paystack")
+res = client.get(f"/payments/pay/{refP}")
+check("already" in res.text and ">Agree</button>" not in res.text, "P: the link cannot be paid twice")
+T.cancel_trip(tP["id"], "ops", "test cleanup")
+
+# ── 6m. Day Trip requests: full name, kept once, counted, shown on the tab ───
+print("6m. day trip requests")
+GUEST16, GUEST17, GUEST18, GUEST19 = "+27000000018", "+27000000019", "+27000000020", "+27000000021"
+
+
+def to_trip_type(guest, when="tomorrow 09:30"):
+    """`guest` starts a booking for `when`, up to the trip type question."""
+    text(guest, "hi"); tap(guest, "book"); tap(guest, "when:later")
+    return text(guest, when)
+
+
+def stored_requests():
+    """Day Trip requests in the database itself, not as the tab reports them."""
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        return db.execute(sql("select count(*) from kanaan_day_trip_requests")).scalar()
+
+
+def trips_of(phone):
+    with hub_db.begin() as c:
+        return c.execute(sql("select count(*) from trips where guest_phone = :p"), {"p": phone}).scalar()
+
+
+# Test 1: Day Trip, then the full name - one request, and the count goes up by one
+count0 = day_trips()[0]
+to_trip_type(GUEST16)
+out = tap(GUEST16, "trip:day", "Day Trip")
+check(body_of(out[-1]) == "What is your full name?" and day_trips()[0] == count0,
+      "1: Day Trip from a new guest asks their full name; nothing is kept before it")
+out = text(GUEST16, "Ann Daytrip")
+count1, mine = day_trips(GUEST16)
+check(body_of(out[-1]).startswith("Day Trip Service – Coming Soon") and buttons(out[-1]) == ["trip:one_way"],
+      "1: then the existing 'coming soon' reply, unchanged")
+check(count1 == count0 + 1 and len(mine) == 1 and mine[0]["guestName"] == "Ann Daytrip" and mine[0]["phone"] == GUEST16
+      and mine[0]["requestType"] == "DAY_TRIP" and mine[0]["status"] == "requested" and mine[0]["createdAt"].endswith("Z"),
+      "1: kept - full name, WhatsApp number, type DAY_TRIP, status requested, time created - count up by 1")
+check(trips_of(GUEST16) == 0, "1: no ride booked, no fare, no pickup or drop-off")
+
+# Test 2: One Way Trip - the booking goes on exactly as before, and no Day Trip request
+to_trip_type(GUEST17)
+out = tap(GUEST17, "trip:one_way", "One Way Trip")
+check(rows(out[-1]) == PICKUP_ROWS, "2: One Way Trip goes straight to the pickup list, as before")
+tap(GUEST17, "from:farm"); text(GUEST17, "hazyview"); tap(GUEST17, "place:yes")
+out = text(GUEST17, "Ola Oneway")
+check(buttons(out[-1]) == ["quote:confirm", "quote:change"] and "Fare: R" in body_of(out[-1]),
+      "2: then the destination, the name and the fare quote, as before")
+tap(GUEST17, "quote:confirm")
+check(trips_of(GUEST17) == 1 and trip_row()["status"] == "requested", "2: and the booking is made, as before")
+check(day_trips(GUEST17)[1] == [] and day_trips()[0] == count1, "2: no Day Trip request for a One Way Trip")
+T.cancel_trip(trip_row()["id"], "ops", "test cleanup")
+
+# Test 3: the same name delivered twice (Meta's retry) and typed twice at once - one request
+to_trip_type(GUEST18)
+tap(GUEST18, "trip:day", "Day Trip")
+retry = {"id": "wamid.in-daytrip-retry", "type": "text", "text": {"body": "Dup Guest"}}
+new = post(GUEST18, retry) + post(GUEST18, retry)
+check(len(day_trips(GUEST18)[1]) == 1 and sum(1 for m in new if body_of(m).startswith("Day Trip Service")) == 1,
+      "3: the same webhook delivered twice: one request, one reply")
+to_trip_type(GUEST19)
+tap(GUEST19, "trip:day", "Day Trip")
+new = together(*[(text, (GUEST19, "Twin Typer"), {})] * 2)
+check(len(day_trips(GUEST19)[1]) == 1 and sum(1 for m in new if body_of(m).startswith("Day Trip Service")) == 1,
+      "3: the name sent twice at the same instant: one request, one reply")
+
+# A later request from the same guest, for another day, is a new one - and their name is not asked again
+to_trip_type(GUEST16, "tomorrow 15:45")
+out = tap(GUEST16, "trip:day", "Day Trip")
+check(body_of(out[-1]).startswith("Day Trip Service – Coming Soon") and len(day_trips(GUEST16)[1]) == 2,
+      "3: the same guest asking again for another time: a second request, name not asked again")
+
+# Test 5: a guest the chat already knows (Kim, from an earlier trip) - their name is reused, nothing duplicated
+kim_trips = trips_of(GUEST4)
+to_trip_type(GUEST4, "tomorrow 17:15")
+out = tap(GUEST4, "trip:day", "Day Trip")
+kim = day_trips(GUEST4)[1]
+check(body_of(out[-1]).startswith("Day Trip Service – Coming Soon") and len(kim) == 1 and kim[0]["guestName"] == "Kim",
+      "5: a returning guest is not asked their name - the one on their earlier trip is used")
+check(trips_of(GUEST4) == kim_trips, "5: and no trip or other record is created for them")
+
+# Test 4 and 6: the tab's count is the database's, newest first, with every field shown
+count, all_requests = day_trips()
+check(count == stored_requests() == count0 + 5, f"4: Day Trip Requests ({count}) is the number stored - five more than before this section")
+check([r["createdAt"] for r in all_requests] == sorted((r["createdAt"] for r in all_requests), reverse=True),
+      "6: newest first")
+check(all(r["guestName"] and r["phone"].startswith("+27") and r["requestType"] == "DAY_TRIP" and r["status"] and r["createdAt"]
+          for r in all_requests), "6: every request has its full name, WhatsApp number, type, status and time")
 
 unexpected = [r for r in bot_errors.records if "Template name does not exist" not in r.getMessage()]
 for r in unexpected:
