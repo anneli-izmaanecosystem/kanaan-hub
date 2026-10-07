@@ -49,3 +49,5 @@ next-env.d.ts
 .pglite/
 env.vercel
 env.vercel.prod
+
+.claude/settings.local.json
