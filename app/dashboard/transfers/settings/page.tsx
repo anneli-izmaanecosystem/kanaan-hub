@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { AlertTriangle, Check } from 'lucide-react'
 import { getJson } from '@/lib/utils'
+import { PhoneInput } from '@/components/phone-input'
 
 type Settings = {
   fareBase: number; farePerKm: number; fareMinimum: number
@@ -141,13 +142,13 @@ export default function TransferSettingsPage() {
       <Card title="Where requests go">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Your WhatsApp number" hint="new requests land here">
-            <input className={inp} value={s.opsWhatsapp} onChange={e => set('opsWhatsapp', e.target.value)} />
+            <PhoneInput value={s.opsWhatsapp ?? ''} onChange={v => set('opsWhatsapp', v)} />
           </Field>
           <Field label="Number quoted to guests" hint="shown when the bot hands off">
-            <input className={inp} value={s.opsPhone} onChange={e => set('opsPhone', e.target.value)} />
+            <PhoneInput value={s.opsPhone ?? ''} onChange={v => set('opsPhone', v)} />
           </Field>
           <Field label="Backup number" hint="chased if you have not answered">
-            <input className={inp} value={s.opsEscalationWhatsapp ?? ''} onChange={e => set('opsEscalationWhatsapp', e.target.value || null)} />
+            <PhoneInput value={s.opsEscalationWhatsapp ?? ''} onChange={v => set('opsEscalationWhatsapp', v || null)} />
           </Field>
         </div>
         {!s.opsEscalationWhatsapp && (
