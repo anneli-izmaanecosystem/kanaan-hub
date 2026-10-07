@@ -162,7 +162,15 @@ def s_farm_pay_now() -> None:
     _check("Quote wording: 'We are checking driver availability ... No payment is required until your car is confirmed.'",
            "We are checking driver availability and will confirm your booking as soon as possible. No payment is required until your car is confirmed."
            in quote["text"], ["C09"])
-    _check("Fare R 20 (1.5 km, R5 + R8.30/km, minimum R20)", "Fare: R 20" in quote["text"], ["C13"])
+    # The drive the bot measured (road distance with an OpenRouteService key, else the
+    # straight-line estimate) and the fare the rates make of it.
+    from app.bot.places import PRESETS, distance_from_farm
+    from app.bot.settings_store import fare_for, load_settings
+    leg = distance_from_farm(PRESETS["perrys"]["lat"], PRESETS["perrys"]["lng"])
+    fare = f"{fare_for(leg['distanceKm'], load_settings()):g}"
+    _check(f"Fare R {fare} on the {leg['distanceKm']:g} km {'road' if not leg['estimated'] else 'estimated'} distance "
+           "(base + per km, never below the minimum)",
+           f"{leg['distanceKm']:g} km" in quote["text"] and f"Fare: R {fare}\n" in quote["text"], ["C13", "C41"])
     _check("No payment button before the request is accepted", not any(i.startswith("guest:pay") for m in log for i in _ids(m)), ["C01"])
     ms = _accept(log); log += ms
     confirmed = _out(ms, "guest", lambda m: (m.get("template") or "").startswith("kn_guest_trip_confirmed"))
@@ -201,7 +209,7 @@ def s_farm_pay_now() -> None:
            bool(agreed is not None and agreed.status_code == 303 and agreed.headers["location"].startswith("/sim/pay/")), ["C38"])
     ms = _pay(ms, "success"); log += ms
     _check("Paid: guest, driver and Anneli are each told",
-           _out(ms, "guest", lambda m: "Payment of R 20 received" in m["text"]) and _out(ms, "driver", lambda m: "has paid" in m["text"])
+           _out(ms, "guest", lambda m: f"Payment of R {fare} received" in m["text"]) and _out(ms, "driver", lambda m: "has paid" in m["text"])
            and _out(ms, "ops", lambda m: "paid by card" in m["text"]), ["C06"])
     ms = _do("driver", kind="template", title="I have left"); log += ms
     ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms

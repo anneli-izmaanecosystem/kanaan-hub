@@ -1,9 +1,11 @@
 """Resolving "Phabeni Gate" into a pin and a road distance from the farm.
 
 With GOOGLE_MAPS_API_KEY set, typed places are found with Google Places (New) and every
-distance is the Google Routes driving distance from the farm. Without it — or when a
-Google call fails — the flow still runs: typed places come from the admin destinations
-and the built-in list, and distance is a straight-line estimate. Callers never see which.
+distance is the Google Routes driving distance from the farm. Without it, typed places
+come from the admin destinations and the built-in list, and distance is the
+OpenRouteService driving distance when OPENROUTESERVICE_API_KEY is set. With neither -
+or when a routing call fails - distance is a straight-line estimate. Callers never see
+which.
 
 Places are plain dicts with camelCase keys, because they are stored in the conversation
 draft next to what the earlier Next.js flow wrote.
@@ -98,15 +100,42 @@ def _route(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, 
     }
 
 
+def _route_ors(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, Any]:
+    """Driving distance and time from A to B by OpenRouteService (OpenStreetMap roads).
+    Each pin may snap to a road up to 1 km away - a farm gate down a track."""
+    with httpx.Client(timeout=TIMEOUT) as client:
+        res = client.post(
+            "https://api.openrouteservice.org/v2/directions/driving-car",
+            json={"coordinates": [[a_lng, a_lat], [b_lng, b_lat]], "instructions": False, "radiuses": [1000, 1000]},
+            headers={"Authorization": get_settings().openrouteservice_api_key},
+        )
+    if res.is_error:
+        raise RuntimeError(f"OpenRouteService {res.status_code}: {res.text[:300]}")
+    route = (res.json().get("routes") or [None])[0]
+    summary = (route or {}).get("summary") or {}
+    if summary.get("distance") is None:
+        raise RuntimeError("OpenRouteService found no driving route")
+    return {
+        "distanceKm": round(summary["distance"] / 1000, 1),
+        "durationMin": max(1, round(float(summary.get("duration") or 0) / 60)),
+        "estimated": False,
+    }
+
+
 def _route_from_farm(lat: float, lng: float) -> dict[str, Any]:
     """Driving distance from the farm - the way the car runs, even on a pickup."""
     return _route(*_farm(), lat, lng)
 
 
 def distance_between(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> dict[str, Any]:
-    """{distanceKm, durationMin, estimated} from A to B. Google when configured (cached),
-    else the straight-line estimate - also the fallback if Google fails."""
-    if not places_configured():
+    """{distanceKm, durationMin, estimated} from A to B. Google when configured, else
+    OpenRouteService (both cached), else the straight-line estimate - also the fallback
+    if the routing call fails."""
+    if places_configured():
+        route = _route
+    elif get_settings().openrouteservice_api_key:
+        route = _route_ors
+    else:
         return estimated_between(a_lat, a_lng, b_lat, b_lng)
     key = f"{a_lat:.4f},{a_lng:.4f}>{b_lat:.4f},{b_lng:.4f}"
     with _cache_lock:
@@ -114,9 +143,9 @@ def distance_between(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> 
     if hit and time.time() - hit[0] < _ROUTE_TTL:
         return hit[1]
     try:
-        value = _route(a_lat, a_lng, b_lat, b_lng)
+        value = route(a_lat, a_lng, b_lat, b_lng)
     except Exception as err:
-        log.error("Google Routes failed, using the straight-line estimate - %s", err)
+        log.error("Road routing failed, using the straight-line estimate - %s", err)
         return estimated_between(a_lat, a_lng, b_lat, b_lng)
     with _cache_lock:
         _route_cache[key] = (time.time(), value)

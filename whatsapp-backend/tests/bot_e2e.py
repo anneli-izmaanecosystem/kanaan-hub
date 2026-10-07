@@ -41,6 +41,12 @@ os.environ.update({
     # This service's public address, from which the Pay now consent page's link is made.
     "PAYSTACK_CALLBACK_URL": "https://kanaan.test/kanaan/payments/paystack/callback",
     "GOOGLE_MAPS_API_KEY": "",
+    # Offline and repeatable: distances are the straight-line estimate unless 6n stubs a route.
+    "OPENROUTESERVICE_API_KEY": "",
+    # The farm point these checks' distances and fares were written against (the real gate
+    # is the default in app/config.py).
+    "KANAAN_PICKUP_LAT": "-25.0448",
+    "KANAAN_PICKUP_LNG": "31.1194",
     "BOT_SCHEDULER_ENABLED": "false",
     "INTERNAL_MIRROR_SECRET": "internal-test",
     "KANAAN_OPS_WHATSAPP": OPS,
@@ -1434,6 +1440,83 @@ check([r["createdAt"] for r in all_requests] == sorted((r["createdAt"] for r in 
       "6: newest first")
 check(all(r["guestName"] and r["phone"].startswith("+27") and r["requestType"] == "DAY_TRIP" and r["status"] and r["createdAt"]
           for r in all_requests), "6: every request has its full name, WhatsApp number, type, status and time")
+
+# ── 6n. road distance from OpenRouteService ──────────────────────────────────
+print("6n. road distance from OpenRouteService (stubbed)")
+import types  # noqa: E402
+
+import httpx as _httpx  # noqa: E402
+
+from app.bot import places as _places  # noqa: E402
+from app.config import get_settings as _settings  # noqa: E402
+
+_ORS_ROUTE = (200, {"routes": [{"summary": {"distance": 4231.6, "duration": 412.3}}]})
+
+
+class _OrsStub:
+    """Stands in for httpx.Client inside places.py only: records each request and answers
+    with `reply`."""
+    calls: list = []
+    reply = _ORS_ROUTE
+
+    def __init__(self, timeout=None):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, url, json=None, headers=None):
+        _OrsStub.calls.append({"url": url, "json": json, "headers": headers})
+        status, body = _OrsStub.reply
+        return _httpx.Response(status, json=body, request=_httpx.Request("POST", url))
+
+
+_real_httpx, _places.httpx = _places.httpx, types.SimpleNamespace(Client=_OrsStub)
+_settings().openrouteservice_api_key = "test-ors-key"
+_places._route_cache.clear()
+_ENGEN, _PERRYS = (-25.0457399, 31.1296184), (-25.0360270, 31.1248174)
+
+leg = _places.distance_between(*_ENGEN, *_PERRYS)
+check(leg == {"distanceKm": 4.2, "durationMin": 7, "estimated": False},
+      "with a key: the road distance and drive time come from OpenRouteService (4231.6 m, 412 s -> 4.2 km, 7 min)")
+req = _OrsStub.calls[-1] if _OrsStub.calls else {}
+check(req.get("url") == "https://api.openrouteservice.org/v2/directions/driving-car"
+      and (req.get("json") or {}).get("coordinates") == [[_ENGEN[1], _ENGEN[0]], [_PERRYS[1], _PERRYS[0]]]
+      and req.get("headers") == {"Authorization": "test-ors-key"},
+      "it is asked for the car route from A to B (longitude first), with the key")
+_asked = len(_OrsStub.calls)
+_places.distance_between(*_ENGEN, *_PERRYS)
+check(len(_OrsStub.calls) == _asked, "the same A to B again comes from the cache, not a second request")
+
+# Through the chat: Kanaan -> Lowveld Mall (Engen) is quoted on the road distance
+GUEST_ORS = "+27000000022"
+text(GUEST_ORS, "hi"); tap(GUEST_ORS, "book"); tap(GUEST_ORS, "when:now"); tap(GUEST_ORS, "trip:one_way")
+tap(GUEST_ORS, "from:farm", "Kanaan Guest Farm")
+pick(GUEST_ORS, "to:preset:lowveld", "Lowveld Mall (Engen)")
+tap(GUEST_ORS, "place:yes")
+out = text(GUEST_ORS, "Road Test")
+check("4.2 km, about 7 minutes" in body_of(out[-1]) and "Fare: R 40\n" in body_of(out[-1]),
+      "the quote shows the road distance and its fare: R5 + R8.30 x 4.2 km = R39.86 -> R40")
+text(GUEST_ORS, "cancel")
+
+# OpenRouteService refuses: the booking goes on with the straight-line estimate
+_places._route_cache.clear()
+_OrsStub.reply = (403, {"error": "Access to this API has been disallowed"})
+_logged_before = len(bot_errors.records)
+leg = _places.distance_between(*_ENGEN, *_PERRYS)
+check(leg == _places.estimated_between(*_ENGEN, *_PERRYS) and leg["estimated"],
+      "a refused or failed route falls back to the straight-line estimate")
+_logged = bot_errors.records[_logged_before:]
+check(len(_logged) == 1 and "Road routing failed" in _logged[0].getMessage(), "and the failure is logged")
+del bot_errors.records[_logged_before:]  # expected here, so not counted by the check below
+
+_places.httpx = _real_httpx
+_settings().openrouteservice_api_key = ""
+_places._route_cache.clear()
+_OrsStub.reply = _ORS_ROUTE
 
 unexpected = [r for r in bot_errors.records if "Template name does not exist" not in r.getMessage()]
 for r in unexpected:
