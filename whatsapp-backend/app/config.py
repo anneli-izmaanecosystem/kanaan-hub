@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     kanaan_ops_whatsapp: str = ""               # E.164, where Anneli's cards go
     kanaan_pickup_name: str = "Kanaan Guest Farm"
     kanaan_pickup_address: str = "Kanaan Guest Farm, R40 Hazyview"
-    kanaan_pickup_lat: float = -25.0448
-    kanaan_pickup_lng: float = 31.1194
+    kanaan_pickup_lat: float = -25.063060      # the farm gate, as given by Kanaan (2026-10-07)
+    kanaan_pickup_lng: float = 31.108593
     # Upfront fare: base + per km, never below the minimum (dashboard transfer settings win
     # over these). R8.30/km is UberX South Africa's R7.50/km with its R0.75/min folded in -
     # time here comes from distance at an average speed, so a separate time rate added
@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     # Google Maps Platform (Routes, Places (New), Geocoding). Empty = straight-line
     # distance estimate and the built-in place list.
     google_maps_api_key: str = ""
+
+    # OpenRouteService (OpenStreetMap roads): the road distance between two points when
+    # there is no Google key. Place search is unaffected. Empty = straight-line estimate.
+    openrouteservice_api_key: str = ""
 
     # The scheduled sends (reminders, chasing Anneli, no-shows) run in-process on this
     # interval. Several replicas are safe: a Postgres advisory lock lets one tick at a time.
