@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Edit2, Check, X, AlertTriangle } from 'lucide-react'
 import { cn, formatPhone, getJson } from '@/lib/utils'
+import { PhoneInput } from '@/components/phone-input'
 
 type Driver = {
   id: number; name: string; phone: string; plate: string
@@ -129,8 +130,8 @@ export default function DriversPage() {
             <Field label="Name">
               <input className={inp} value={addForm.name ?? ''} onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))} />
             </Field>
-            <Field label="WhatsApp number" hint="072 118 4460 or +27 72 118 4460">
-              <input className={inp} value={addForm.phone ?? ''} onChange={e => setAddForm(f => ({ ...f, phone: e.target.value }))} />
+            <Field label="WhatsApp number">
+              <PhoneInput value={addForm.phone ?? ''} onChange={phone => setAddForm(f => ({ ...f, phone }))} />
             </Field>
             <Field label="Registration">
               <input className={inp} value={addForm.plate ?? ''} onChange={e => setAddForm(f => ({ ...f, plate: e.target.value }))} />
@@ -182,7 +183,7 @@ export default function DriversPage() {
                     </td>
                     <td className="px-4 py-2.5 text-gray-600">
                       {isEditing
-                        ? <input className={inp} value={form.phone ?? ''} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                        ? <PhoneInput value={form.phone ?? ''} onChange={phone => setForm(f => ({ ...f, phone }))} />
                         : <span className="font-mono text-xs">{formatPhone(d.phone)}</span>}
                     </td>
                     <td className="px-4 py-2.5 text-gray-600">
