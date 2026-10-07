@@ -1,20 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { forwardToBot } from '@/lib/bot'
 
 /**
- * GET /api/trips — read from the WhatsApp service (lib/bot.ts), newest request first
- *   ?status=all|upcoming|running|completed   — all by default
- *   ?date=YYYY-MM-DD                         — the pickup day (SAST); every day if left out
+ * GET /api/trips — every trip from the WhatsApp service (lib/bot.ts), abandoned drafts included.
+ * The Dispatch page sorts and filters them itself (app/dashboard/transfers/page.tsx).
  */
-export async function GET(req: NextRequest) {
+export async function GET() {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
-  const params = new URLSearchParams()
-  for (const key of ['status', 'date']) {
-    const value = req.nextUrl.searchParams.get(key)
-    if (value) params.set(key, value)
-  }
-  return forwardToBot('GET', `/dashboard/trips?${params}`)
+  return forwardToBot('GET', '/dashboard/trips?scope=all')
 }

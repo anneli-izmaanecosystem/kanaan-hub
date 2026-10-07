@@ -1435,44 +1435,6 @@ check([r["createdAt"] for r in all_requests] == sorted((r["createdAt"] for r in 
 check(all(r["guestName"] and r["phone"].startswith("+27") and r["requestType"] == "DAY_TRIP" and r["status"] and r["createdAt"]
           for r in all_requests), "6: every request has its full name, WhatsApp number, type, status and time")
 
-# ── 6n. the Dispatch board: status and pickup-date filters, newest request first ──
-print("6n. dispatch board filters")
-
-
-def board(**params):
-    res = client.get("/dashboard/trips", params=params, headers={"X-Internal-Secret": "internal-test"})
-    return res.status_code, res.json()
-
-
-def board_ids(**params):
-    return [t_["id"] for t_ in board(**params)[1]]
-
-
-with hub_db.begin() as c:
-    from sqlalchemy import text as sql
-    # Every trip is over by now, so give three of them the statuses Upcoming and Running list.
-    for status, ref in zip(("requested", "allocated", "in_progress"),
-                           c.execute(sql("select ref from trips where status = 'completed' order by id limit 3")).scalars().all()):
-        c.execute(sql("update trips set status = :s where ref = :r"), {"s": status, "r": ref})
-    stored = c.execute(sql("select id, status from trips where status <> 'draft' order by created_at desc, id desc")).mappings().all()
-check(board_ids() == [r["id"] for r in stored], f"board: All lists all {len(stored)} trips but abandoned drafts, newest request first")
-GROUPS = {"upcoming": ("requested", "allocated"), "running": ("driver_en_route", "driver_waiting", "in_progress"),
-          "completed": ("completed",)}  # what the portal's Status filter promises
-for name, statuses in GROUPS.items():
-    expected = [r["id"] for r in stored if r["status"] in statuses]
-    check(board_ids(status=name) == expected and len(expected) > 0, f"board: {name} lists its {len(expected)} trips only")
-
-# The pickup day is the farm's (SAST, UTC+2): 23:59 belongs to that day, midnight to the next.
-late, midnight = stored[0], stored[1]
-with hub_db.begin() as c:
-    c.execute(sql("update trips set scheduled_at = '2030-01-15 21:59' where id = :i"), {"i": late["id"]})
-    c.execute(sql("update trips set scheduled_at = '2030-01-15 22:00' where id = :i"), {"i": midnight["id"]})
-check(board_ids(date="2030-01-15") == [late["id"]] and board_ids(date="2030-01-16") == [midnight["id"]],
-      "board: a pickup at 23:59 SAST is on that day; one at midnight is on the next")
-other = next(name for name, statuses in GROUPS.items() if late["status"] not in statuses)
-check(board_ids(date="2030-01-15", status=other) == [], "board: status and date filters combine")
-check(board(status="soon")[0] == 400 and board(date="15/01/2030")[0] == 400, "board: an unknown status or a malformed date is refused")
-
 unexpected = [r for r in bot_errors.records if "Template name does not exist" not in r.getMessage()]
 for r in unexpected:
     print(f"  bot logged an error: {r.name}: {r.getMessage()}" + (f" ({r.exc_info[1]!r})" if r.exc_info else ""))

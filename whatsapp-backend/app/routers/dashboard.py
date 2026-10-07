@@ -13,11 +13,11 @@ WhatsApp buttons, so the guest, driver and Anneli are told exactly as they would
 import math
 import re
 from dataclasses import asdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Annotated, Any, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 
@@ -38,13 +38,6 @@ router = APIRouter(
 OPEN_STATUSES = ("requested", "allocated", "driver_en_route", "driver_waiting", "in_progress")
 # A driver on one of these has been named to the guest, so they cannot be removed.
 LIVE_STATUSES = ("allocated", "driver_en_route", "driver_waiting", "in_progress")
-# The Dispatch board's status filter. Cancelled, declined and no-show trips are over without
-# being completed, so only All lists them.
-STATUS_FILTERS = {
-    "upcoming": ("requested", "allocated"),
-    "running": ("driver_en_route", "driver_waiting", "in_progress"),
-    "completed": ("completed",),
-}
 TRIP_ACTIONS = ("allocate", "cancel", "complete", "no_show")
 
 
@@ -199,21 +192,9 @@ def conversation(phone: str):
 # ── dispatch board ───────────────────────────────────────────────────────────
 
 
-def _sast_day(day: date) -> tuple[datetime, datetime]:
-    """The owner's calendar day as a naive-UTC window. SAST is UTC+2 with no DST. The end is
-    exclusive: a trip at exactly midnight belongs to the next day."""
-    start = datetime(day.year, day.month, day.day) - timedelta(hours=2)
-    return start, start + timedelta(days=1)
-
-
 @router.get("/trips")
-def list_trips(scope: Optional[str] = None, status: str = "all",
-               day: Annotated[Optional[str], Query(alias="date")] = None):
-    """The Dispatch board, newest request first. status: all, upcoming, running or completed.
-    date: YYYY-MM-DD, the pickup day in SAST. scope is the older board's filter - today
-    (departing today), open (not finished) or all, which also lists abandoned drafts."""
-    if status != "all" and status not in STATUS_FILTERS:
-        raise HTTPException(400, "status must be all, upcoming, running or completed")
+def list_trips(scope: str = "today"):
+    """scope=today: departing today (SAST); open: not finished, any date; all: everything."""
     Tr, D = hub_db.trips, hub_db.drivers
     stmt = select(
         Tr, D.c.name.label("driver_name"), D.c.phone.label("driver_phone"),
@@ -221,30 +202,25 @@ def list_trips(scope: Optional[str] = None, status: str = "all",
     ).select_from(Tr.outerjoin(D, Tr.c.driver_id == D.c.id))
 
     if scope == "today":
-        start, end = _sast_day((now() + timedelta(hours=2)).date())
-        stmt = stmt.where(Tr.c.scheduled_at >= start, Tr.c.scheduled_at < end)
+        # SAST is UTC+2 with no DST, so the owner's day is a fixed UTC window. The end is
+        # exclusive: a trip at exactly midnight belongs to tomorrow.
+        sast = now() + timedelta(hours=2)
+        start = datetime(sast.year, sast.month, sast.day) - timedelta(hours=2)
+        stmt = stmt.where(Tr.c.scheduled_at >= start, Tr.c.scheduled_at < start + timedelta(days=1))
     elif scope == "open":
         stmt = stmt.where(Tr.c.status.in_(OPEN_STATUSES))
-    if status in STATUS_FILTERS:
-        stmt = stmt.where(Tr.c.status.in_(STATUS_FILTERS[status]))
-    if day:
-        try:
-            start, end = _sast_day(date.fromisoformat(day))
-        except ValueError:
-            raise HTTPException(400, "date must be YYYY-MM-DD")
-        stmt = stmt.where(Tr.c.scheduled_at >= start, Tr.c.scheduled_at < end)
-    # A draft is a guest who abandoned the chat part-way: real, but not a booking.
-    if scope != "all":
-        stmt = stmt.where(Tr.c.status != "draft")
 
     with hub_db.begin() as c:
-        rs = c.execute(stmt.order_by(Tr.c.created_at.desc(), Tr.c.id.desc()).limit(200)).mappings().all()
+        rs = c.execute(stmt.order_by(Tr.c.scheduled_at.desc()).limit(200)).mappings().all()
     by_card = _card_paid(r["id"] for r in rs if r["captured_at"])
 
     out = []
     for r in rs:
         row = dict(r)
         driver = {k: row.pop(f"driver_{k}") for k in ("name", "phone", "plate", "vehicle")}
+        # A draft is a guest who abandoned the chat part-way: real, but not a booking.
+        if row["status"] == "draft" and scope != "all":
+            continue
         out.append({**_out(row), "paymentMethod": _payment_method(row["id"], row["captured_at"], by_card),
                     "driver": driver if driver["name"] else None})
     return out

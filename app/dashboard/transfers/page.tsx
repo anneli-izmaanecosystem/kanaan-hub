@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { Phone, MapPin, CreditCard, AlertTriangle, CalendarDays } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Phone, MapPin, CreditCard, AlertTriangle } from 'lucide-react'
 import { cn, formatPhone, getJson } from '@/lib/utils'
 
 type Driver = { name: string; phone: string; plate: string; vehicle: string | null }
@@ -9,7 +9,7 @@ type Trip = {
   id: number; ref: string; direction: string; status: string
   guestPhone: string; guestName: string | null; roomLabel: string | null
   placeName: string | null; pickupName: string | null; distanceKm: string | null
-  scheduledAt: string | null; createdAt: string; fare: string | null
+  scheduledAt: string | null; createdAt: string; completedAt: string | null; fare: string | null
   heldAt: string | null; capturedAt: string | null; releasedAt: string | null
   paymentMethod: 'card' | 'paystack' | null  // how a paid trip was paid: the driver's card machine, or Paystack
   driver: Driver | null
@@ -34,15 +34,29 @@ const STATUS: Record<string, { label: string; tag: string }> = {
 const NEEDS_ACTION = new Set(['requested', 'no_show'])
 const LIVE = new Set(['requested', 'allocated', 'driver_en_route', 'driver_waiting', 'in_progress'])
 
-// The service filters by these (STATUS_FILTERS in whatsapp-backend/app/routers/dashboard.py).
-// Cancelled, declined and no-show trips appear under All only.
 const STATUS_FILTERS = [
   { value: 'all',       label: 'All' },
-  { value: 'upcoming',  label: 'Upcoming' },   // waiting on you, or a driver allocated
-  { value: 'running',   label: 'Running' },    // driver on the way, at pickup, or on the trip
+  { value: 'upcoming',  label: 'Upcoming' },
+  { value: 'running',   label: 'Running' },
   { value: 'completed', label: 'Completed' },
 ] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]['value']
+
+/** The driver has set off: the ride is under way whatever the booked time. */
+const MOVING = new Set(['driver_en_route', 'driver_waiting', 'in_progress'])
+
+/**
+ * Which Status filter lists a trip at `now`. A ride runs once a driver is assigned and its
+ * pickup time arrives (or the driver has set off); a request with no driver stays Upcoming
+ * until one is assigned. Cancelled, declined and no-show trips are listed under All only.
+ */
+function groupOf(t: Trip, now: number): StatusFilter | null {
+  if (t.status === 'completed') return 'completed'
+  if (MOVING.has(t.status)) return 'running'
+  if (t.status === 'allocated') return t.scheduledAt && Date.parse(t.scheduledAt) <= now ? 'running' : 'upcoming'
+  if (t.status === 'requested') return 'upcoming'
+  return null
+}
 
 const SAST = 'Africa/Johannesburg'
 const filterBox = 'rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-gray-400'
@@ -54,18 +68,6 @@ function when(iso: string | null) {
   const day = d.toLocaleDateString('en-ZA', { timeZone: SAST, weekday: 'short', day: 'numeric', month: 'short' })
   const time = d.toLocaleTimeString('en-ZA', { timeZone: SAST, hour: '2-digit', minute: '2-digit', hour12: false })
   return `${day} · ${time}`
-}
-
-/** Today in farm time, moved by `offset` days, as YYYY-MM-DD. */
-function sastDate(offset = 0) {
-  return new Date(Date.now() + offset * 86_400_000).toLocaleDateString('en-CA', { timeZone: SAST })
-}
-
-/** 'Wed 7 Oct 2026' for a YYYY-MM-DD day. */
-function dayLabel(day: string) {
-  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-ZA', {
-    timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-  })
 }
 
 function money(v: string | null) {
@@ -84,30 +86,30 @@ export default function TransfersTodayPage() {
   const [trips, setTrips] = useState<Trip[]>([])
   const [drivers, setDrivers] = useState<DriverRow[]>([])
   const [status, setStatus] = useState<StatusFilter>('all')
-  const [day, setDay] = useState('')  // YYYY-MM-DD pickup day, '' for every day
+  // When the board last loaded: Upcoming and Running are worked out as of then, so the
+  // 30s refresh moves a ride to Running once its pickup time arrives.
+  const [now, setNow] = useState(() => Date.now())
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Kept apart from `error` (a refused action) so the 30s refresh does not clear that.
   const [loadError, setLoadError] = useState<string | null>(null)
-  // A board still loading for the previous filters must not land over the current one.
-  const latest = useRef(0)
 
+  // Every trip comes back; the status filter and the order are applied below, so switching
+  // the filter needs no reload.
   const load = useCallback(async () => {
-    const call = ++latest.current
     try {
       const [t, d] = await Promise.all([
-        getJson<Trip[]>(`/api/trips?status=${status}${day ? `&date=${day}` : ''}`),
+        getJson<Trip[]>('/api/trips'),
         getJson<DriverRow[]>('/api/drivers'),
       ])
-      if (call !== latest.current) return
-      setTrips(t); setDrivers(d); setLoadError(null)
+      setTrips(t); setDrivers(d); setNow(Date.now()); setLoadError(null)
     } catch (err) {
       // The last board that loaded stays up under the warning.
       setLoadError((err as Error).message)
     }
     setLoading(false)
-  }, [status, day])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -133,22 +135,24 @@ export default function TransfersTodayPage() {
   if (loading) return <div className="text-sm text-gray-400">Loading…</div>
 
   const onDuty = drivers.filter(d => d.active && d.onDuty)
-  const filtered = status !== 'all' || day !== ''
+  // Bookings only (abandoned chats left out), newest request first.
+  const bookings = trips
+    .filter(t => t.status !== 'draft')
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id - a.id)
+  const inFilter = (f: StatusFilter) => f === 'all' ? bookings : bookings.filter(t => groupOf(t, now) === f)
+  const shown = inFilter(status)
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="flex items-center gap-1.5 text-xs text-gray-500">
-            Status
-            <select className={filterBox} value={status} onChange={e => setStatus(e.target.value as StatusFilter)}>
-              {STATUS_FILTERS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-            </select>
-          </label>
-          <DateFilter value={day} onChange={setDay} />
-        </div>
+        <label className="flex items-center gap-1.5 text-xs text-gray-500">
+          Status
+          <select className={filterBox} value={status} onChange={e => setStatus(e.target.value as StatusFilter)}>
+            {STATUS_FILTERS.map(f => <option key={f.value} value={f.value}>{f.label} ({inFilter(f.value).length})</option>)}
+          </select>
+        </label>
         <p className="text-xs text-gray-400">
-          {trips.length} trip{trips.length === 1 ? '' : 's'}, newest request first ·{' '}
+          {shown.length} trip{shown.length === 1 ? '' : 's'}, newest request first ·{' '}
           {onDuty.length} driver{onDuty.length === 1 ? '' : 's'} on duty · refreshes every 30s
         </p>
       </div>
@@ -171,60 +175,16 @@ export default function TransfersTodayPage() {
         </div>
       )}
 
-      {!loadError && trips.length === 0 && (
+      {!loadError && shown.length === 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
-          <p className="text-sm text-gray-500">{filtered ? 'No trips match these filters.' : 'No trips yet.'}</p>
+          <p className="text-sm text-gray-500">{status === 'all' ? 'No trips yet.' : `No ${status} trips.`}</p>
           <p className="mt-1 text-xs text-gray-400">
             Trips appear here the moment a guest finishes booking on WhatsApp.
           </p>
         </div>
       )}
 
-      <TripList trips={trips} drivers={onDuty} act={act} busy={busy} />
-    </div>
-  )
-}
-
-/** The pickup-day filter: All, Today, Tomorrow, or any day picked from the calendar. */
-function DateFilter({ value, onChange }: { value: string; onChange: (day: string) => void }) {
-  const picker = useRef<HTMLInputElement>(null)
-  const today = sastDate(0)
-  const tomorrow = sastDate(1)
-
-  function openCalendar() {
-    try { picker.current?.showPicker() } catch { picker.current?.focus() }
-  }
-
-  return (
-    <div className="flex items-center gap-1.5 text-xs text-gray-500">
-      <label htmlFor="dispatch-day">Pickup date</label>
-      <select id="dispatch-day" className={filterBox} value={value} onChange={e => onChange(e.target.value)}>
-        <option value="">All</option>
-        <option value={today}>Today</option>
-        <option value={tomorrow}>Tomorrow</option>
-        {value && value !== today && value !== tomorrow && <option value={value}>{dayLabel(value)}</option>}
-      </select>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={openCalendar}
-          aria-label="Pick a date"
-          title="Pick a date"
-          className="rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-        >
-          <CalendarDays size={16} />
-        </button>
-        {/* The browser's own calendar opens from this, under the button. */}
-        <input
-          ref={picker}
-          type="date"
-          tabIndex={-1}
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-0"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-        />
-      </div>
+      <TripList trips={shown} drivers={onDuty} act={act} busy={busy} />
     </div>
   )
 }
@@ -260,6 +220,9 @@ function TripList({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm font-semibold text-gray-900">{t.ref}</span>
                   <span className={cn('rounded px-2 py-0.5 text-[11px] font-medium', s.tag)}>{s.label}</span>
+                  {t.status === 'completed' && t.completedAt && (
+                    <span className="text-xs font-medium text-green-700">{when(t.completedAt)}</span>
+                  )}
                   <span className="text-xs text-gray-400 capitalize">{t.direction}</span>
                   <span className="text-xs text-gray-400">· requested {when(t.createdAt)}</span>
                 </div>
