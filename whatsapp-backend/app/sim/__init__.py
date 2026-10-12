@@ -125,8 +125,9 @@ def _render_outbound(p: dict[str, Any]) -> dict[str, Any]:
             m["text"] = "\n".join(filter(None, [f"*{t['header']}*" if t.get("header") else None, body, t.get("footer")]))
             m["buttons"] = [{"kind": "template", "id": b, "title": b} for b in t.get("buttons", [])]
             if t["status"] == "PROPOSED":
+                until = t.get("until_created") or "its approved earlier version is sent"
                 m["warn"] = (f"Template {name} is proposed - not created on Meta yet (needs your go-ahead). "
-                             "Live, its approved earlier version is sent until then.")
+                             f"Live, until then, {until}.")
             elif t["status"] != "APPROVED":
                 m["warn"] = f"Template {name} is {t['status']} on Meta, not approved."
     elif kind == "interactive":

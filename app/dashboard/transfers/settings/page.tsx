@@ -13,6 +13,7 @@ type Settings = {
   serviceStart: string | null; serviceEnd: string | null; maxLeadDays: number
   opsWhatsapp: string; opsPhone: string; opsEscalationWhatsapp: string | null
   muteOpsCommentary: boolean
+  maxPassengers: number
 }
 
 const inp = 'w-full rounded border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-400'
@@ -101,6 +102,9 @@ export default function TransferSettingsPage() {
           </Field>
           <Field label="Latest departure">
             <input className={inp} placeholder="22:00" value={s.serviceEnd ?? ''} onChange={e => set('serviceEnd', e.target.value || null)} />
+          </Field>
+          <Field label="Maximum passengers per ride" hint="the driver cannot start a ride with more">
+            <input className={inp} type="number" min={1} value={s.maxPassengers} onChange={e => set('maxPassengers', Number(e.target.value))} />
           </Field>
         </div>
       </Card>

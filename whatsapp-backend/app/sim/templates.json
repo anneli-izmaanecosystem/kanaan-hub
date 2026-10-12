@@ -291,5 +291,16 @@
    "No car available",
    "Offer another time"
   ]
+ },
+ "kn_ops_passengers_over_limit": {
+  "status": "PENDING",
+  "header": null,
+  "body": "Too many passengers - trip {{1}}\nGuest: {{2}}\nFrom: {{3}}\nTo: {{4}}\nWhen: {{5}}\nDriver: {{6}}\nThe driver says {{7}} passengers are getting in - the maximum is {{8}}.\nAllow the ride, or cancel it?",
+  "footer": null,
+  "buttons": [
+   "Allow the ride",
+   "Cancel the ride"
+  ],
+  "until_created": "the same text and buttons go as a WhatsApp message, which reaches Anneli only within 24 hours of her last message to the number"
  }
 }

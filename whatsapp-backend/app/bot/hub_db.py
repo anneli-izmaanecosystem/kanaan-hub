@@ -150,6 +150,7 @@ transfer_settings = Table(
     Column("ops_phone", Text),
     Column("ops_escalation_whatsapp", Text),
     Column("mute_ops_commentary", Boolean),
+    Column("max_passengers", Integer),
     Column("updated_at", DateTime),
 )
 

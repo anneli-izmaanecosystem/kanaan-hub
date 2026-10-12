@@ -657,5 +657,9 @@ export const transferSettings = pgTable('transfer_settings', {
   // notifications the owner cannot act on, each one a billable template.
   muteOpsCommentary: boolean('mute_ops_commentary').notNull().default(false),
 
+  // At the pickup the driver types how many passengers are getting in; more than this and
+  // the ride cannot start.
+  maxPassengers: integer('max_passengers').notNull().default(4),
+
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 })

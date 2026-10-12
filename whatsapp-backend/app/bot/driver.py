@@ -1,11 +1,13 @@
 """The driver's side. He taps: Noted on the trip card, then I have left / I have arrived /
-Ride started / Reached destination / Ride complete on the day - and at the pickup types the
-6-digit code the guest reads him (pickup_code.py). "Ride started" is offered once, when
-that code matches; "Ride complete" only once the fare is paid - by Paystack, or on his card
-machine at the drop-off (Card payment done)."""
+Ride started / Reached destination / Ride complete on the day - and at the pickup types how
+many passengers are getting in and the 6-digit code the guest reads him (pickup_code.py).
+"Ride started" is offered once, when that code matches and the count is within the limit
+on Rates & rules (or Anneli has allowed more); "Ride complete" only once the fare is paid -
+by Paystack, or on his card machine at the drop-off (Card payment done)."""
 
+import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy import select
 
@@ -79,8 +81,15 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         T.driver_entered_code(trip.id, driver, code, message.get("id"))
         return
 
-    # The guest is in the car. The button comes once the guest's code has matched, and a
-    # typed "Ride started" is held to the same rule - there is no way round the code.
+    # How many passengers are getting in, asked once the guest can see him. Checked
+    # against the maximum on Rates & rules; more goes to Anneli to allow or cancel.
+    count = read_passengers(reply.text) if not reply.reply_id else None
+    if count is not None and trip.status in ("driver_waiting", "driver_en_route") and T.passengers_asked(trip):
+        T.driver_entered_passengers(trip.id, driver, count)
+        return
+
+    # The guest is in the car. The button comes once the guest's code has matched and the
+    # passenger count is settled, and a typed "Ride started" is held to the same rule.
     if reply.reply_id == T.RIDE_STARTED[0] or said(reply, B["ride_started"]):
         if trip.status == "in_progress":
             _ride_step(to, trip, f"Trip {trip.ref} has already started. ")
@@ -88,7 +97,7 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         if trip.status not in ("driver_waiting", "driver_en_route"):
             send_text(to, f"Trip {trip.ref} is marked as {status} - tap I have left and I have arrived first.")
             return
-        if not T.pickup_verified(trip):
+        if not T.pickup_verified(trip) or not T.passengers_ready(trip):
             _not_started(to, trip)
             return
         T.driver_started_ride(trip.id, driver)
@@ -125,7 +134,27 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
         T.driver_completed_ride(trip.id, driver)
         return
 
+    if trip.status in ("driver_waiting", "driver_en_route") and not reply.reply_id:
+        pending = T.passengers_awaiting_ops(trip)
+        if pending:
+            send_text(to, f"{T.waiting_on_anneli(pending['count'])} If fewer are travelling, type the number "
+                          f"(maximum {load_settings().max_passengers}).")
+            return
+        if T.passengers_needed(trip):
+            send_text(to, f"Please type the number of passengers as a number, for example 2 (maximum {load_settings().max_passengers}).")
+            return
+
     send_text(to, f"Use the buttons for trip {trip.ref}, or call Anneli if something is wrong.")
+
+
+_PASSENGERS = re.compile(r"(\d{1,3})\s*(passengers?|pax|people|persons?|guests?)?\.?", re.IGNORECASE)
+
+
+def read_passengers(text: str) -> Optional[int]:
+    """The number a driver typed - "3", "3 passengers", "3 pax" - else None. At most three
+    digits, so the 6-digit pickup code is never read as a count."""
+    m = _PASSENGERS.fullmatch((text or "").strip())
+    return int(m.group(1)) if m else None
 
 
 # The replies below say where a trip stands, in words only. Each of the driver's buttons is
@@ -134,8 +163,18 @@ def handle_driver_message(phone: str, message: dict[str, Any]) -> None:
 
 
 def _not_started(to: str, trip: Row) -> None:
-    """A drop-off button, or a Ride started the code has not earned yet, before the ride has started."""
-    if trip.status in ("driver_waiting", "driver_en_route") and T.pickup_verified(trip):
+    """A drop-off button, or a Ride started the code and passenger count have not earned
+    yet, before the ride has started."""
+    pending = T.passengers_awaiting_ops(trip) if trip.status in ("driver_waiting", "driver_en_route") else None
+    if pending:
+        code = "" if T.pickup_verified(trip) else " Meanwhile, type the 6-digit verification code the guest reads you."
+        send_text(to, f"Trip {trip.ref} has not started yet. {T.waiting_on_anneli(pending['count'])}{code}")
+    elif trip.status in ("driver_waiting", "driver_en_route") and T.passengers_needed(trip):
+        code = "" if T.pickup_verified(trip) else " and the 6-digit verification code the guest reads you"
+        send_text(to, f"Trip {trip.ref} has not started yet. Type the number of passengers getting in "
+                      f"(maximum {load_settings().max_passengers}){code} - Ride started appears once "
+                      f"{'both are' if code else 'it is'} in.")
+    elif trip.status in ("driver_waiting", "driver_en_route") and T.pickup_verified(trip):
         send_text(to, f"Trip {trip.ref} has not started yet. Tap Ride started above once the guest is in the car.")
     elif trip.status in ("driver_waiting", "driver_en_route") and T.guest_saw_driver(trip):
         send_text(to, f"Trip {trip.ref} has not started yet. Type the 6-digit verification code the guest reads you - "

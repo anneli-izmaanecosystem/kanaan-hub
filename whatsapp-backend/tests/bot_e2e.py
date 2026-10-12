@@ -208,8 +208,14 @@ def code_for(phone):
     return re.search(r"\b(\d{6})\b", body_of(m)).group(1) if m else None
 
 
+def count_in(n=2, context=None):
+    """The driver types how many passengers are getting in."""
+    return text(DRIVER, str(n), context=context)
+
+
 def read_out_code(guest, context=None):
-    """The driver types the code the guest reads him."""
+    """The driver types how many are getting in, then the code the guest reads him."""
+    count_in(context=context)
     return text(DRIVER, code_for(guest), context=context)
 
 
@@ -908,6 +914,7 @@ check(sum(1 for m in new if to(m) == GUEST10 and body_of(m).startswith("Driver V
       and sum(1 for m in new if to(m) == DRIVER and "Guest Pickup Verification" in body_of(m)) == 1,
       "'Yes, I can see him' double-tapped: ONE code for the guest, the driver asked ONCE")
 # the right code typed twice at the same instant: verified once, ONE Ride started
+count_in()
 _c10 = code_for(GUEST10)
 new = together(*[(text, (DRIVER, _c10), {})] * 2)
 started_prompts = [m for m in new if to(m) == DRIVER and buttons(m) == ["driver:started"]]
@@ -1127,6 +1134,7 @@ check(kept is not None and cA not in kept["body"] and cA not in kept["payload"],
 check(all(cA not in (e["detail"] or "") for e in events(tA["id"], PC.SENT)), "A: the trip keeps an HMAC of the code, never the code")
 check("valid until" in body_of(next(m for m in reversed(sent) if to(m) == GUEST12)) and "South Africa time" in body_of(
     next(m for m in reversed(sent) if to(m) == GUEST12)), "A: the code says until when it is valid, in South African time")
+count_in()
 out = text(DRIVER, cA)
 check(any(body_of(m).startswith("Pickup Verified") and buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER)
       and len(events(tA["id"], PC.VERIFIED)) == 1, "A: the right code verifies the pickup; the driver gets Ride started")
@@ -1517,6 +1525,187 @@ _places.httpx = _real_httpx
 _settings().openrouteservice_api_key = ""
 _places._route_cache.clear()
 _OrsStub.reply = _ORS_ROUTE
+
+# ── 6o. the passenger count at the pickup, held to the limit on Rates & rules ─
+print("6o. passenger count at the pickup")
+GUEST_PAX = "+27000000023"
+H = {"X-Internal-Secret": "internal-test"}
+
+
+def board_passengers(ref):
+    """The passenger count the Dispatch board shows for the trip."""
+    res = client.get("/dashboard/trips", params={"scope": "all"}, headers=H)
+    return next(t_ for t_ in res.json() if t_["ref"] == ref)["passengers"]
+
+
+check(client.get("/dashboard/transfer-settings", headers=H).json()["maxPassengers"] == 4,
+      "Rates & rules: the maximum passengers per ride is 4 until changed")
+for bad in (0, -1, 2.5, "lots"):
+    res = client.patch("/dashboard/transfer-settings", json={"maxPassengers": bad}, headers=H)
+    check(res.status_code == 400, f"Rates & rules: a maximum of {bad!r} is refused")
+res = client.patch("/dashboard/transfer-settings", json={"maxPassengers": 3}, headers=H)
+check(res.status_code == 200 and res.json()["maxPassengers"] == 3, "Rates & rules: the maximum can be changed (to 3)")
+
+tP = arrived_trip(GUEST_PAX)
+out = template_tap(GUEST_PAX, "Yes, I can see him")
+ask = next((m for m in out if to(m) == DRIVER and "Guest Pickup Verification" in body_of(m)), None)
+check(ask is not None and "How many passengers are getting in? Type the number here (maximum 3)." in body_of(ask) and not buttons(ask),
+      "'Yes, I can see him': the driver is asked how many passengers are getting in, with the maximum - no Ride started yet")
+check(board_passengers(tP["ref"]) is None, "the board shows no passenger count before the driver types one")
+out = text(DRIVER, "a few")
+check(any("type the number of passengers as a number" in body_of(m) for m in out if to(m) == DRIVER), "words instead of a number: asked for a number")
+out = text(DRIVER, "0")
+check(any("at least 1" in body_of(m) for m in out if to(m) == DRIVER) and not events(tP["id"], T.PASSENGERS), "0 passengers is refused")
+out = text(DRIVER, code_for(GUEST_PAX))
+check(any(body_of(m).startswith("Pickup Verified") and "How many passengers" in body_of(m) for m in out if to(m) == DRIVER)
+      and not any(buttons(m) for m in out) and events(tP["id"], PC.VERIFIED),
+      "the code before the count: verified, and the driver is asked for the count - still no Ride started")
+out = text(DRIVER, "Ride started")
+check(trip_row(tP["ref"])["status"] == "driver_waiting" and any("number of passengers" in body_of(m) for m in out if to(m) == DRIVER),
+      "a typed Ride started without the count is refused, and the driver is told to type it")
+
+
+def over_card(msgs):
+    """Anneli's card about a count over the limit, among these messages."""
+    return next((m for m in msgs if to(m) == OPS and m["type"] == "template" and m["template"]["name"] == T.OVER_LIMIT_TEMPLATE), None)
+
+
+out = text(DRIVER, "4")
+card4 = over_card(out)
+check(any(body_of(m).startswith("Too many passengers") and "at most 3 passengers" in body_of(m)
+          and "Anneli has been asked whether 4 passengers may travel" in body_of(m) for m in out if to(m) == DRIVER)
+      and not any(buttons(m) for m in out if to(m) == DRIVER) and card4 is not None
+      and not events(tP["id"], T.PASSENGERS) and trip_row(tP["ref"])["status"] == "driver_waiting",
+      "more than the maximum: the driver waits on Anneli, who gets a card - nothing kept, the ride does not move")
+out = text(DRIVER, "4")
+check(over_card(out) is None and any("already been asked about 4 passengers" in body_of(m) for m in out if to(m) == DRIVER),
+      "the same number again: no second card to Anneli, the driver is asked to wait")
+out = text(DRIVER, "Ride started")
+check(trip_row(tP["ref"])["status"] == "driver_waiting" and any("Anneli has been asked" in body_of(m) for m in out if to(m) == DRIVER),
+      "a typed Ride started while Anneli decides is refused")
+out = text(DRIVER, "a few")
+check(any("Anneli has been asked whether 4 passengers may travel" in body_of(m) for m in out if to(m) == DRIVER),
+      "words while Anneli decides: the driver is told he is waiting on her")
+new = together(*[(text, (DRIVER, "3 passengers"), {})] * 2)
+started_p = [m for m in new if to(m) == DRIVER and buttons(m) == ["driver:started"]]
+check(len(started_p) == 1 and "3 passengers noted." in body_of(started_p[0]),
+      "the maximum (3) typed twice at once: noted, ONE Ride started")
+check(board_passengers(tP["ref"]) == 3, "the Dispatch board shows the ride's 3 passengers")
+out = template_tap(OPS, "Allow the ride", context=card4["_id"] if card4 else None)
+check(any("the driver has since entered 3 passengers" in body_of(m) for m in out if to(m) == OPS) and not any(to(m) == DRIVER for m in out)
+      and not events(tP["id"], T.PASSENGERS_ALLOWED), "Anneli's Allow after the driver typed a number within the limit: nothing to decide")
+out = text(DRIVER, "2")
+check(any(body_of(m).startswith("Changed to 2 passengers.") for m in out if to(m) == DRIVER) and not any(buttons(m) for m in out)
+      and board_passengers(tP["ref"]) == 2, "before the ride starts the count can be corrected - no second Ride started; the board follows")
+out = tap(DRIVER, "driver:started", "Ride started", context=started_p[0]["_id"] if started_p else None)
+check(trip_row(tP["ref"])["status"] == "in_progress", "Ride started then starts the ride")
+out = text(DRIVER, "5")
+check(board_passengers(tP["ref"]) == 2 and not any("noted" in body_of(m) or "Changed" in body_of(m) for m in out),
+      "once the ride is under way the count no longer changes")
+check(client.get(f"/dashboard/trips/{tP['id']}", headers=H).json()["passengers"] == 2, "the trip's own record has the count too")
+out = template_tap(OPS, "Cancel the ride", context=card4["_id"] if card4 else None)
+check(any("already in progress - nothing to decide" in body_of(m) for m in out if to(m) == OPS)
+      and trip_row(tP["ref"])["status"] == "in_progress", "Cancel the ride on an old card once the ride is under way: nothing cancelled")
+T.cancel_trip(tP["id"], "ops", "test cleanup")
+
+# the count first, then the code
+tQ = arrived_trip(GUEST_PAX)
+template_tap(GUEST_PAX, "Yes, I can see him")
+out = text(DRIVER, "1")
+check(any(body_of(m).startswith("1 passenger noted.") and "verification code" in body_of(m) for m in out if to(m) == DRIVER)
+      and not any(buttons(m) for m in out), "the count before the code: noted, and the driver is asked for the code")
+out = text(DRIVER, code_for(GUEST_PAX))
+check(any(body_of(m).startswith("Pickup Verified") and buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER),
+      "then the code: Pickup Verified, with Ride started")
+T.cancel_trip(tQ["id"], "ops", "test cleanup")
+
+# ── 6p. a count over the limit: Anneli allows the ride or cancels it ─────────
+print("6p. a passenger count over the limit goes to Anneli")
+from app.bot.when import format_when_short  # noqa: E402
+
+
+def card_params(trip_id, count):
+    """What Anneli's card should say: the ride's details, the count and the maximum (3)."""
+    r = T.get_trip(trip_id)
+    return [r.ref, T.guest_contact(r), T.pickup_address(r), T.to_label(r), format_when_short(r.scheduled_at),
+            "Thabo Nkosi (JHV 421 MP)", str(count), "3"]
+
+
+# R: allowed - the code first, then a count that a higher one replaces
+tR = arrived_trip(GUEST_PAX)
+template_tap(GUEST_PAX, "Yes, I can see him")
+text(DRIVER, code_for(GUEST_PAX))
+out = text(DRIVER, "5")
+card5 = over_card(out)
+check(card5 is not None and params_of(card5) == card_params(tR["id"], 5) and "Otto Guest" in params_of(card5)[1],
+      "Anneli's card has the ride's details - trip, guest, from, to, when, driver - the 5 passengers and the maximum of 3")
+check(any("Anneli has been asked whether 5 passengers may travel" in body_of(m) for m in out if to(m) == DRIVER)
+      and not any(buttons(m) for m in out if to(m) == DRIVER), "the driver is told Anneli is deciding - no Ride started")
+out = text(DRIVER, "6")
+card6 = over_card(out)
+check(card6 is not None and params_of(card6)[6] == "6", "a different number over the limit: a new card replaces the question")
+out = template_tap(OPS, "Allow the ride", context=card5["_id"] if card5 else None)
+check(any("That card is out of date - the driver now says 6 passengers" in body_of(m) for m in out if to(m) == OPS)
+      and not any(to(m) == DRIVER for m in out) and not events(tR["id"], T.PASSENGERS_ALLOWED),
+      "Allow on the replaced card: refused as out of date, nothing allowed")
+new = together(*[(template_tap, (OPS, "Allow the ride"), {"context": card6["_id"] if card6 else None})] * 2)
+offered = [m for m in new if to(m) == DRIVER and buttons(m) == ["driver:started"]]
+check(len(offered) == 1 and body_of(offered[0]).startswith("Anneli has allowed 6 passengers for this ride."),
+      "Allow the ride (tapped twice at once): the driver is told and gets ONE Ride started")
+check(sum(1 for m in new if to(m) == OPS and body_of(m).startswith("Allowed: trip")) == 1
+      and any("already allowed with 6 passengers" in body_of(m) for m in new if to(m) == OPS)
+      and len(events(tR["id"], T.PASSENGERS_ALLOWED)) == 1, "Anneli is told once; the second tap says it is already allowed")
+check(board_passengers(tR["ref"]) == 6, "the Dispatch board shows the 6 passengers Anneli allowed")
+tap(DRIVER, "driver:started", "Ride started", context=offered[0]["_id"] if offered else None)
+check(trip_row(tR["ref"])["status"] == "in_progress", "Ride started then starts the ride")
+T.cancel_trip(tR["id"], "ops", "test cleanup")
+
+# S: cancelled
+tS = arrived_trip(GUEST_PAX)
+template_tap(GUEST_PAX, "Yes, I can see him")
+card7 = over_card(text(DRIVER, "7"))
+out = template_tap(OPS, "Cancel the ride", context=card7["_id"] if card7 else None)
+check(trip_row(tS["ref"])["status"] == "cancelled", "Cancel the ride cancels the trip")
+check(any(body_of(m).startswith(f"Trip {tS['ref']} has been cancelled by Anneli. 7 passengers is more than the 3 a ride can take.")
+          for m in out if to(m) == GUEST_PAX), "the guest is told it is cancelled, and why")
+check(any(m["type"] == "text" and "cancelled by Anneli. 7 passengers is more than the 3" in body_of(m) for m in out if to(m) == DRIVER)
+      and not any(m["type"] == "template" for m in out if to(m) == DRIVER),
+      "the driver is told why, as a message - not the 'cancelled by the guest' template")
+check(any(body_of(m) == f"Trip {tS['ref']} cancelled. The guest and the driver have been told." for m in out if to(m) == OPS),
+      "Anneli is told it is done")
+out = template_tap(OPS, "Cancel the ride", context=card7["_id"] if card7 else None)
+check(any("already cancelled - nothing to decide" in body_of(m) for m in out if to(m) == OPS) and not any(to(m) == GUEST_PAX for m in out),
+      "Cancel the ride again: already cancelled, nobody told twice")
+
+# U: until the template is created on Meta, the card goes as a message with the same buttons
+tU = arrived_trip(GUEST_PAX)
+template_tap(GUEST_PAX, "Yes, I can see him")
+text(DRIVER, code_for(GUEST_PAX))
+
+
+def _no_over_limit_template(payload, trip_id=None, redact=None):
+    if payload.get("type") == "template" and payload["template"]["name"] == T.OVER_LIMIT_TEMPLATE:
+        raise wa.WhatsAppError("(#132001) Template name does not exist in the translation", 404)
+    return _real_send(payload, trip_id, redact)
+
+
+wa._send = _no_over_limit_template
+out = text(DRIVER, "4")
+wa._send = _real_send
+plain = next((m for m in out if to(m) == OPS), None)
+_proposed = json.loads((ROOT / "app/sim/templates.json").read_text(encoding="utf-8"))[T.OVER_LIMIT_TEMPLATE]
+_rendered = _proposed["body"]
+for _i, _v in enumerate(card_params(tU["id"], 4), start=1):
+    _rendered = _rendered.replace("{{%d}}" % _i, _v)
+check(plain is not None and plain["type"] == "interactive" and buttons(plain) == ["ops:pax:allow", "ops:pax:cancel"]
+      and body_of(plain) == _rendered and _proposed["buttons"] == ["Allow the ride", "Cancel the ride"],
+      "template not on Meta yet: Anneli gets the same text and buttons as a message")
+out = tap(OPS, "ops:pax:allow", "Allow the ride", context=plain["_id"] if plain else None)
+check(any(buttons(m) == ["driver:started"] for m in out if to(m) == DRIVER) and board_passengers(tU["ref"]) == 4,
+      "its Allow the ride button works the same: the driver gets Ride started")
+T.cancel_trip(tU["id"], "ops", "test cleanup")
+with hub_db.begin() as c:
+    c.execute(sql("delete from transfer_settings"))  # back to no row, as in production
 
 unexpected = [r for r in bot_errors.records if "Template name does not exist" not in r.getMessage()]
 for r in unexpected:

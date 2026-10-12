@@ -32,6 +32,7 @@ class TransferSettings:
     ops_phone: str
     ops_escalation_whatsapp: Optional[str]
     mute_ops_commentary: bool
+    max_passengers: int  # the most a driver may say are getting in at the pickup
 
 
 def defaults() -> TransferSettings:
@@ -54,6 +55,7 @@ def defaults() -> TransferSettings:
         ops_phone=s.kanaan_ops_phone,
         ops_escalation_whatsapp=None,
         mute_ops_commentary=False,
+        max_passengers=4,
     )
 
 
@@ -88,6 +90,7 @@ def load_settings() -> TransferSettings:
         ops_phone=r.ops_phone or d.ops_phone,
         ops_escalation_whatsapp=r.ops_escalation_whatsapp,
         mute_ops_commentary=pick(r.mute_ops_commentary, d.mute_ops_commentary),
+        max_passengers=pick(r.max_passengers, d.max_passengers),
     )
 
 

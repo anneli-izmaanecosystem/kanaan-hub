@@ -12,6 +12,7 @@ type Trip = {
   scheduledAt: string | null; createdAt: string; completedAt: string | null; fare: string | null
   heldAt: string | null; capturedAt: string | null; releasedAt: string | null
   paymentMethod: 'card' | 'paystack' | null  // how a paid trip was paid: the driver's card machine, or Paystack
+  passengers: number | null  // what the driver typed at the pickup; null until then
   driver: Driver | null
 }
 type DriverRow = { id: number; name: string; plate: string; onDuty: boolean; active: boolean }
@@ -238,6 +239,9 @@ function TripList({
                 <p className="mt-0.5 text-xs text-gray-500">
                   <span className="font-medium text-gray-700">{when(t.scheduledAt)}</span> ·{' '}
                   {t.guestName && <><span className="font-medium text-gray-700">{t.guestName}</span> · </>}
+                  {t.passengers != null && (
+                    <><span className="font-medium text-gray-700">{t.passengers} {t.passengers === 1 ? 'passenger' : 'passengers'}</span> · </>
+                  )}
                   {t.roomLabel ?? 'room not given'} ·{' '}
                   <a href={`tel:${t.guestPhone}`} className="hover:text-gray-800 hover:underline">{formatPhone(t.guestPhone)}</a>
                 </p>
