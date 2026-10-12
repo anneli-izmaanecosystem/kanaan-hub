@@ -213,6 +213,7 @@ def list_trips(scope: str = "today"):
     with hub_db.begin() as c:
         rs = c.execute(stmt.order_by(Tr.c.scheduled_at.desc()).limit(200)).mappings().all()
     by_card = _card_paid(r["id"] for r in rs if r["captured_at"])
+    passengers = _passengers(r["id"] for r in rs)
 
     out = []
     for r in rs:
@@ -222,8 +223,20 @@ def list_trips(scope: str = "today"):
         if row["status"] == "draft" and scope != "all":
             continue
         out.append({**_out(row), "paymentMethod": _payment_method(row["id"], row["captured_at"], by_card),
-                    "driver": driver if driver["name"] else None})
+                    "passengers": passengers.get(row["id"]), "driver": driver if driver["name"] else None})
     return out
+
+
+def _passengers(trip_ids: Any) -> dict[int, int]:
+    """How many passengers the driver said got in, per trip - the last number he typed."""
+    ids = list(trip_ids)
+    if not ids:
+        return {}
+    E = hub_db.trip_events
+    with hub_db.begin() as c:
+        rows = c.execute(select(E.c.trip_id, E.c.detail).where(E.c.trip_id.in_(ids), E.c.event == T.PASSENGERS)
+                         .order_by(E.c.at, E.c.id)).all()
+    return {trip_id: int(detail) for trip_id, detail in rows}
 
 
 def _card_paid(trip_ids: Any) -> set[int]:
@@ -256,7 +269,7 @@ def get_trip(trip_id: int):
     events = T.events_for(trip.id)
     by_card = {trip.id} if any(e.event == T.CARD_PAID_EVENT for e in events) else set()
     return {**_out(trip), "paymentMethod": _payment_method(trip.id, trip.captured_at, by_card),
-            "events": [_event_out(e) for e in events]}
+            "passengers": T.passenger_count(trip), "events": [_event_out(e) for e in events]}
 
 
 @router.patch("/trips/{trip_id}")
@@ -540,6 +553,13 @@ def edit_transfer_settings(body: dict[str, Any] = Body(...)):
         if not v.is_integer() or v < 0:
             raise HTTPException(400, f"{key} must be a whole number of minutes, km or days")
         patch[key] = int(v)
+
+    # Zero would leave no ride able to start.
+    if "maxPassengers" in body:
+        v = _number(body["maxPassengers"])
+        if not v.is_integer() or v < 1:
+            raise HTTPException(400, "maxPassengers must be a whole number of at least 1")
+        patch["maxPassengers"] = int(v)
 
     for key in FLAGS:
         if key in body:

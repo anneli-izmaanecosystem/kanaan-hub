@@ -1,0 +1,1 @@
+ALTER TABLE "transfer_settings" ADD COLUMN "max_passengers" integer DEFAULT 4 NOT NULL;

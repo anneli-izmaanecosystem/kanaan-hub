@@ -46,6 +46,8 @@ OPS_BTN = {
     "charge_no_show": "Charge a no-show",
     "keep_waiting": "Keep waiting",
     "send_anyway": "Send the car anyway",
+    "allow_ride": "Allow the ride",    # a passenger count over the limit
+    "cancel_ride": "Cancel the ride",
 }
 
 DRIVER_BTN = {
@@ -892,8 +894,9 @@ def accept_new_time(trip_id: int, at) -> None:
 # ── cancellations ────────────────────────────────────────────────────────────
 
 
-def cancel_trip(trip_id: int, by: str, reason: Optional[str] = None) -> None:
-    """Cancel from any side. Wording turns on whether money was taken."""
+def cancel_trip(trip_id: int, by: str, reason: Optional[str] = None, why: Optional[str] = None) -> None:
+    """Cancel from any side. Wording turns on whether money was taken. `why`, when given,
+    is told to the guest and - as a message, he is at the pickup - to the driver."""
     trip = get_trip(trip_id)
     if not trip:
         return
@@ -924,9 +927,12 @@ def cancel_trip(trip_id: int, by: str, reason: Optional[str] = None) -> None:
     if by == "guest":
         say("guest", trip.guest_phone, trip_id, f"Cancelled.{f' {driver.name} has been told.' if driver else ''}\n{money}", [BOOK_AGAIN])
     else:
-        say("guest", trip.guest_phone, trip_id, f"Trip {trip.ref} has been cancelled{' by Anneli' if by == 'ops' else ''}.\n{money}", [BOOK_AGAIN])
+        because = f" {why}" if why else ""
+        say("guest", trip.guest_phone, trip_id, f"Trip {trip.ref} has been cancelled{' by Anneli' if by == 'ops' else ''}.{because}\n{money}", [BOOK_AGAIN])
 
-    if driver and by != "driver":
+    if driver and by != "driver" and why:
+        say("driver", driver.phone, trip_id, f"Trip {trip.ref} has been cancelled by Anneli. {why}\nThe guest has been told. Nothing more is needed from you.")
+    elif driver and by != "driver":
         notify("driver", driver.phone, trip_id, "kn_driver_trip_cancelled",
                [trip.ref, format_day_name(trip.scheduled_at), format_time(trip.scheduled_at)])
 
@@ -1024,10 +1030,11 @@ def guest_confirmed_pickup(trip_id: int) -> None:
 
 def _guest_confirmed_pickup(trip_id: int) -> None:
     """"Yes, I can see him": the guest - and only the guest - is sent a code for this trip
-    (pickup_code.py), and the driver is asked to type it. This does not start the ride:
-    once the code matches (driver_entered_code) the driver gets "Ride started", and only
-    he starts it - so there is one way in and nothing collides. A second "Yes" does not
-    mint another code while the last one still works."""
+    (pickup_code.py), and the driver is asked how many passengers are getting in and to
+    type the code. This does not start the ride: once the code matches (driver_entered_code)
+    and the count is within the limit (driver_entered_passengers) the driver gets "Ride
+    started", and only he starts it - so there is one way in and nothing collides. A second
+    "Yes" does not mint another code while the last one still works."""
     trip = get_trip(trip_id)
     if not trip or trip.status not in ("driver_waiting", "driver_en_route"):
         return
@@ -1038,15 +1045,224 @@ def _guest_confirmed_pickup(trip_id: int) -> None:
     if not _send_pickup_code(trip):
         return
     record(trip_id, "guest", "guest_confirmed_pickup")
+    record(trip_id, "system", PASSENGERS_ASKED)
     driver = driver_for(trip)
     if driver:
         say("driver", driver.phone, trip_id,
-            "Guest Pickup Verification\n\nThe guest can see you and has been sent a 6-digit verification code.\n"
-            "Ask them for it and type it here.")
+            "Guest Pickup Verification\n\nThe guest can see you and has been sent a 6-digit verification code.\n\n"
+            f"{passengers_question()}\nThen ask the guest for the code and type it here.")
 
 
 def guest_saw_driver(trip: Row) -> bool:
     return any(e.event == "guest_confirmed_pickup" for e in events_for(trip.id))
+
+
+# trip_events.event names for the passenger count the driver types at the pickup
+PASSENGERS_ASKED = "passengers_asked"
+PASSENGERS = "passengers_entered"          # detail: the number
+PASSENGERS_OVER = "passengers_over_limit"  # detail: {"count", "card"} - Anneli is asked
+PASSENGERS_ALLOWED = "passengers_allowed"  # detail: the number Anneli allowed
+RIDE_OFFERED = "ride_started_offered"      # the driver has been sent "Ride started"
+
+# Anneli's card for a count over the limit. Submitted to Meta on 2026-10-12: while it is in
+# review (or if it is rejected) the same text and buttons go as a message, which reaches
+# her only within 24 hours of her last message to the number.
+OVER_LIMIT_TEMPLATE = "kn_ops_passengers_over_limit"
+OPS_ALLOW_RIDE: tuple[str, str] = ("ops:pax:allow", OPS_BTN["allow_ride"])
+OPS_CANCEL_RIDE: tuple[str, str] = ("ops:pax:cancel", OPS_BTN["cancel_ride"])
+
+
+def passengers_question() -> str:
+    return f"How many passengers are getting in? Type the number here (maximum {load_settings().max_passengers})."
+
+
+def passengers_asked(trip: Row) -> bool:
+    return any(e.event == PASSENGERS_ASKED for e in events_for(trip.id))
+
+
+def passenger_count(trip: Row) -> Optional[int]:
+    """The number the driver last typed (or Anneli allowed) for this trip, if any."""
+    counts = [e.detail for e in events_for(trip.id) if e.event == PASSENGERS]
+    return int(counts[-1]) if counts else None
+
+
+def passengers_needed(trip: Row) -> bool:
+    """Asked for and not typed yet: the ride cannot start until it is. A trip whose guest
+    confirmed before the count was asked for carries on without one."""
+    names = {e.event for e in events_for(trip.id)}
+    return PASSENGERS_ASKED in names and PASSENGERS not in names
+
+
+def passengers_awaiting_ops(trip: Row) -> Optional[dict[str, Any]]:
+    """The count over the limit Anneli has been asked about and has not answered -
+    {"count", "card"} - else None. A count within the limit typed since settles it."""
+    pending = None
+    for e in events_for(trip.id):
+        if e.event == PASSENGERS_OVER:
+            pending = json.loads(e.detail)
+        elif e.event == PASSENGERS:
+            pending = None
+    return pending
+
+
+def passengers_ready(trip: Row) -> bool:
+    """The count is in (or was never asked for), and nothing waits on Anneli."""
+    return not passengers_needed(trip) and not passengers_awaiting_ops(trip)
+
+
+def waiting_on_anneli(count: int) -> str:
+    return f"Anneli has been asked whether {count} passengers may travel - Ride started appears once she allows it."
+
+
+def driver_entered_passengers(trip_id: int, driver: Row, count: int) -> None:
+    with trip_lock(trip_id):
+        _driver_entered_passengers(trip_id, driver, count)
+
+
+def _driver_entered_passengers(trip_id: int, driver: Row, count: int) -> None:
+    """The driver typed how many passengers are getting in. Zero is refused and asked
+    again; more than the maximum on Rates & rules goes to Anneli, who allows the ride or
+    cancels it. Before the ride starts he may correct the number."""
+    trip = get_trip(trip_id)
+    if not trip or trip.driver_id != driver.id or trip.status not in ("driver_waiting", "driver_en_route"):
+        return
+    if not passengers_asked(trip):
+        return
+    s = load_settings()
+    if count < 1:
+        say("driver", driver.phone, trip_id, f"Please type the number of passengers getting in - at least 1, at most {s.max_passengers}.")
+        return
+    if count > s.max_passengers:
+        _ask_anneli_about_passengers(trip, driver, count, s.max_passengers)
+        return
+    before = passenger_count(trip)
+    record(trip_id, "driver", PASSENGERS, str(count))
+    people = f"{count} {'passenger' if count == 1 else 'passengers'}"
+    _next_pickup_step(trip_id, driver, f"{people} noted." if before in (None, count) else f"Changed to {people}.")
+
+
+def _next_pickup_step(trip_id: int, driver: Row, lead: str) -> None:
+    """After the count or the code is in, the driver hears what is still missing - or, once
+    the code has matched and the count is settled, gets "Ride started". Sent once a trip."""
+    trip = get_trip(trip_id)
+    pending = passengers_awaiting_ops(trip)
+    if not pickup_verified(trip):
+        say("driver", driver.phone, trip_id, f"{lead}\nNow ask the guest for the 6-digit verification code and type it here.")
+    elif passengers_needed(trip):
+        say("driver", driver.phone, trip_id, f"{lead}\n{passengers_question()} Ride started appears once it is in.")
+    elif pending:
+        say("driver", driver.phone, trip_id, f"{lead}\n{waiting_on_anneli(pending['count'])}")
+    elif any(e.event == RIDE_OFFERED for e in events_for(trip_id)):
+        say("driver", driver.phone, trip_id, f"{lead} Tap Ride started above once they are in the car.")
+    else:
+        record(trip_id, "system", RIDE_OFFERED)
+        say("driver", driver.phone, trip_id, f"{lead}\nTap Ride started once they are in the car.", [RIDE_STARTED])
+
+
+def _ask_anneli_about_passengers(trip: Row, driver: Row, count: int, most: int) -> None:
+    """More than the maximum: the ride waits while Anneli decides - allow it with them, or
+    cancel it. The same number again changes nothing; another one replaces the question."""
+    pending = passengers_awaiting_ops(trip)
+    if pending and pending["count"] == count:
+        say("driver", driver.phone, trip.id,
+            f"Anneli has already been asked about {count} passengers - please wait for her answer. "
+            f"If fewer are travelling, type the number (maximum {most}).")
+        return
+    ops = ops_number()
+    card = _send_over_limit_card(trip, driver, count, most, ops) if ops else None
+    record(trip.id, "driver", PASSENGERS_OVER, json.dumps({"count": count, "card": card}))
+    asked = (waiting_on_anneli(count) if card else
+             f"Anneli could not be reached on WhatsApp - please call her on {load_settings().ops_phone}.")
+    say("driver", driver.phone, trip.id,
+        f"Too many passengers\n\nA ride can take at most {most} passengers. {asked}\n"
+        "If fewer are travelling, type the right number.")
+
+
+def over_limit_card_text(ref: str, guest: str, frm: str, to: str, when: str, driver: str, count: str, most: str) -> str:
+    """The card's text - the same as kn_ops_passengers_over_limit's, for the message with
+    buttons sent while that template is not approved on Meta."""
+    return (f"Too many passengers - trip {ref}\nGuest: {guest}\nFrom: {frm}\nTo: {to}\nWhen: {when}\nDriver: {driver}\n"
+            f"The driver says {count} passengers are getting in - the maximum is {most}.\nAllow the ride, or cancel it?")
+
+
+def _send_over_limit_card(trip: Row, driver: Row, count: int, most: int, ops: str) -> Optional[str]:
+    """Anneli's card: the ride's details, the count and the maximum, with Allow the ride /
+    Cancel the ride. Returns its wamid, so a tap on an older card can be told apart."""
+    params = [trip.ref, guest_contact(trip), pickup_address(trip), to_label(trip), format_when_short(trip.scheduled_at),
+              f"{driver.name} ({driver.plate})", str(count), str(most)]
+    body = [" ".join(str(p).split()) for p in params]
+
+    def send():
+        try:
+            return wa.send_template(wa.to_wa_id(ops), OVER_LIMIT_TEMPLATE, body, trip.id)
+        except wa.WhatsAppError as err:
+            log.warning("%s not usable (%s) - sending it as a message with buttons", OVER_LIMIT_TEMPLATE, err)
+            return wa.send_buttons(wa.to_wa_id(ops), over_limit_card_text(*body), [OPS_ALLOW_RIDE, OPS_CANCEL_RIDE], trip.id)
+
+    return _guarded(trip.id, f"{OVER_LIMIT_TEMPLATE} to ops", send)
+
+
+def _over_limit_question(trip: Row, card: Optional[str]) -> tuple[Optional[dict[str, Any]], str]:
+    """The request a tap on Anneli's card answers - or None, and why there is nothing to
+    decide: the ride has moved on, the driver has since typed a number within the limit,
+    it is already allowed, or a newer card replaced this one."""
+    if trip.status not in ("driver_waiting", "driver_en_route"):
+        return None, f"Trip {trip.ref} is already {trip.status.replace('_', ' ', 1)} - nothing to decide."
+    pending = passengers_awaiting_ops(trip)
+    if not pending:
+        last = next((e for e in reversed(events_for(trip.id)) if e.event == PASSENGERS), None)
+        if last and last.actor == "ops":
+            return None, f"Trip {trip.ref} is already allowed with {last.detail} passengers."
+        if last:
+            return None, (f"Nothing to decide for trip {trip.ref} - the driver has since entered {last.detail} "
+                          f"passengers, within the maximum of {load_settings().max_passengers}.")
+        return None, f"Nothing to decide for trip {trip.ref}."
+    if card and pending.get("card") and card != pending["card"]:
+        return None, (f"That card is out of date - the driver now says {pending['count']} passengers. "
+                      f"Please answer the latest card for trip {trip.ref}.")
+    return pending, ""
+
+
+def ops_allowed_passengers(trip_id: int, card: Optional[str]) -> None:
+    with trip_lock(trip_id):
+        _ops_allowed_passengers(trip_id, card)
+
+
+def _ops_allowed_passengers(trip_id: int, card: Optional[str]) -> None:
+    """Anneli tapped "Allow the ride": the driver's count stands, over the limit, and the
+    pickup carries on as it would within it."""
+    trip, ops = get_trip(trip_id), ops_number()
+    if not trip or not ops:
+        return
+    pending, why = _over_limit_question(trip, card)
+    if not pending:
+        say("ops", ops, trip_id, why)
+        return
+    count, driver = pending["count"], driver_for(trip)
+    record(trip_id, "ops", PASSENGERS_ALLOWED, str(count))
+    record(trip_id, "ops", PASSENGERS, str(count))
+    say("ops", ops, trip_id, f"Allowed: trip {trip.ref} goes ahead with {count} passengers. {driver.name} has been told.")
+    _next_pickup_step(trip_id, driver, f"Anneli has allowed {count} passengers for this ride.")
+
+
+def ops_cancelled_over_limit(trip_id: int, card: Optional[str]) -> None:
+    with trip_lock(trip_id):
+        _ops_cancelled_over_limit(trip_id, card)
+
+
+def _ops_cancelled_over_limit(trip_id: int, card: Optional[str]) -> None:
+    """Anneli tapped "Cancel the ride": the trip is cancelled, and the guest and the driver
+    are told why."""
+    trip, ops = get_trip(trip_id), ops_number()
+    if not trip or not ops:
+        return
+    pending, why = _over_limit_question(trip, card)
+    if not pending:
+        say("ops", ops, trip_id, why)
+        return
+    reason = f"{pending['count']} passengers is more than the {load_settings().max_passengers} a ride can take."
+    cancel_trip(trip_id, "ops", f"too many passengers: {pending['count']}", why=reason)
+    say("ops", ops, trip_id, f"Trip {trip.ref} cancelled. The guest and the driver have been told.")
 
 
 def pickup_verified(trip: Row) -> bool:
@@ -1133,7 +1349,13 @@ def _driver_entered_code(trip_id: int, driver: Row, typed: str) -> None:
         return
     state = pickup_code.check(events_for(trip_id))
     if state.verified:
-        say("driver", driver.phone, trip_id, "The pickup is already verified. Tap Ride started above once the guest is in the car.")
+        pending = passengers_awaiting_ops(trip)
+        if passengers_needed(trip):
+            say("driver", driver.phone, trip_id, f"The pickup is already verified. {passengers_question()}")
+        elif pending:
+            say("driver", driver.phone, trip_id, f"The pickup is already verified. {waiting_on_anneli(pending['count'])}")
+        else:
+            say("driver", driver.phone, trip_id, "The pickup is already verified. Tap Ride started above once the guest is in the car.")
         return
     if not state.stored:
         say("driver", driver.phone, trip_id,
@@ -1165,8 +1387,7 @@ def _driver_entered_code(trip_id: int, driver: Row, typed: str) -> None:
 
     record(trip_id, "driver", pickup_code.VERIFIED)
     say("guest", trip.guest_phone, trip_id, f"Thank you. Your pickup is verified - {driver.name} will start the ride once you are in the car.")
-    say("driver", driver.phone, trip_id,
-        "Pickup Verified\n\nGuest verification was successful.\nTap Ride started once they are in the car.", [RIDE_STARTED])
+    _next_pickup_step(trip_id, driver, "Pickup Verified\n\nGuest verification was successful.")
 
 
 def _forget_typed_code(wamid: Optional[str]) -> None:
@@ -1197,11 +1418,12 @@ def driver_started_ride(trip_id: int, driver: Row) -> None:
 
 
 def _driver_started_ride(trip_id: int, driver: Row) -> None:
-    """Driver tapped "Ride started" - the only way a ride starts. The guest is told and
-    Anneli gets her trip-started card. The driver gets the drop-off pin and "Reached
-    destination"; payment is asked for there, not now."""
+    """Driver tapped "Ride started" - the only way a ride starts, once the guest's code has
+    matched and the passenger count is settled. The guest is told and Anneli gets her
+    trip-started card. The driver gets the drop-off pin and "Reached destination"; payment
+    is asked for there, not now."""
     trip = get_trip(trip_id)
-    if not trip or not pickup_verified(trip):
+    if not trip or not pickup_verified(trip) or not passengers_ready(trip):
         return
     if not claim_status(trip_id, ("driver_waiting", "driver_en_route"), "in_progress"):
         return

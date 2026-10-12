@@ -128,6 +128,14 @@ def handle_ops_message(phone: str, message: dict[str, Any]) -> None:
         T.send_car_anyway(trip.id)
         return
 
+    # A passenger count over the limit, from the driver at the pickup.
+    if reply.reply_id == T.OPS_ALLOW_RIDE[0] or said(reply, B["allow_ride"]):
+        T.ops_allowed_passengers(trip.id, context_id(message))
+        return
+    if reply.reply_id == T.OPS_CANCEL_RIDE[0] or said(reply, B["cancel_ride"]):
+        T.ops_cancelled_over_limit(trip.id, context_id(message))
+        return
+
     send_text(to, f"Not sure what to do with that for {trip.ref}. Use the buttons on the card, or the dashboard.")
 
 

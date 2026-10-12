@@ -311,5 +311,21 @@
     "asked": "Lowveld Mall (Engen) to the farm gate was quoted 1.3 km while the real drive is about 4.2 km. Use the OpenRouteService key so the distance between the pickup and the drop-off the guest selects is the real road distance, and the fare is worked out from it. Nothing else changes; the farm's exact latitude/longitude will be added later.",
     "status": "done",
     "note": "Without a road-routing service every distance was a straight line x 1.3. Now, with OPENROUTESERVICE_API_KEY set (whatsapp-backend/.env, git-ignored), every distance the bot measures - farm to place, place to place, and the Destinations column - is the OpenRouteService driving distance and time, cached for 24 hours; if OpenRouteService fails, the straight-line estimate is used as before. Google stays first if a Google key is ever set. Place search is unchanged. The farm pin is now the exact gate the user gave, -25.063060, 31.108593 (the default in app/config.py; nothing else sets it): Kanaan to Lowveld Mall (Engen) is 4.2 km by road, Perry's Bridge 5.3 km, the airport 45.5 km. tests/bot_e2e.py pins its own old fixture point so its fixed fares hold. Going live needs OPENROUTESERVICE_API_KEY added to the live service's Secret. Local only - not deployed."
+  },
+  {
+    "id": "C42",
+    "raised": "2026-10-12",
+    "area": "Pickup",
+    "asked": "Set a maximum number of passengers per ride: a field on the Transportation tab, and in the chat, once the guest taps 'Yes, I can see him', the driver gets a field to enter the number of passengers in the ride, so a ride never carries more than the maximum. The number the driver entered is shown on the Transportation tab with the ride details.",
+    "status": "done",
+    "note": "Rates & rules has 'Maximum passengers per ride' (transfer_settings.max_passengers, default 4, at least 1; drizzle/0020). On 'Yes, I can see him' the driver's verification message also asks 'How many passengers are getting in? Type the number here (maximum N).' - a WhatsApp chat message cannot carry a form field, so he types the number in the chat, as he types the code. 0 is refused and asked again; more than N goes to Anneli (C43); 'Ride started' comes only once the count is within N and the code has matched, whichever is typed first. He can correct the count until the ride starts. The count is kept on the trip (trip_events passengers_entered) and shown on Transportation > Dispatch beside the guest's name. Live since 2026-10-12 (commit 1da0d69; drizzle 0020 applied to the live hub DB first)."
+  },
+  {
+    "id": "C43",
+    "raised": "2026-10-12",
+    "area": "Pickup",
+    "asked": "When the driver enters more passengers than the maximum, the admin receives a message with the ride details and the number of passengers, and chooses whether to allow the ride or cancel it. Do not create the Meta template yet - the user will check it first.",
+    "status": "done",
+    "note": "Over the maximum, the driver is told 'Too many passengers ... Anneli has been asked whether N passengers may travel' and the ride waits; Anneli gets a card: trip, guest (name and number), from, to, when, driver (and plate), the count and the maximum, with 'Allow the ride' / 'Cancel the ride'. Allow: the count stands, the driver is told and gets Ride started (once the code has matched); the Dispatch board shows the count. Cancel: the trip is cancelled - the guest and the driver are told why (the driver by message, not the 'cancelled by the guest' template). Meanwhile the driver may type a number within the limit, which settles it; a different number over the limit sends a new card and the older card is refused as out of date; double taps act once. The card is kn_ops_passengers_over_limit, reviewed in the simulator and submitted to Meta on 2026-10-12 at the user's go-ahead (id 1098463496379464, UTILITY, en_GB). Until Meta approves it, the same text and buttons go as a WhatsApp message, which reaches Anneli only within 24 hours of her last message to the number. Live since 2026-10-12 (commit 1da0d69; drizzle 0020 applied to the live hub DB first)."
   }
 ]

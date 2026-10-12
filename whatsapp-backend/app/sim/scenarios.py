@@ -223,9 +223,15 @@ def s_farm_pay_now() -> None:
            bool(code) and not any(code in m["text"] for m in ms if m["role"] != "guest")
            and _latest_trip()["status"] == "driver_waiting" and not any("driver:started" in _ids(m) for m in ms), ["C37"])
     _check("The driver is asked to type the code", _out(ms, "driver", lambda m: "Guest Pickup Verification" in m["text"]), ["C37"])
+    _check("The driver is asked how many passengers are getting in, with the maximum",
+           _out(ms, "driver", lambda m: "Guest Pickup Verification" in m["text"] and "How many passengers are getting in?" in m["text"]
+                and "(maximum " in m["text"]), ["C42"])
     ms = _do("driver", kind="text", text=f"{(int(code or 0) + 1) % 1_000_000:06d}"); log += ms
     _check("A wrong code is refused ('Invalid verification code'); the ride does not move",
            _out(ms, "driver", lambda m: "Invalid verification code" in m["text"]) and _latest_trip()["status"] == "driver_waiting", ["C37"])
+    ms = _do("driver", kind="text", text="2"); log += ms
+    _check("The driver types 2 passengers: noted, and he is asked for the code - no 'Ride started' yet",
+           _out(ms, "driver", lambda m: m["text"].startswith("2 passengers noted.")) and not any("driver:started" in _ids(m) for m in ms), ["C42"])
     ms = _do("driver", kind="text", text=code or ""); log += ms
     _check("The right code: 'Pickup Verified', the driver gets 'Ride started' - and the ride has still not started",
            _latest_trip()["status"] == "driver_waiting" and _ids(_out(ms, "driver", lambda m: m["buttons"])) == ["driver:started"]
@@ -285,7 +291,9 @@ def s_between_places_pay_at_destination() -> None:
     ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=arrived_q["wamid"]); log += ms
     arrived = _out(ms, "guest", lambda m: m.get("template"))
     ms = _do("guest", kind="template", title="Yes, I can see him", context=arrived["wamid"]); log += ms
-    ms = _do("driver", kind="text", text=_code(ms) or ""); log += ms
+    code = _code(ms)
+    ms = _do("driver", kind="text", text="2"); log += ms
+    ms = _do("driver", kind="text", text=code or ""); log += ms
     ms = _do("driver", kind="button", id="driver:started", title="Ride started", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
     _check("Ride started unpaid: no payment link yet - it comes at the destination", not _out(ms, "guest", lambda m: m.get("cta")), ["C31"])
     reached_q = _out(ms, "driver", lambda m: m["buttons"])
@@ -362,12 +370,14 @@ def s_payment_outcomes() -> None:
 
 
 def _ride_to_destination(log: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The driver leaves, arrives, takes the guest's code, starts the ride and reaches the
-    destination. Returns what Ride started and Reached destination sent."""
+    """The driver leaves, arrives, types the passenger count and the guest's code, starts the
+    ride and reaches the destination. Returns what Ride started and Reached destination sent."""
     ms = _do("driver", kind="template", title="I have left"); log += ms
     ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
     ms = _do("guest", kind="template", title="Yes, I can see him", context=_out(ms, "guest", lambda m: m.get("template"))["wamid"]); log += ms
-    ms = _do("driver", kind="text", text=_code(ms) or ""); log += ms
+    code = _code(ms)
+    ms = _do("driver", kind="text", text="2"); log += ms
+    ms = _do("driver", kind="text", text=code or ""); log += ms
     started = _do("driver", kind="button", id="driver:started", title="Ride started", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += started
     reached = _do("driver", kind="button", id="driver:reached", title="Reached destination",
                   context=_out(started, "driver", lambda m: m["buttons"])["wamid"]); log += reached
@@ -480,6 +490,7 @@ def s_double_taps() -> None:
     _check("'Yes, I can see him' tapped twice at once: ONE verification code",
            sum(1 for m in ms if m["role"] == "guest" and m["text"].startswith("Driver Verification")) == 1, ["C37", "C14"])
     entry = {"kind": "text", "text": _code(ms) or ""}
+    ms = _do("driver", kind="text", text="2"); log += ms
     ms = _together(("driver", entry), ("driver", entry)); log += ms
     started = [m for m in ms if m["role"] == "driver" and "driver:started" in _ids(m)]
     _check("The right code typed twice at once: verified once, the driver gets ONE 'Ride started'", len(started) == 1, ["C37", "C30", "C14"])
@@ -505,6 +516,92 @@ def s_double_taps() -> None:
     _check("No button reaches the driver twice in this trip",
            all(sum(1 for m in log if m["role"] == "driver" and b in _ids(m)) <= 1
                for b in ("driver:started", "driver:reached", "driver:complete")), ["C30", "C14"])
+
+
+def _to_pickup_seen(log: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Booked and accepted: the driver leaves and arrives, and the guest can see him.
+    Returns what "Yes, I can see him" sent, and the guest's code."""
+    ms = _do("driver", kind="template", title="I have left"); log += ms
+    ms = _do("driver", kind="button", id="driver:arrived", title="I have arrived", context=_out(ms, "driver", lambda m: m["buttons"])["wamid"]); log += ms
+    ms = _do("guest", kind="template", title="Yes, I can see him", context=_out(ms, "guest", lambda m: m.get("template"))["wamid"]); log += ms
+    return ms, _code(ms)
+
+
+def _over_limit_card(ms: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    return _out(ms, "ops", lambda m: m.get("template") == T.OVER_LIMIT_TEMPLATE)
+
+
+def s_passengers() -> None:
+    """The driver types how many passengers are getting in; more than the maximum on Rates &
+    rules goes to Anneli, who allows the ride - and the Dispatch board shows the count."""
+    from app.bot.settings_store import load_settings
+    from app.routers.dashboard import list_trips
+    most = load_settings().max_passengers
+    log = _book("to:preset:perrys", "Perry's Bridge")
+    ms = _accept(log); log += ms
+    ms, code = _to_pickup_seen(log)
+    _check(f"'Yes, I can see him': the driver is asked how many passengers are getting in (maximum {most}) - no 'Ride started' yet",
+           _out(ms, "driver", lambda m: f"How many passengers are getting in? Type the number here (maximum {most})." in m["text"])
+           and not any("driver:started" in _ids(m) for m in ms), ["C42"])
+    ms = _do("driver", kind="text", text=code or ""); log += ms
+    _check("The right code with no count yet: verified, but no 'Ride started' until the count is in",
+           _out(ms, "driver", lambda m: m["text"].startswith("Pickup Verified") and "How many passengers" in m["text"])
+           and not any("driver:started" in _ids(m) for m in ms), ["C42", "C37"])
+    ms = _do("driver", kind="text", text="Ride started"); log += ms
+    _check("A typed 'Ride started' without the count is refused",
+           _latest_trip()["status"] == "driver_waiting" and _out(ms, "driver", lambda m: "number of passengers" in m["text"]), ["C42"])
+    over = most + 1
+    ms = _do("driver", kind="text", text=str(over)); log += ms
+    _check(f"{over} passengers, over the maximum: the driver is told Anneli is deciding - no 'Ride started'",
+           _out(ms, "driver", lambda m: m["text"].startswith("Too many passengers") and f"Anneli has been asked whether {over} passengers" in m["text"])
+           and _latest_trip()["status"] == "driver_waiting" and not any("driver:started" in _ids(m) for m in ms), ["C43", "C42"])
+    card = _over_limit_card(ms)
+    trip = _latest_trip()
+    _check("Anneli gets the ride's details and the number of passengers, with 'Allow the ride' / 'Cancel the ride'",
+           bool(card and f"Too many passengers - trip {trip['ref']}" in card["text"] and "Guest: Sam Botha" in card["text"]
+                and "To: Perry's Bridge" in card["text"] and "Driver: Test Driver (MP 1166)" in card["text"]
+                and f"The driver says {over} passengers are getting in - the maximum is {most}." in card["text"]
+                and [b["title"] for b in card["buttons"]] == ["Allow the ride", "Cancel the ride"]), ["C43"])
+    _check("That card is a proposed template - shown here, not created on Meta",
+           bool(card and "proposed - not created on Meta" in (card.get("warn") or "")), ["C43"])
+    ms = _do("ops", kind="template", title="Allow the ride", context=card["wamid"] if card else None); log += ms
+    started = _out(ms, "driver", lambda m: "driver:started" in _ids(m))
+    _check("Anneli taps 'Allow the ride': the driver is told and gets 'Ride started'; Anneli is told it is done",
+           bool(started and started["text"].startswith(f"Anneli has allowed {over} passengers"))
+           and _out(ms, "ops", lambda m: m["text"].startswith(f"Allowed: trip {trip['ref']} goes ahead with {over} passengers")), ["C43"])
+    shown = next((t["passengers"] for t in list_trips("all") if t["id"] == trip["id"]), None)
+    _check(f"Transportation > Dispatch shows the ride with its {over} passengers", shown == over, ["C42", "C43"])
+    ms = _do("driver", kind="button", id="driver:started", title="Ride started", context=started["wamid"] if started else None); log += ms
+    _check("'Ride started' then starts the ride", _latest_trip()["status"] == "in_progress", ["C42", "C43"])
+    T.cancel_trip(trip["id"], "ops", "scenario cleanup")
+    _check("No duplicate messages in this booking", _no_duplicates(log), ["C14", "C19"])
+
+
+def s_passengers_cancel() -> None:
+    """More than the maximum, and Anneli cancels the ride: the guest and the driver are
+    told why."""
+    from app.bot.settings_store import load_settings
+    most = load_settings().max_passengers
+    log = _book("to:preset:perrys", "Perry's Bridge")
+    ms = _accept(log); log += ms
+    ms, code = _to_pickup_seen(log)
+    over = most + 2
+    ms = _do("driver", kind="text", text=str(over)); log += ms
+    card = _over_limit_card(ms)
+    _check(f"{over} passengers: Anneli gets the card with the ride and the count", bool(card and f"The driver says {over} passengers" in card["text"]), ["C43"])
+    trip = _latest_trip()
+    ms = _do("ops", kind="template", title="Cancel the ride", context=card["wamid"] if card else None); log += ms
+    why = f"{over} passengers is more than the {most} a ride can take."
+    _check("Anneli taps 'Cancel the ride': the trip is cancelled", _latest_trip()["status"] == "cancelled", ["C43"])
+    _check("The guest is told it is cancelled, and why",
+           _out(ms, "guest", lambda m: m["text"].startswith(f"Trip {trip['ref']} has been cancelled by Anneli. {why}")), ["C43"])
+    _check("The driver is told why, as a message (not the 'cancelled by the guest' card)",
+           _out(ms, "driver", lambda m: m["kind"] == "text" and why in m["text"]) and not _out(ms, "driver", lambda m: m.get("template")), ["C43"])
+    _check("Anneli is told it is done", _out(ms, "ops", lambda m: m["text"] == f"Trip {trip['ref']} cancelled. The guest and the driver have been told."), ["C43"])
+    ms = _do("ops", kind="template", title="Cancel the ride", context=card["wamid"] if card else None); log += ms
+    _check("'Cancel the ride' tapped again: already cancelled, nobody told twice",
+           _out(ms, "ops", lambda m: "already cancelled - nothing to decide" in m["text"]) and not _out(ms, "guest"), ["C43", "C14"])
+    _check("No duplicate messages in this booking", _no_duplicates(log), ["C14", "C19"])
 
 
 def s_date_time_picker() -> None:
@@ -582,6 +679,8 @@ SCENARIOS: dict[str, tuple[str, Callable[[], None]]] = {
     "pay_later_card": ("Pay later: card on the driver's card machine", s_pay_later_card),
     "pay_later_paystack": ("Pay later: Paystack link at the destination", s_pay_later_paystack),
     "double_taps": ("Double taps and old buttons (KN-1012)", s_double_taps),
+    "passengers": ("Passengers over the maximum: Anneli allows the ride", s_passengers),
+    "passengers_cancel": ("Passengers over the maximum: Anneli cancels the ride", s_passengers_cancel),
     "date_time": ("Date and time picker with minutes", s_date_time_picker),
 }
 
@@ -613,8 +712,10 @@ def _conversation_checks() -> None:
     waiting = sorted(n for n in used if (sim.TEMPLATES.get(n) or {}).get("status") in ("PENDING", "PROPOSED"))
     approved = {n for n, t in sim.TEMPLATES.items() if t["status"] == "APPROVED"}
     no_fallback = [n for n in waiting if not any(re.sub(r"_v\d+$", "", a) == re.sub(r"_v\d+$", "", n) for a in approved)]
+    no_fallback = [n for n in no_fallback if not sim.TEMPLATES[n].get("until_created")]
     _check(f"Templates not yet approved on Meta: {waiting or 'none'}; "
-           "each has an approved earlier version that goes live until then" + (f" (no fallback: {no_fallback})" if no_fallback else ""),
+           "each has an approved earlier version - or the same text as a message - that goes live until then"
+           + (f" (no fallback: {no_fallback})" if no_fallback else ""),
            not no_fallback, ["C20", "C27", "C28"])
 
 
