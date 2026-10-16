@@ -334,6 +334,6 @@
     "area": "Start",
     "asked": "A guest who wrote a long message instead of 'hi' (Malin, +4917620566434, on 15 Oct: a question about getting from the airport) got no reply, so no request reached Anneli - guests do not know they have to send 'hi'. The chat flow should start whatever the guest types: 'Hi', a long paragraph, or anything else.",
     "status": "done",
-    "note": "A guest outside a booking (no conversation, or back to the start after a cancel) now gets the Welcome message with 'Book a car' for any message - text, voice note, photo, location - exactly as 'hi' gives it; only an emoji reaction on an old message is not answered. Guests in a booking, guests with a booked trip, drivers and Anneli are unchanged, and a typed 'hi' mid-booking still restarts it. Local only - not deployed."
+    "note": "A guest outside a booking (no conversation, or back to the start after a cancel) now gets the Welcome message with 'Book a car' for any message - text, voice note, photo, location - exactly as 'hi' gives it; only an emoji reaction on an old message is not answered. Guests in a booking, guests with a booked trip, drivers and Anneli are unchanged, and a typed 'hi' mid-booking still restarts it. Live since 2026-10-16 (commit 30e8691; no database or settings change)."
   }
 ]
