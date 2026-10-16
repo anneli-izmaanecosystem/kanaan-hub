@@ -327,5 +327,13 @@
     "asked": "When the driver enters more passengers than the maximum, the admin receives a message with the ride details and the number of passengers, and chooses whether to allow the ride or cancel it. Do not create the Meta template yet - the user will check it first.",
     "status": "done",
     "note": "Over the maximum, the driver is told 'Too many passengers ... Anneli has been asked whether N passengers may travel' and the ride waits; Anneli gets a card: trip, guest (name and number), from, to, when, driver (and plate), the count and the maximum, with 'Allow the ride' / 'Cancel the ride'. Allow: the count stands, the driver is told and gets Ride started (once the code has matched); the Dispatch board shows the count. Cancel: the trip is cancelled - the guest and the driver are told why (the driver by message, not the 'cancelled by the guest' template). Meanwhile the driver may type a number within the limit, which settles it; a different number over the limit sends a new card and the older card is refused as out of date; double taps act once. The card is kn_ops_passengers_over_limit, reviewed in the simulator and submitted to Meta on 2026-10-12 at the user's go-ahead (id 1098463496379464, UTILITY, en_GB). Until Meta approves it, the same text and buttons go as a WhatsApp message, which reaches Anneli only within 24 hours of her last message to the number. Live since 2026-10-12 (commit 1da0d69; drizzle 0020 applied to the live hub DB first)."
+  },
+  {
+    "id": "C44",
+    "raised": "2026-10-16",
+    "area": "Start",
+    "asked": "A guest who wrote a long message instead of 'hi' (Malin, +4917620566434, on 15 Oct: a question about getting from the airport) got no reply, so no request reached Anneli - guests do not know they have to send 'hi'. The chat flow should start whatever the guest types: 'Hi', a long paragraph, or anything else.",
+    "status": "done",
+    "note": "A guest outside a booking (no conversation, or back to the start after a cancel) now gets the Welcome message with 'Book a car' for any message - text, voice note, photo, location - exactly as 'hi' gives it; only an emoji reaction on an old message is not answered. Guests in a booking, guests with a booked trip, drivers and Anneli are unchanged, and a typed 'hi' mid-booking still restarts it. Local only - not deployed."
   }
 ]

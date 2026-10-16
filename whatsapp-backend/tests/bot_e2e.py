@@ -1707,6 +1707,25 @@ T.cancel_trip(tU["id"], "ops", "test cleanup")
 with hub_db.begin() as c:
     c.execute(sql("delete from transfer_settings"))  # back to no row, as in production
 
+
+# ── 6q. any message from a guest outside a booking starts it (C44) ──────────
+print("6q. a long message instead of 'hi' starts the booking")
+GUEST_ANY = "+27000000024"
+before = trip_row()
+out = text(GUEST_ANY, "Dear Kanaan Guest Farm,\n\nI've booked a room from 2026-10-27 to 2026-10-30 and asked for "
+                      "transport options from the airport to the hostel. Could you tell me the price?\n\nBest,\nMalin")
+mine = [m for m in out if to(m) == GUEST_ANY]
+check(len(mine) == 1 and buttons(mine[0]) == ["book"] and body_of(mine[0]).startswith("Welcome to Kanaan Guest Farm."),
+      "a new guest's long message gets the Welcome with Book a car, as 'hi' does")
+check(trip_row()["id"] == before["id"], "nothing is booked by the message itself")
+out = tap(GUEST_ANY, "book", "Book a car", context=mine[0]["_id"] if mine else None)
+check(any(body_of(m) == "When do you need the car?" for m in out), "Book a car then asks when, as usual")
+text(GUEST_ANY, "cancel")
+out = post(GUEST_ANY, {"type": "reaction", "reaction": {"message_id": mine[0]["_id"] if mine else "wamid.x", "emoji": "\U0001F44D"}})
+check(not out, "back outside a booking, an emoji reaction on an old message is not answered")
+out = text(GUEST_ANY, "thanks")
+check(len(out) == 1 and buttons(out[0]) == ["book"], "and any typed message starts the booking again")
+
 unexpected = [r for r in bot_errors.records if "Template name does not exist" not in r.getMessage()]
 for r in unexpected:
     print(f"  bot logged an error: {r.name}: {r.getMessage()}" + (f" ({r.exc_info[1]!r})" if r.exc_info else ""))

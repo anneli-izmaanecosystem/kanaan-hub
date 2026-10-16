@@ -670,7 +670,28 @@ def s_trip_type() -> None:
     ms = _do("guest", kind="text", text="cancel"); log += ms
 
 
+def s_any_message_starts() -> None:
+    """A guest who writes a long question instead of 'hi' is answered with the booking flow."""
+    log: list[dict[str, Any]] = []
+    ms = _do("guest", kind="text", text="hi"); log += ms
+    ms = _do("guest", kind="text", text="cancel"); log += ms  # back outside a booking
+    before = _latest_trip()
+    ms = _do("guest", kind="text", text=(
+        "Dear Kanaan Guest Farm,\n\nI've booked a room from 2026-10-27 to 2026-10-30 and asked for transport "
+        "options from the airport to the hostel. Could you tell me the price and what else should be considered?\n\nBest,\nMalin")); log += ms
+    welcome = _out(ms, "guest")
+    _check("A long message instead of 'hi': the Welcome message with 'Book a car', as 'hi' gives",
+           bool(welcome) and welcome["text"].startswith("Welcome to Kanaan Guest Farm.") and _ids(welcome) == ["book"], ["C44"])
+    after = _latest_trip()
+    _check("Nothing is booked by the message itself", (after["id"] if after else None) == (before["id"] if before else None), ["C44"])
+    ms = _do("guest", kind="button", id="book", title="Book a car", context=welcome["wamid"] if welcome else None); log += ms
+    _check("'Book a car' then carries on as usual: 'When do you need the car?'",
+           bool(_out(ms, "guest", lambda m: m["text"] == "When do you need the car?")), ["C44"])
+    ms = _do("guest", kind="text", text="cancel"); log += ms
+
+
 SCENARIOS: dict[str, tuple[str, Callable[[], None]]] = {
+    "any_message": ("A long message instead of 'hi' starts the booking", s_any_message_starts),
     "trip_type": ("Trip type: Day Trip coming soon, then One Way Trip", s_trip_type),
     "farm_pay_now": ("Farm -> Perry's Bridge, pay now, full ride", s_farm_pay_now),
     "between_places": ("Airport -> Perry's Bridge, paid at the destination", s_between_places_pay_at_destination),

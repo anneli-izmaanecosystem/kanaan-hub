@@ -137,9 +137,13 @@ def handle_message(message: dict[str, Any]) -> None:
         if not reply.reply_id and is_start_keyword(reply.text):
             start_conversation(phone)
             return
-        # Unrelated messages are ignored until the guest opts in — except taps on the
-        # buttons of an earlier trip, which the conversation handles at any step.
+        # A guest outside a booking starts one with whatever they send - a greeting, a long
+        # question, a photo - as they cannot know to say "hi" first. Taps on the buttons of
+        # an earlier trip are still handled by the conversation at any step; an emoji
+        # reaction on an old message is not answered.
         if convo.step == STEPS.idle and not (reply.reply_id or message.get("type") == "button"):
+            if message.get("type") != "reaction":
+                start_conversation(phone)
             return
         handle_guest_message(phone, message)
         return
