@@ -61,12 +61,10 @@ class Settings(BaseSettings):
     kanaan_pickup_address: str = "Kanaan Guest Farm, R40 Hazyview"
     kanaan_pickup_lat: float = -25.063060      # the farm gate, as given by Kanaan (2026-10-07)
     kanaan_pickup_lng: float = 31.108593
-    # Upfront fare: base + per km, never below the minimum (dashboard transfer settings win
-    # over these). R8.30/km is UberX South Africa's R7.50/km with its R0.75/min folded in -
-    # time here comes from distance at an average speed, so a separate time rate added
-    # nothing but a second number.
-    kanaan_fare_base: float = 5
-    kanaan_fare_per_km: float = 8.30
+    # Upfront fare: per km on the whole round trip the car drives - Kanaan to the pickup,
+    # the pickup to the drop-off, back to Kanaan - never below the minimum (dashboard
+    # transfer settings win over these). R10/km is Kanaan's R7.70 cost per driven km plus 30%.
+    kanaan_fare_per_km: float = 10
     kanaan_fare_minimum: float = 20
     # Fixed prices for regular trips, kept in the backend: "key=rand,key=rand", e.g.
     # "airport=750,phabeni=300". Keys: perrys, lowveld, airport, phabeni, numbi,

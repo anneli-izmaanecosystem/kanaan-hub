@@ -25,7 +25,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.bot import flows, hub_db, trip as T
 from app.bot.admin_log import log_flow
 from app.bot.hub_db import Row, db_time, now
-from app.bot.places import PRESETS, SHARED, distance_between, preset_place, resolve_place, resolve_shared_location
+from app.bot.places import (PRESETS, SHARED, distance_between, preset_place, resolve_place, resolve_shared_location,
+                            round_trip_km)
 from app.bot.reply import FLOW_REPLY, Reply, context_id, is_location, read_reply, said
 from app.bot.settings_store import TransferSettings, booking_window_error, fare_for, js_round, load_settings
 from app.bot.wa import send_buttons, send_flow, send_list, send_location, send_location_request, send_text, to_wa_id
@@ -147,7 +148,7 @@ def _claim_step(phone: str, expected: str, step: str) -> bool:
 
 
 def ask_start(to: str) -> str:
-    send_buttons(to, "Welcome to Kanaan Guest Farm.\nI can arrange a car for you.", [(BTN.book, "Book a car")])
+    send_buttons(to, "Welcome to Kanaan Transfers.\nI can arrange a car for you.", [(BTN.book, "Book a car")])
     return STEPS.start
 
 
@@ -318,7 +319,8 @@ def confirm_place(to: str, place: dict[str, Any], pin: bool = True) -> str:
     # Not for a pin the guest shared themselves, or one already shown - they have it.
     if pin and not place.get("shared"):
         show_pin(to, place)
-    send_buttons(to, f"{place['name']}\n{_km(place['distanceKm'])} km, about {place['durationMin']} minutes\nIs this the right spot?",
+    # No km: the fare covers the whole round trip, so the guest's own km would not explain it.
+    send_buttons(to, f"{place['name']}\nAbout {place['durationMin']} minutes\nIs this the right spot?",
                  [(BTN.place_yes, "Yes, that one"), (BTN.place_no, "No, try again")])
     return STEPS.place_confirm
 
@@ -340,8 +342,10 @@ def confirm_quote(to: str, draft: dict[str, Any]) -> str:
     # The number they are writing from - what the driver will call if needed.
     lines.append(f"Phone: {T.format_phone(to)}")
     place = draft["place"]
-    trip_size = f"{_km(place['distanceKm'])} km" + (f", about {place['durationMin']} minutes" if place.get("durationMin") else "")
-    lines += [format_when_long(when), trip_size, f"Fare: R {_num(draft['fare'])}", "",
+    lines.append(format_when_long(when))
+    if place.get("durationMin"):
+        lines.append(f"About {place['durationMin']} minutes")
+    lines += [f"Fare: R {_num(draft['fare'])}", "",
               "We are checking driver availability and will confirm your booking as soon as possible. "
               "No payment is required until your car is confirmed."]
     send_buttons(to, "\n".join(lines), [(BTN.quote_confirm, "Send request"), (BTN.quote_change, "Change something")])
@@ -368,10 +372,6 @@ def _num(x: Any) -> str:
     """280 rather than 280.0; 250.5 stays 250.5."""
     f = float(x)
     return str(int(f)) if f.is_integer() else str(f)
-
-
-def _km(x: Any) -> str:
-    return _num(x)
 
 
 # ── committing the booking ───────────────────────────────────────────────────
@@ -650,7 +650,8 @@ def handle_guest_message(phone: str, message: dict[str, Any]) -> None:
             return
         draft["name"] = text[:60]
         place = draft["place"]
-        f = fare_for(float(place["distanceKm"]), load_settings(), place.get("fixedFare"))
+        km = round_trip_km(*(None if end == "farm" else end for end in (draft["from"], draft["to"])))
+        f = fare_for(km, load_settings(), place.get("fixedFare"))
         draft["fare"] = int(f) if float(f).is_integer() else f
         save_conversation(phone, confirm_quote(to, draft), draft)
         return

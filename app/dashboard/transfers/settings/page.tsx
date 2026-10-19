@@ -6,7 +6,7 @@ import { getJson } from '@/lib/utils'
 import { PhoneInput } from '@/components/phone-input'
 
 type Settings = {
-  fareBase: number; farePerKm: number; fareMinimum: number
+  farePerKm: number; fareMinimum: number
   maxChatKm: number; opsResponseMin: number; noShowWaitMin: number
   holdBeforeMin: number; driverNudgeMin: number
   chargeNoShow: boolean; noShowFee: number | null
@@ -56,9 +56,9 @@ export default function TransferSettingsPage() {
 
   if (!s) return <div className="text-sm text-gray-400">Loading…</div>
 
-  // The example trip from the original screens (34 km), recomputed live with the same
-  // formula the WhatsApp service quotes with.
-  const example = Math.max(s.fareMinimum, Math.round(s.fareBase + s.farePerKm * 34))
+  // An example round trip (Kanaan -> Hazyview town 10 km, on to a lodge 5 km, back 12 km),
+  // recomputed live with the same formula the WhatsApp service quotes with.
+  const example = Math.max(s.fareMinimum, Math.round(s.farePerKm * 27))
 
   return (
     <div className="max-w-3xl">
@@ -70,12 +70,9 @@ export default function TransferSettingsPage() {
 
       <Card
         title="Fares"
-        note="Upfront fare: base + per kilometre, never below the minimum. Defaults are UberX South Africa rates with its per-minute charge folded into the per-km rate."
+        note="Upfront fare: per kilometre on the whole round trip the car drives (Kanaan to the pickup, the pickup to the drop-off, and back to Kanaan), never below the minimum. Guests see only the final fare."
       >
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Base fare" prefix="R">
-            <input className={inp} type="number" value={s.fareBase} onChange={e => set('fareBase', Number(e.target.value))} />
-          </Field>
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Per kilometre" prefix="R">
             <input className={inp} type="number" step="0.25" value={s.farePerKm} onChange={e => set('farePerKm', Number(e.target.value))} />
           </Field>
@@ -84,7 +81,8 @@ export default function TransferSettingsPage() {
           </Field>
         </div>
         <p className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
-          A 34 km run would quote <span className="font-semibold text-gray-900">R {example}</span>.
+          Hazyview town to a lodge 5 km away is 27 km driven (10 km out, 5 km with the guest, 12 km back)
+          and would quote <span className="font-semibold text-gray-900">R {example}</span>.
           Places with a fixed price ignore this.
         </p>
       </Card>

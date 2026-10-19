@@ -162,15 +162,18 @@ def s_farm_pay_now() -> None:
     _check("Quote wording: 'We are checking driver availability ... No payment is required until your car is confirmed.'",
            "We are checking driver availability and will confirm your booking as soon as possible. No payment is required until your car is confirmed."
            in quote["text"], ["C09"])
-    # The drive the bot measured (road distance with an OpenRouteService key, else the
-    # straight-line estimate) and the fare the rates make of it.
-    from app.bot.places import PRESETS, distance_from_farm
+    # The drives the bot measured (road distance with an OpenRouteService key, else the
+    # straight-line estimate) and the fare the rate makes of the whole round trip.
+    from app.bot.places import PRESETS, distance_from_farm, round_trip_km
     from app.bot.settings_store import fare_for, load_settings
     leg = distance_from_farm(PRESETS["perrys"]["lat"], PRESETS["perrys"]["lng"])
-    fare = f"{fare_for(leg['distanceKm'], load_settings()):g}"
-    _check(f"Fare R {fare} on the {leg['distanceKm']:g} km {'road' if not leg['estimated'] else 'estimated'} distance "
-           "(base + per km, never below the minimum)",
-           f"{leg['distanceKm']:g} km" in quote["text"] and f"Fare: R {fare}\n" in quote["text"], ["C13", "C41"])
+    loop = round_trip_km(None, PRESETS["perrys"])
+    fare = f"{fare_for(loop, load_settings()):g}"
+    _check(f"Fare R {fare}: the per-km rate on the {loop:g} km {'road' if not leg['estimated'] else 'estimated'} round trip "
+           "Kanaan -> Perry's Bridge -> Kanaan, no base fare, never below the minimum",
+           f"Fare: R {fare}\n" in quote["text"], ["C13", "C41", "C46"])
+    _check(f"The quote shows the fare and the {leg['durationMin']}-minute drive, but no km",
+           f"About {leg['durationMin']} minutes" in quote["text"] and " km" not in quote["text"], ["C46"])
     _check("No payment button before the request is accepted", not any(i.startswith("guest:pay") for m in log for i in _ids(m)), ["C01"])
     ms = _accept(log); log += ms
     confirmed = _out(ms, "guest", lambda m: (m.get("template") or "").startswith("kn_guest_trip_confirmed"))
@@ -276,9 +279,17 @@ def s_between_places_pay_at_destination() -> None:
            bool(eta and f"Estimated travel time: {format_duration(drive)}." in eta["text"]), ["C36"])
     _check("The estimate comes before 'Where are you going?'", bool(eta and log.index(eta) < log.index(dest_q)), ["C36"])
     confirm = next(m for m in log if m["dir"] == "out" and "Is this the right spot?" in m["text"])
-    leg = distance_between(PRESETS["airport"]["lat"], PRESETS["airport"]["lng"], PRESETS["perrys"]["lat"], PRESETS["perrys"]["lng"])["distanceKm"]
-    _check(f"Airport -> Perry's Bridge priced on the {leg:g} km drive between them, not from the farm",
-           "Perry's Bridge" in confirm["text"] and f"{leg:g} km" in confirm["text"], ["C15"])
+    leg = distance_between(PRESETS["airport"]["lat"], PRESETS["airport"]["lng"], PRESETS["perrys"]["lat"], PRESETS["perrys"]["lng"])
+    _check(f"Airport -> Perry's Bridge confirmed with the {leg['durationMin']}-minute drive between them, not from the farm - and no km",
+           "Perry's Bridge" in confirm["text"] and f"About {leg['durationMin']} minutes" in confirm["text"] and " km" not in confirm["text"],
+           ["C15", "C46"])
+    from app.bot.places import round_trip_km
+    from app.bot.settings_store import fare_for, load_settings
+    loop = round_trip_km(PRESETS["airport"], PRESETS["perrys"])
+    fare = f"{fare_for(loop, load_settings()):g}"
+    quote = _out(log, "guest", lambda m: "Please confirm" in m["text"])
+    _check(f"Fare R {fare} on the {loop:g} km round trip: Kanaan -> the airport (empty) -> Perry's Bridge (with the guest) "
+           "-> Kanaan (empty)", bool(quote) and f"Fare: R {fare}\n" in quote["text"], ["C46"])
     ms = _accept(log); log += ms
     pins = [m for m in ms if m["role"] == "driver" and m["kind"] == "location"]
     _check("Driver gets only the pickup pin (the airport), not the drop-off",
@@ -674,6 +685,9 @@ def s_any_message_starts() -> None:
     """A guest who writes a long question instead of 'hi' is answered with the booking flow."""
     log: list[dict[str, Any]] = []
     ms = _do("guest", kind="text", text="hi"); log += ms
+    hi = _out(ms, "guest")
+    _check("'hi': the Welcome message reads 'Welcome to Kanaan Transfers.' with 'Book a car'",
+           bool(hi) and hi["text"] == "Welcome to Kanaan Transfers.\nI can arrange a car for you." and _ids(hi) == ["book"], ["C45"])
     ms = _do("guest", kind="text", text="cancel"); log += ms  # back outside a booking
     before = _latest_trip()
     ms = _do("guest", kind="text", text=(
@@ -681,7 +695,7 @@ def s_any_message_starts() -> None:
         "options from the airport to the hostel. Could you tell me the price and what else should be considered?\n\nBest,\nMalin")); log += ms
     welcome = _out(ms, "guest")
     _check("A long message instead of 'hi': the Welcome message with 'Book a car', as 'hi' gives",
-           bool(welcome) and welcome["text"].startswith("Welcome to Kanaan Guest Farm.") and _ids(welcome) == ["book"], ["C44"])
+           bool(welcome) and welcome["text"].startswith("Welcome to Kanaan Transfers.") and _ids(welcome) == ["book"], ["C44"])
     after = _latest_trip()
     _check("Nothing is booked by the message itself", (after["id"] if after else None) == (before["id"] if before else None), ["C44"])
     ms = _do("guest", kind="button", id="book", title="Book a car", context=welcome["wamid"] if welcome else None); log += ms

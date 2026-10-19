@@ -157,6 +157,15 @@ def distance_from_farm(lat: float, lng: float) -> dict[str, Any]:
     return distance_between(*_farm(), lat, lng)
 
 
+def round_trip_km(pickup: Optional[dict[str, Any]], drop_off: Optional[dict[str, Any]]) -> float:
+    """Every km the car drives for one booking, which the fare is priced on: Kanaan to the
+    pickup, the pickup to the drop-off, and the drop-off back to Kanaan. None is the farm,
+    and a leg from the farm to itself is nothing."""
+    farm = _farm()
+    stops = [farm, *((float(p["lat"]), float(p["lng"])) if p else farm for p in (pickup, drop_off)), farm]
+    return round(sum(distance_between(*a, *b)["distanceKm"] for a, b in zip(stops, stops[1:]) if a != b), 1)
+
+
 def _trim_country(address: str) -> str:
     return re.sub(r",?\s*\d{4}$", "", re.sub(r",\s*South Africa$", "", address, flags=re.I)).strip()
 

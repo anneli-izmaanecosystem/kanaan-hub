@@ -515,7 +515,7 @@ def remove_destination(destination_id: int):
 
 # ── rates & rules ────────────────────────────────────────────────────────────
 
-MONEY = ("fareBase", "farePerKm", "fareMinimum", "noShowFee")
+MONEY = ("farePerKm", "fareMinimum", "noShowFee")
 WHOLE = ("maxChatKm", "opsResponseMin", "noShowWaitMin", "holdBeforeMin", "driverNudgeMin", "maxLeadDays")
 FLAGS = ("chargeNoShow", "muteOpsCommentary")
 PHONES = ("opsWhatsapp", "opsEscalationWhatsapp")
