@@ -15,7 +15,6 @@ from app.config import get_settings
 
 @dataclass
 class TransferSettings:
-    fare_base: float
     fare_per_km: float
     fare_minimum: float
     max_chat_km: int
@@ -38,7 +37,6 @@ class TransferSettings:
 def defaults() -> TransferSettings:
     s = get_settings()
     return TransferSettings(
-        fare_base=s.kanaan_fare_base,
         fare_per_km=s.kanaan_fare_per_km,
         fare_minimum=s.kanaan_fare_minimum,
         max_chat_km=s.kanaan_max_chat_km,
@@ -73,7 +71,6 @@ def load_settings() -> TransferSettings:
         return fallback if v is None else v
 
     return TransferSettings(
-        fare_base=num(r.fare_base, d.fare_base),
         fare_per_km=num(r.fare_per_km, d.fare_per_km),
         fare_minimum=num(r.fare_minimum, d.fare_minimum),
         max_chat_km=pick(r.max_chat_km, d.max_chat_km),
@@ -99,13 +96,14 @@ def js_round(x: float) -> int:
     return math.floor(x + 0.5)
 
 
-def fare_for(distance_km: float, s: TransferSettings, fixed_fare: Optional[float] = None) -> float:
-    """The upfront fare in rand: base + per km, never below the minimum, rounded to the
-    whole rand. Quoted before booking and locked on the trip. A fixed price for the place
-    (backend or dashboard) wins over the formula."""
+def fare_for(round_trip_km: float, s: TransferSettings, fixed_fare: Optional[float] = None) -> float:
+    """The upfront fare in rand: per km on every km the car drives for the trip
+    (places.round_trip_km), never below the minimum, rounded to the whole rand. Quoted
+    before booking and locked on the trip. A fixed price for the place (backend or
+    dashboard) wins over the formula."""
     if fixed_fare is not None:
         return float(fixed_fare)
-    return float(max(s.fare_minimum, js_round(s.fare_base + s.fare_per_km * distance_km)))
+    return float(max(s.fare_minimum, js_round(s.fare_per_km * round_trip_km)))
 
 
 def fixed_fares() -> dict[str, float]:

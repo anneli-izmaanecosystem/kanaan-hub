@@ -779,16 +779,20 @@ tap(GUEST8, "place:no")
 out = pick(GUEST8, "from:preset:airport", "Kruger Intl Airport")
 out = pick(GUEST8, "to:preset:perrys", "Perry's Bridge")
 from app.bot.places import distance_between as _between  # noqa: E402
-_leg = _between(-25.3832, 31.1056, -25.0360270, 31.1248174)["distanceKm"]
-check("Perry's Bridge Trading Post, Hazyview" in body_of(out[-1]) and f"{_leg:g} km" in body_of(out[-1]),
-      f"airport -> Perry's Bridge: confirmed with the drive between them ({_leg} km), not from the farm")
+_FARM, _AIRPORT, _PERRYS_PT = (-25.0448, 31.1194), (-25.3832, 31.1056), (-25.0360270, 31.1248174)
+_drive = _between(*_AIRPORT, *_PERRYS_PT)
+check("Perry's Bridge Trading Post, Hazyview" in body_of(out[-1]) and f"About {_drive['durationMin']} minutes" in body_of(out[-1])
+      and " km" not in body_of(out[-1]),
+      f"airport -> Perry's Bridge: confirmed with the {_drive['durationMin']}-minute drive between them, no km")
 tap(GUEST8, "place:yes")
 out = text(GUEST8, "Pat Lee")
 from app.bot.settings_store import js_round as _js_round  # noqa: E402
-_expected = max(20, _js_round(5 + 8.3 * _leg))
+_loop = round(_between(*_FARM, *_AIRPORT)["distanceKm"] + _drive["distanceKm"] + _between(*_PERRYS_PT, *_FARM)["distanceKm"], 1)
+_expected = max(20, _js_round(10 * _loop))
 check("Kruger Mpumalanga International Airport to Perry's Bridge Trading Post, Hazyview" in body_of(out[-1])
-      and f"Fare: R {_expected}\n" in body_of(out[-1]),
-      f"quote: airport to Perry's Bridge, R {_expected} on the {_leg} km between them")
+      and f"Fare: R {_expected}\n" in body_of(out[-1]) and " km" not in body_of(out[-1]),
+      f"quote: airport to Perry's Bridge, R {_expected} on the {_loop} km round trip "
+      "(Kanaan -> airport -> Perry's Bridge -> Kanaan), no km shown")
 start = len(sent)
 out = tap(GUEST8, "quote:confirm")
 trip_p2p = trip_row()
@@ -822,17 +826,27 @@ check("Perry's Bridge Trading Post, Hazyview" in body_of(out[-1]), "Perry's Brid
 tap(GUEST8, "place:yes")
 out = text(GUEST8, "Ana")
 check("The farm gate to Perry's Bridge Trading Post, Hazyview" in body_of(out[-1]), "the quote names the preset place")
-check("about 5 minutes" in body_of(out[-1]) and "Fare: R 20\n" in body_of(out[-1]),
-      "short hop: quote shows the minutes and the R 20 minimum fare")
+_hop = _between(*_FARM, *_PERRYS_PT)["distanceKm"]
+_hop_fare = max(20, _js_round(10 * round(2 * _hop, 1)))
+check("About 5 minutes" in body_of(out[-1]) and f"Fare: R {_hop_fare}\n" in body_of(out[-1]) and " km" not in body_of(out[-1]),
+      f"short hop: quote shows the minutes and R {_hop_fare} for the {_hop:g} km there and back, no km")
 
-# One rate: base R5 + R8.30/km, minimum R20, to the whole rand
+# One rate: R10 per km on the round trip, no base, minimum R20, to the whole rand
+from app.bot.places import round_trip_km as _round_trip  # noqa: E402
 from app.bot.settings_store import fare_for as _fare, fixed_fares as _fixed, load_settings as _ls  # noqa: E402
 _s = _ls()
-check(_fare(16, _s) == 138, "16 km: R5 + R132.80 = R137.80 -> R138")
-check(_fare(16.6, _s) == 143, "Phabeni Gate 16.6 km: R143")
+check(_fare(16, _s) == 160, "16 km driven: R160 (no base)")
+check(_fare(16.65, _s) == 167, "16.65 km: R166.50 -> R167")
 check(_fare(1.5, _s) == 20, "1.5 km: R20 minimum")
-check(_fare(49, _s) == 412, "airport by formula, 49 km: R412")
-check(_fare(49, _s, fixed_fare=750) == 750, "a fixed price wins over the formula")
+check(_fare(27, _s) == 270, "Anneli's example, Hazyview town -> a lodge: 10 + 5 + 12 = 27 km driven, R270")
+check(_fare(91, _s, fixed_fare=750) == 750, "a fixed price wins over the formula")
+_P = {"lat": _PERRYS_PT[0], "lng": _PERRYS_PT[1]}
+_A = {"lat": _AIRPORT[0], "lng": _AIRPORT[1]}
+check(_round_trip(None, _P) == round(_between(*_FARM, *_PERRYS_PT)["distanceKm"] + _between(*_PERRYS_PT, *_FARM)["distanceKm"], 1),
+      "from Kanaan: out with the guest and back empty")
+check(_round_trip(_P, None) == _round_trip(None, _P), "to Kanaan: out empty and back with the guest - the same loop")
+check(_round_trip(_A, _P) == _loop, "between two places: Kanaan -> pickup + pickup -> drop-off + drop-off -> Kanaan")
+check(_round_trip(None, {"lat": _FARM[0], "lng": _FARM[1]}) == 0, "a pin on the farm itself: nothing driven")
 check(_fixed() == {"airport": 750.0}, "fixed prices read from the backend setting; malformed entries skipped")
 
 # Driver arrival: South African time + the drive, rolling over the hour, midnight and the year
@@ -1505,9 +1519,13 @@ text(GUEST_ORS, "hi"); tap(GUEST_ORS, "book"); tap(GUEST_ORS, "when:now"); tap(G
 tap(GUEST_ORS, "from:farm", "Kanaan Guest Farm")
 pick(GUEST_ORS, "to:preset:lowveld", "Lowveld Mall (Engen)")
 tap(GUEST_ORS, "place:yes")
+_asked = len(_OrsStub.calls)
 out = text(GUEST_ORS, "Road Test")
-check("4.2 km, about 7 minutes" in body_of(out[-1]) and "Fare: R 40\n" in body_of(out[-1]),
-      "the quote shows the road distance and its fare: R5 + R8.30 x 4.2 km = R39.86 -> R40")
+_farm_pt = [_settings().kanaan_pickup_lng, _settings().kanaan_pickup_lat]
+check([c["json"]["coordinates"] for c in _OrsStub.calls[_asked:]] == [[[_ENGEN[1], _ENGEN[0]], _farm_pt]],
+      "the empty drive back is asked as its own route, from Lowveld Mall (Engen) back to Kanaan")
+check("About 7 minutes" in body_of(out[-1]) and "Fare: R 84\n" in body_of(out[-1]) and " km" not in body_of(out[-1]),
+      "the quote is priced on the road round trip: R10 x (4.2 km out + 4.2 km back) = R84, no km shown")
 text(GUEST_ORS, "cancel")
 
 # OpenRouteService refuses: the booking goes on with the straight-line estimate
@@ -1538,8 +1556,10 @@ def board_passengers(ref):
     return next(t_ for t_ in res.json() if t_["ref"] == ref)["passengers"]
 
 
-check(client.get("/dashboard/transfer-settings", headers=H).json()["maxPassengers"] == 4,
-      "Rates & rules: the maximum passengers per ride is 4 until changed")
+_rates = client.get("/dashboard/transfer-settings", headers=H).json()
+check(_rates["maxPassengers"] == 4, "Rates & rules: the maximum passengers per ride is 4 until changed")
+check("fareBase" not in _rates and {"farePerKm", "fareMinimum"} <= set(_rates),
+      "Rates & rules: no base fare - only the per-km rate and the minimum")
 for bad in (0, -1, 2.5, "lots"):
     res = client.patch("/dashboard/transfer-settings", json={"maxPassengers": bad}, headers=H)
     check(res.status_code == 400, f"Rates & rules: a maximum of {bad!r} is refused")
@@ -1715,7 +1735,7 @@ before = trip_row()
 out = text(GUEST_ANY, "Dear Kanaan Guest Farm,\n\nI've booked a room from 2026-10-27 to 2026-10-30 and asked for "
                       "transport options from the airport to the hostel. Could you tell me the price?\n\nBest,\nMalin")
 mine = [m for m in out if to(m) == GUEST_ANY]
-check(len(mine) == 1 and buttons(mine[0]) == ["book"] and body_of(mine[0]).startswith("Welcome to Kanaan Guest Farm."),
+check(len(mine) == 1 and buttons(mine[0]) == ["book"] and body_of(mine[0]).startswith("Welcome to Kanaan Transfers."),
       "a new guest's long message gets the Welcome with Book a car, as 'hi' does")
 check(trip_row()["id"] == before["id"], "nothing is booked by the message itself")
 out = tap(GUEST_ANY, "book", "Book a car", context=mine[0]["_id"] if mine else None)

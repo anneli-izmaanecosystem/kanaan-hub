@@ -334,6 +334,22 @@
     "area": "Start",
     "asked": "A guest who wrote a long message instead of 'hi' (Malin, +4917620566434, on 15 Oct: a question about getting from the airport) got no reply, so no request reached Anneli - guests do not know they have to send 'hi'. The chat flow should start whatever the guest types: 'Hi', a long paragraph, or anything else.",
     "status": "done",
-    "note": "A guest outside a booking (no conversation, or back to the start after a cancel) now gets the Welcome message with 'Book a car' for any message - text, voice note, photo, location - exactly as 'hi' gives it; only an emoji reaction on an old message is not answered. Guests in a booking, guests with a booked trip, drivers and Anneli are unchanged, and a typed 'hi' mid-booking still restarts it. Local only - not deployed."
+    "note": "A guest outside a booking (no conversation, or back to the start after a cancel) now gets the Welcome message with 'Book a car' for any message - text, voice note, photo, location - exactly as 'hi' gives it; only an emoji reaction on an old message is not answered. Guests in a booking, guests with a booked trip, drivers and Anneli are unchanged, and a typed 'hi' mid-booking still restarts it. Live since 2026-10-16 (commit 30e8691; no database or settings change)."
+  },
+  {
+    "id": "C45",
+    "raised": "2026-10-17",
+    "area": "Start",
+    "asked": "The first message a guest gets (after 'hi' or any message) reads 'Welcome to Kanaan Guest Farm. I can arrange a car for you.' with 'Book a car'. It should say 'Welcome to Kanaan Transfers.' instead.",
+    "status": "done",
+    "note": "The Welcome message now reads 'Welcome to Kanaan Transfers.\\nI can arrange a car for you.' with the same 'Book a car' button. It is a plain WhatsApp message, not a Meta template, so nothing goes to Meta for approval. The rest of the chat (pickup list, fares, driver and Anneli messages) still says Kanaan Guest Farm where it names the farm as a place. Local only - not deployed."
+  },
+  {
+    "id": "C46",
+    "raised": "2026-10-19",
+    "area": "Pricing",
+    "asked": "Anneli: price every trip on the whole round trip the car drives - Kanaan to the pickup (empty), the pickup to the destination (with the guest), the destination back to Kanaan (empty) - times R10/km (R7.70 cost per driven km plus 30%), never below the minimum. No base price any more. The guest sees only the final fare and the minutes, never km or a per-km rate. The portal's Fares card explains the new method.",
+    "status": "done",
+    "note": "Fare = per-km rate x (Kanaan -> pickup + pickup -> drop-off + drop-off -> Kanaan), rounded to the whole rand, never below the minimum; a leg from the farm to itself is nothing, so a trip from or to Kanaan is the drive there and back. Each leg is the OpenRouteService road distance in its own direction (cached 24 h; straight line x 1.3 if it fails). The base fare is gone from the bot and from Rates & rules (the database column stays, unused). 'Is this the right spot?' and the quote show 'About N minutes' and the fare, no km. Fixed prices still win (none are set). Anneli's request card still shows the guest's own trip km. The code default is R10/km, but the live Rates & rules row (R7.50/km, minimum R50) wins until Per kilometre is changed there. Local only - not deployed."
   }
 ]
