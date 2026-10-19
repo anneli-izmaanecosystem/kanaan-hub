@@ -133,7 +133,6 @@ destinations = Table(
 transfer_settings = Table(
     "transfer_settings", metadata,
     Column("id", Integer, primary_key=True),
-    Column("fare_base", Numeric(10, 2)),
     Column("fare_per_km", Numeric(10, 2)),
     Column("fare_minimum", Numeric(10, 2)),
     Column("max_chat_km", Integer),

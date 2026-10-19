@@ -148,6 +148,13 @@
       "when": 1791799713017,
       "tag": "0020_max_passengers",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792395066890,
+      "tag": "0021_drop_fare_base",
+      "breakpoints": true
     }
   ]
 }

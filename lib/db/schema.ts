@@ -627,7 +627,7 @@ export const destinations = pgTable('destinations', {
 export const transferSettings = pgTable('transfer_settings', {
   id: serial('id').primaryKey(),
 
-  fareBase:    numeric('fare_base',    { precision: 10, scale: 2 }).notNull().default('80'),
+  // Per km on the whole round trip the car drives (no base fare), never below the minimum.
   farePerKm:   numeric('fare_per_km',  { precision: 10, scale: 2 }).notNull().default('11.75'),
   fareMinimum: numeric('fare_minimum', { precision: 10, scale: 2 }).notNull().default('150'),
 

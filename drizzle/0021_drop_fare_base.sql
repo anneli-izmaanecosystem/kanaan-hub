@@ -1,0 +1,1 @@
+ALTER TABLE "transfer_settings" DROP COLUMN "fare_base";

@@ -9,7 +9,6 @@ import { db, transferSettings } from '@/lib/db'
 import { config } from './config'
 
 export interface TransferSettings {
-  fareBase: number
   farePerKm: number
   fareMinimum: number
   maxChatKm: number
@@ -29,7 +28,6 @@ export interface TransferSettings {
 }
 
 export const defaults: TransferSettings = {
-  fareBase: config.fareBase,
   farePerKm: config.farePerKm,
   fareMinimum: config.fareMinimum,
   maxChatKm: config.maxChatKm,
@@ -59,7 +57,6 @@ export async function loadSettings(): Promise<TransferSettings> {
   if (!row) return defaults
 
   return {
-    fareBase: n(row.fareBase, defaults.fareBase),
     farePerKm: n(row.farePerKm, defaults.farePerKm),
     fareMinimum: n(row.fareMinimum, defaults.fareMinimum),
     maxChatKm: row.maxChatKm ?? defaults.maxChatKm,
@@ -95,15 +92,6 @@ export async function saveSettings(patch: Record<string, unknown>) {
     .where(eq(transferSettings.id, row.id))
     .returning()
   return updated
-}
-
-/**
- * Upfront fare in rand: base + per km, never below the minimum, rounded to the whole
- * rand. Mirrors fare_for in whatsapp-backend, which quotes guests.
- */
-export function fareFor(distanceKm: number, s: TransferSettings, fixedFare?: number | null): number {
-  if (fixedFare != null) return Number(fixedFare)
-  return Math.max(s.fareMinimum, Math.round(s.fareBase + s.farePerKm * distanceKm))
 }
 
 /**
