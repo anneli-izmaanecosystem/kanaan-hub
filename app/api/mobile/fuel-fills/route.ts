@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
     if (!driverName) return NextResponse.json({ error: 'driverName required' }, { status: 400 })
     if (!vehicle)    return NextResponse.json({ error: 'vehicle required' },    { status: 400 })
 
+    if (openReading != null && closeReading != null && parseFloat(closeReading) <= parseFloat(openReading))
+      return NextResponse.json({ error: 'Close reading must be higher than the open reading' }, { status: 400 })
+
     // Resolve litres from readings if not supplied directly
     let litres = rawLitres
     if (!litres && openReading != null && closeReading != null) {

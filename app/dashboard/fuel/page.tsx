@@ -122,6 +122,7 @@ export default function FuelReconPage() {
           <p className="text-sm text-gray-400 mt-0.5">Kanaan Guest Farm — Tank Flow Meter</p>
         </div>
         <div className="flex items-center gap-3">
+          <LogFillButton fills={fills} onDone={row => setFills(prev => [row, ...prev])} />
           <Link href="/dashboard/fuel/purchases"
             className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
             <Truck size={15} /> Fuel Purchases
@@ -320,6 +321,206 @@ export default function FuelReconPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// ── Log fill modal ───────────────────────────────────────────────────────────
+// Mirrors the mobile app's "Log a Fill" form: saves as a draft that then shows
+// in the awaiting-allocation queue above.
+
+const VEHICLES = ['TLB/JCB', 'Pickup', 'Bakkie', 'Other']
+const DRIVERS  = ['Alpheus', 'Anneli', 'Matt Nel', 'Other']
+
+const todaySA = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' })
+
+// Close reading of the vehicle's most recent fill (drafts included) — the next fill
+// should open there, otherwise the recon flags a continuity gap.
+function lastCloseFor(fills: Fill[], vehicle: string): number | null {
+  const latest = fills
+    .filter(f => f.vehicle === vehicle && f.closeReading != null)
+    .sort((a, b) => b.fillDate.localeCompare(a.fillDate) || b.id - a.id)[0]
+  return latest ? parseFloat(latest.closeReading!) : null
+}
+
+function LogFillButton({ fills, onDone }: { fills: Fill[]; onDone: (row: Fill) => void }) {
+  const [open, setOpen]               = useState(false)
+  const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState('')
+  const [fillDate, setFillDate]       = useState(todaySA())
+  const [driver, setDriver]           = useState(DRIVERS[0])
+  const [vehicle, setVehicle]         = useState(VEHICLES[0])
+  const [openR, setOpenR]             = useState('')
+  const [closeR, setCloseR]           = useState('')
+  const [isEstimated, setIsEstimated] = useState(false)
+  const [estLitres, setEstLitres]     = useState('')
+  const [notes, setNotes]             = useState('')
+
+  const derivedLitres = isEstimated
+    ? (parseFloat(estLitres) || 0)
+    : openR && closeR
+      ? Math.max(0, parseFloat(closeR) - parseFloat(openR))
+      : 0
+
+  const lastClose = lastCloseFor(fills, vehicle)
+  const openGap   = !isEstimated && openR && lastClose != null
+    && Math.abs(parseFloat(openR) - lastClose) > CONTINUITY_TOLERANCE_L
+
+  function prefillOpen(v: string) {
+    const close = lastCloseFor(fills, v)
+    setOpenR(close != null ? String(close) : '')
+  }
+
+  function reset() {
+    setFillDate(todaySA()); setCloseR(''); setEstLitres(''); setNotes('')
+    setIsEstimated(false); setError('')
+    prefillOpen(vehicle)
+  }
+
+  async function save() {
+    if (isEstimated && !estLitres)          return setError('Enter estimated litres')
+    if (!isEstimated && (!openR || !closeR)) return setError('Enter open and close readings')
+    if (!isEstimated && parseFloat(closeR) <= parseFloat(openR))
+      return setError('Close reading must be higher than the open reading')
+    if (derivedLitres <= 0)                 return setError('Litres must be greater than 0')
+
+    const duplicate = fills.find(f => f.vehicle === vehicle && f.fillDate === fillDate
+      && Math.abs(parseFloat(f.litres) - derivedLitres) <= 0.5)
+    if (duplicate && !confirm(`A ${vehicle} fill of ${parseFloat(duplicate.litres).toFixed(0)} L on this date is already logged (${duplicate.driverName}). Save another one anyway?`))
+      return
+
+    setSaving(true); setError('')
+    try {
+      const res = await fetch('/api/fuel-fills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fillDate,
+          driverName:   driver,
+          vehicle,
+          openReading:  !isEstimated ? parseFloat(openR)  : null,
+          closeReading: !isEstimated ? parseFloat(closeR) : null,
+          litres:       derivedLitres,
+          isEstimated,
+          notes:        notes || null,
+        }),
+      })
+      if (!res.ok) { const e = await res.json(); setError(e.error); return }
+      onDone(await res.json())
+      reset()
+      setOpen(false)
+    } finally { setSaving(false) }
+  }
+
+  const inputCls = 'mt-0.5 w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300'
+  const labelCls = 'text-[10px] uppercase tracking-wide text-gray-500 font-semibold'
+
+  return (
+    <>
+      <button
+        onClick={() => { reset(); setOpen(true) }}
+        className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+      >
+        <Plus size={15} /> Log a Fill
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">⛽ Log a Fill</h3>
+                <p className="text-xs text-gray-400">Saves as draft — allocate the job from the queue</p>
+              </div>
+              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3 max-h-[65vh] overflow-y-auto">
+              <div>
+                <label className={labelCls}>Date</label>
+                <input type="date" value={fillDate} onChange={e => setFillDate(e.target.value)} className={inputCls} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Driver</label>
+                  <select value={driver} onChange={e => setDriver(e.target.value)} className={inputCls}>
+                    {DRIVERS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Vehicle</label>
+                  <select value={vehicle} onChange={e => { setVehicle(e.target.value); if (!isEstimated) prefillOpen(e.target.value) }} className={inputCls}>
+                    {VEHICLES.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <label className="flex items-center justify-between gap-3 cursor-pointer pt-1">
+                <span>
+                  <span className={labelCls}>⚠ Meter fault / Estimate</span>
+                  <span className="block text-[11px] text-gray-400">Enter litres manually instead of readings</span>
+                </span>
+                <input type="checkbox" checked={isEstimated}
+                  onChange={e => { setIsEstimated(e.target.checked); setCloseR(''); if (e.target.checked) setOpenR(''); else prefillOpen(vehicle) }}
+                  className="h-4 w-4 rounded border-gray-300 accent-amber-600" />
+              </label>
+
+              {isEstimated ? (
+                <div>
+                  <label className={labelCls}>Estimated Litres *</label>
+                  <input type="number" value={estLitres} onChange={e => setEstLitres(e.target.value)}
+                    placeholder="e.g. 50" className={cn(inputCls, 'border-amber-400 bg-amber-50')} />
+                  <p className="mt-1 text-[11px] font-semibold text-amber-700">⚠ Will be flagged as estimated in recon</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Open Reading (L)</label>
+                      <input type="number" value={openR} onChange={e => setOpenR(e.target.value)}
+                        placeholder="e.g. 37965" className={inputCls} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Close Reading (L)</label>
+                      <input type="number" value={closeR} onChange={e => setCloseR(e.target.value)}
+                        placeholder="e.g. 38110" className={inputCls} />
+                    </div>
+                  </div>
+                  {openGap ? (
+                    <p className="text-[11px] font-semibold text-red-600">
+                      ⚠ Last {vehicle} fill closed at {lastClose!.toLocaleString('en-ZA')} L — a different open reading means a fill may be missing.
+                    </p>
+                  ) : lastClose != null && (
+                    <p className="text-[11px] text-gray-400">Open pre-filled from the last {vehicle} close reading.</p>
+                  )}
+                  {derivedLitres > 0 && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-center">
+                      <p className="text-2xl font-extrabold text-[#1a3c2e] tabular-nums">{derivedLitres.toFixed(0)} L</p>
+                      <p className="text-[11px] text-gray-500">calculated from readings</p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div>
+                <label className={labelCls}>Notes (optional)</label>
+                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+                  placeholder="e.g. Subtotal 0047, docket ref…" className={inputCls} />
+              </div>
+
+              {error && <p className="text-xs text-red-600">{error}</p>}
+            </div>
+
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-100">
+              <button onClick={() => setOpen(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={save} disabled={saving}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40">
+                {saving ? 'Saving…' : '💾 Save as Draft'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
