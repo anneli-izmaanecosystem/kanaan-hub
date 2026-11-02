@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, fmtDate } from '@/lib/utils'
-import { Lock, Users, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
+import { Lock, Unlock, Users, AlertTriangle, MessageSquare, Settings2, Trash2, FileSpreadsheet } from 'lucide-react'
 import BulkUploadPanel from './BulkUploadPanel'
 
 type Worker = {
@@ -64,7 +64,7 @@ export default function PayrollRunPage() {
   }
 
   async function finalise(force = false) {
-    if (!confirm('Finalise this payroll run? This cannot be undone.')) return
+    if (!confirm('Finalise this payroll run? You can reopen it later if changes are needed.')) return
     setFinalising(true)
     const url = `/api/payroll/${runId}/finalise${force ? '?force=true' : ''}`
     const res = await fetch(url, { method: 'POST' })
@@ -79,6 +79,14 @@ export default function PayrollRunPage() {
       if (proceed) finalise(true)
       return
     }
+    setFinalising(false)
+  }
+
+  async function reopen() {
+    if (!confirm('Reopen this finalised run for changes? It goes back to draft — finalise it again when you are done.')) return
+    setFinalising(true)
+    const res = await fetch(`/api/payroll/${runId}/reopen`, { method: 'POST' })
+    if (res.ok) setRun(prev => prev ? { ...prev, status: 'draft' } : prev)
     setFinalising(false)
   }
 
@@ -147,6 +155,12 @@ export default function PayrollRunPage() {
             <button onClick={() => finalise()} disabled={finalising}
               className="flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50">
               <Lock size={14} /> {finalising ? 'Finalising…' : 'Finalise Run'}
+            </button>
+          )}
+          {isLocked && (
+            <button onClick={reopen} disabled={finalising}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              <Unlock size={14} /> {finalising ? 'Reopening…' : 'Reopen Run'}
             </button>
           )}
         </div>

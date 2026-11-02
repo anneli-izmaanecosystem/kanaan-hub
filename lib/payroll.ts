@@ -165,9 +165,9 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
     const rate = parseFloat(worker.hourlyRate ?? '0')
     basicPay    = entry.ordinaryHours * rate
     saturdayPay = entry.saturdayHours * rate   // normal rate — hours within 45h/week average
-    // Sunday: double pay for employees only (BCEA s.16), zero for contractors —
-    // mirrors the PH treatment below rather than folding into ordinaryHours at 1x.
-    sundayPay = isEmployee ? entry.sundayHours * rate * SUNDAY_MULTIPLIER : 0
+    // Sunday: double pay for employees (BCEA s.16); contractors are paid their normal
+    // rate for a Sunday they actually worked (no BCEA premium, but not R0 either).
+    sundayPay = entry.sundayHours * rate * (isEmployee ? SUNDAY_MULTIPLIER : 1)
     // PH: double pay for employees only, zero for contractors
     phPay = isEmployee ? entry.phHours * rate * PH_MULTIPLIER : 0
 
@@ -175,8 +175,8 @@ export function calculatePayroll(worker: WorkerForPayroll, entry: EntryInput): P
     const rate = parseFloat(worker.dailyRate ?? '0')
     basicPay    = entry.daysWorked    * rate
     saturdayPay = entry.saturdayDays  * rate  // flat day rate on Saturdays (per actual practice)
-    // Sunday: double day rate for employees only (BCEA s.16), zero for contractors
-    sundayPay = isEmployee ? entry.sundayDays * rate * SUNDAY_MULTIPLIER : 0
+    // Sunday: double day rate for employees (BCEA s.16), normal day rate for contractors
+    sundayPay = entry.sundayDays * rate * (isEmployee ? SUNDAY_MULTIPLIER : 1)
     // PH: double day rate for employees once confirmed, zero for contractors (BCEA s.18)
     phPay = isEmployee ? entry.phDays * rate * PH_MULTIPLIER : 0
 

@@ -56,16 +56,17 @@ function calcAmount(worker: Worker, day: Day, phDouble: boolean): number {
     // Saturday: not worked by default; only pay if hours were explicitly entered
     if (day.dayType === 'saturday')       return day.hoursWorked !== null ? round2(hours * rate) : 0
     if (day.dayType === 'public_holiday') return worker.workerType === 'employee' && phDouble ? round2(hours * rate * 2) : round2(hours * rate)
-    // Sunday: only pay if hours were explicitly entered; no default hours
-    if (day.dayType === 'sunday')         return day.hoursWorked !== null && worker.workerType === 'employee' ? round2(hours * rate * 2) : 0
+    // Sunday: only pay if hours were explicitly entered; no default hours.
+    // Employees 2x (BCEA s.16), contractors normal rate.
+    if (day.dayType === 'sunday')         return day.hoursWorked !== null ? round2(hours * rate * (worker.workerType === 'employee' ? 2 : 1)) : 0
     return round2(hours * rate)
   }
 
   if (worker.payStructure === 'daily') {
     const rate = parseFloat(worker.dailyRate ?? '0')
     if (day.dayType === 'public_holiday') return worker.workerType === 'employee' && phDouble ? round2(rate * 2) : (worker.workerType === 'contractor' ? 0 : rate)
-    // Sunday: only pay if explicitly present (saved row)
-    if (day.dayType === 'sunday')         return day.hoursWorked !== null && worker.workerType === 'employee' ? round2(rate * 2) : 0
+    // Sunday: ticked present (absent handled above). Employees 2x (BCEA s.16), contractors normal rate.
+    if (day.dayType === 'sunday')         return round2(rate * (worker.workerType === 'employee' ? 2 : 1))
     return rate
   }
 

@@ -98,8 +98,11 @@ export async function recalculatePayrollEntry(rid: number, wid: number): Promise
       continue
     }
 
-    // Sundays: skip unless saved with hours (explicit override)
-    if (d.dayType === 'sunday' && d.hoursWorked === null) continue
+    // Sundays aren't worked by default. Hourly: count only once hours are entered.
+    // Daily: count once the day is ticked present (a saved row) — daily workers have
+    // no hours box, so the old hours-only rule meant a daily Sunday could never be paid.
+    if (d.dayType === 'sunday' && d.hoursWorked === null
+        && !(worker.payStructure === 'daily' && d.hasRecord)) continue
 
     // Hourly workers aren't expected to work Saturdays by default — skip unless hours
     // were explicitly entered, so an unset Saturday contributes R0, not a full std day.

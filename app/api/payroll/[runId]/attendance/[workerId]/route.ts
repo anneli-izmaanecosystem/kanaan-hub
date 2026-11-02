@@ -56,7 +56,12 @@ export async function GET(_req: NextRequest, { params }: Params) {
       : 'weekday'
 
     const existing = saved.find(s => s.date === dateStr)
-    const defaultAbsent = defaultsToAbsentSaturday && dayType === 'saturday' && !existing
+    // Sundays likewise read as not worked until ticked (daily) or given hours (hourly
+    // shows a blank hours box instead). Before, a daily Sunday showed ticked-present but
+    // paid R0, with no way to make it count.
+    const defaultAbsent = !existing && (
+      (defaultsToAbsentSaturday && dayType === 'saturday') ||
+      (worker.payStructure === 'daily' && dayType === 'sunday'))
 
     days.push({
       date:              dateStr,
