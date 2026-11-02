@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db, bookings, bookingRooms } from '@/lib/db'
 import { eq, and, gt, lt, sql, inArray, ne } from 'drizzle-orm'
+import { bookingClashMessage } from '@/lib/booking-clash'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
@@ -54,16 +55,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ? roomIds.map((rid: any) => parseInt(rid))
       : undefined
 
-    if (selectedRoomIds && rest.checkIn && rest.checkOut) {
+    const [before] = await db.select().from(bookings).where(eq(bookings.id, bookingId))
+    if (!before) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const oldLinks = await db.select({ roomId: bookingRooms.roomId }).from(bookingRooms)
+      .where(eq(bookingRooms.bookingId, bookingId))
+
+    // Check the booking as it will be after this edit — a request that changes only the
+    // dates, only the rooms, or re-activates a cancelled booking must be checked too.
+    const finalRoomIds = selectedRoomIds ?? (oldLinks.length ? oldLinks.map(l => l.roomId) : [before.roomId])
+    const finalCheckIn  = rest.checkIn  ?? before.checkIn
+    const finalCheckOut = rest.checkOut ?? before.checkOut
+    const finalStatus   = rest.status   ?? before.status
+    if (finalStatus !== 'cancelled') {
       const conflict = await db
         .select({ id: bookingRooms.bookingId })
         .from(bookingRooms)
         .innerJoin(bookings, eq(bookingRooms.bookingId, bookings.id))
         .where(and(
-          inArray(bookingRooms.roomId, selectedRoomIds),
+          inArray(bookingRooms.roomId, finalRoomIds),
           ne(bookings.id, bookingId),
-          lt(bookings.checkIn, rest.checkOut),
-          gt(bookings.checkOut, rest.checkIn),
+          lt(bookings.checkIn, finalCheckOut),
+          gt(bookings.checkOut, finalCheckIn),
           sql`${bookings.status} != 'cancelled'`,
         ))
         .limit(1)
@@ -73,20 +85,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const patch = selectedRoomIds ? { ...rest, roomId: selectedRoomIds[0] } : rest
 
-    const [updated] = await db
-      .update(bookings)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(bookings.id, bookingId))
-      .returning()
-    if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-    if (selectedRoomIds) {
-      await db.delete(bookingRooms).where(eq(bookingRooms.bookingId, bookingId))
-      if (selectedRoomIds.length)
+    // Rooms come off first so the date change is checked against the new rooms only, not
+    // the ones being left. If the database's clash guard still refuses (another save got
+    // there first), put the booking back exactly as it was.
+    try {
+      if (selectedRoomIds) await db.delete(bookingRooms).where(eq(bookingRooms.bookingId, bookingId))
+      const [updated] = await db
+        .update(bookings)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(bookings.id, bookingId))
+        .returning()
+      if (selectedRoomIds)
         await db.insert(bookingRooms).values(selectedRoomIds.map(rid => ({ bookingId, roomId: rid })))
+      return NextResponse.json(updated)
+    } catch (err) {
+      const clash = bookingClashMessage(err)
+      if (!clash) throw err
+      const { id: _id, ...previous } = before
+      if (selectedRoomIds) await db.delete(bookingRooms).where(eq(bookingRooms.bookingId, bookingId))
+      await db.update(bookings).set(previous).where(eq(bookings.id, bookingId))
+      if (selectedRoomIds && oldLinks.length)
+        await db.insert(bookingRooms).values(oldLinks.map(l => ({ bookingId, roomId: l.roomId })))
+      return NextResponse.json({ error: clash }, { status: 409 })
     }
-
-    return NextResponse.json(updated)
   } catch (err: any) {
     console.error('[bookings PATCH]', err)
     return NextResponse.json({ error: 'Failed to update booking' }, { status: 500 })

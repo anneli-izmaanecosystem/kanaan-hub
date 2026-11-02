@@ -1,5 +1,6 @@
 import { db, bookings, rooms, bookingRooms } from '@/lib/db'
 import { and, eq, gte, notInArray } from 'drizzle-orm'
+import { bookingClashMessage } from '@/lib/booking-clash'
 
 type IcalEvent = {
   uid: string
@@ -51,10 +52,10 @@ export function parseIcs(ics: string): IcalEvent[] {
   return events
 }
 
-type RoomSyncResult = { roomId: number; roomName: string; created: number; updated: number; cancelled: number; error?: string }
+type RoomSyncResult = { roomId: number; roomName: string; created: number; updated: number; cancelled: number; clashes: string[]; error?: string }
 
 async function syncRoom(room: { id: number; name: string; icalUrl: string }): Promise<RoomSyncResult> {
-  const result: RoomSyncResult = { roomId: room.id, roomName: room.name, created: 0, updated: 0, cancelled: 0 }
+  const result: RoomSyncResult = { roomId: room.id, roomName: room.name, created: 0, updated: 0, cancelled: 0, clashes: [] }
 
   let events: IcalEvent[]
   try {
@@ -77,10 +78,16 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
   for (const event of events) {
     const existingId = existingByUid.get(event.uid)
     if (existingId) {
-      await db.update(bookings).set({
-        checkIn: event.start, checkOut: event.end, notes: event.summary || null, updatedAt: new Date(),
-      }).where(eq(bookings.id, existingId))
-      result.updated++
+      try {
+        await db.update(bookings).set({
+          checkIn: event.start, checkOut: event.end, notes: event.summary || null, updatedAt: new Date(),
+        }).where(eq(bookings.id, existingId))
+        result.updated++
+      } catch (err) {
+        const clash = bookingClashMessage(err)
+        if (!clash) throw err
+        result.clashes.push(clash)
+      }
     } else {
       const nights = Math.max(1, Math.ceil((new Date(event.end).getTime() - new Date(event.start).getTime()) / 86_400_000))
       const [created] = await db.insert(bookings).values({
@@ -100,8 +107,17 @@ async function syncRoom(room: { id: number; name: string; icalUrl: string }): Pr
         notes: event.summary || null,
         externalId: event.uid,
       }).returning()
-      await db.insert(bookingRooms).values({ bookingId: created.id, roomId: room.id })
-      result.created++
+      // A Booking.com stay on nights the room is already booked here is a real double
+      // booking — don't save it over the top; report it so it gets sorted out by hand.
+      try {
+        await db.insert(bookingRooms).values({ bookingId: created.id, roomId: room.id })
+        result.created++
+      } catch (err) {
+        const clash = bookingClashMessage(err)
+        if (!clash) throw err
+        await db.delete(bookings).where(eq(bookings.id, created.id))
+        result.clashes.push(clash)
+      }
     }
   }
 

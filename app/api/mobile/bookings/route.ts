@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkMobileAuth } from '@/lib/mobile-auth'
 import { db, bookings, rooms, bookingRooms } from '@/lib/db'
+import { bookingClashMessage } from '@/lib/booking-clash'
 import { eq, and, or, lt, lte, gte, gt, desc, inArray, sql } from 'drizzle-orm'
 
 // GET /api/mobile/bookings?days=3         — upcoming check-ins within `days`, plus bookings
@@ -123,7 +124,15 @@ export async function POST(req: NextRequest) {
       payDate:       payDate || null,
     }).returning()
 
-    await db.insert(bookingRooms).values(selectedRoomIds.map(roomId => ({ bookingId: booking.id, roomId })))
+    // Backstop for two saves at once — see the web route.
+    try {
+      await db.insert(bookingRooms).values(selectedRoomIds.map(roomId => ({ bookingId: booking.id, roomId })))
+    } catch (err) {
+      const clash = bookingClashMessage(err)
+      if (!clash) throw err
+      await db.delete(bookings).where(eq(bookings.id, booking.id))
+      return NextResponse.json({ error: clash }, { status: 409 })
+    }
 
     return NextResponse.json(booking, { status: 201 })
   } catch (err: any) {

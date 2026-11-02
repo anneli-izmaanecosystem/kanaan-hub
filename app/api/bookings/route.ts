@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db, bookings, rooms, bookingRooms } from '@/lib/db'
+import { bookingClashMessage } from '@/lib/booking-clash'
 import { eq, and, gt, gte, lt, lte, sql, inArray } from 'drizzle-orm'
 import { checkRatelimit } from '@/lib/ratelimit'
 import { monthEndDate } from '@/lib/date-sa'
@@ -122,10 +123,18 @@ export async function POST(req: NextRequest) {
       payDate:       payDate || null,
     }).returning()
 
-    if (selectedRoomIds.length)
+    // The database's clash guard catches what the check above can miss (two saves at
+    // once) — undo the half-made booking and report it like the check would.
+    try {
       await db.insert(bookingRooms).values(
         selectedRoomIds.map(rid => ({ bookingId: booking.id, roomId: rid }))
       )
+    } catch (err) {
+      const clash = bookingClashMessage(err)
+      if (!clash) throw err
+      await db.delete(bookings).where(eq(bookings.id, booking.id))
+      return NextResponse.json({ error: clash }, { status: 409 })
+    }
 
     return NextResponse.json(booking, { status: 201 })
   } catch (err: any) {
